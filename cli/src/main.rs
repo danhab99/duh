@@ -1,7 +1,7 @@
 use std::path;
 
 use clap::{Parser, Subcommand};
-use lib;
+use lib::{diff, utils};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -27,12 +27,12 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
-    let cwd = lib::get_cwd();
+    let cwd = utils::get_cwd();
 
     match &cli.command {
         Commands::Init => {
             let mut p = path::PathBuf::from(cwd);
-            p.push(lib::REPO_METADATA_DIR_NAME);
+            p.push(utils::REPO_METADATA_DIR_NAME);
 
             println!("Initialized new DUH directory {}", p.display());
 
@@ -45,7 +45,7 @@ fn main() {
                 panic!("no repo found");
             }
 
-            let root = lib::find_repo_root(Some(path.clone())).unwrap();
+            let root = utils::find_repo_root(Some(path.clone())).unwrap();
 
             let files = std::fs::read_dir(root)
                 .unwrap()
@@ -59,13 +59,19 @@ fn main() {
             let new_content = std::fs::read(new).unwrap();
 
             // lib::diff_content(&old_content, &new_content);
-            let diffs = lib::diff_content(&old_content, &new_content);
+            let diffs = diff::diff_content(&old_content, &new_content);
 
             for diff in diffs {
                 match diff {
-                    lib::DiffFragment::ADDED { offset, body } => println!("Added offset={} data={:02X?}", offset, body),
-                    lib::DiffFragment::UNCHANGED { offset, len } => println!("Nothing changed from {} to {}", offset, len),
-                    lib::DiffFragment::DELETED { offset, len } => println!("Deleted offset={} len={}", offset, len),
+                    diff::DiffFragment::ADDED { offset, body } => {
+                        println!("Added offset={} data={:02X?}", offset, body)
+                    }
+                    diff::DiffFragment::UNCHANGED { offset, len } => {
+                        println!("Nothing changed from {} to {}", offset, len)
+                    }
+                    diff::DiffFragment::DELETED { offset, len } => {
+                        println!("Deleted offset={} len={}", offset, len)
+                    }
                 }
             }
         }
