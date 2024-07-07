@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, path};
+use std::path;
 
 use clap::{Parser, Subcommand};
 use lib;
@@ -18,6 +18,10 @@ enum Commands {
         wd: Option<String>,
     },
     Init,
+    Diff {
+        old: String,
+        new: String,
+    },
 }
 
 fn main() {
@@ -33,7 +37,7 @@ fn main() {
             println!("Initialized new DUH directory {}", p.display());
 
             std::fs::create_dir(p.to_str().unwrap()).unwrap();
-        },
+        }
         Commands::Status { wd } => {
             let path = wd.to_owned().unwrap_or(cwd.clone());
 
@@ -49,6 +53,21 @@ fn main() {
                 .collect::<Vec<_>>();
 
             println!("STATUS {} {:?}", path, files);
+        }
+        Commands::Diff { old, new } => {
+            let old_content = std::fs::read(old).unwrap();
+            let new_content = std::fs::read(new).unwrap();
+
+            // lib::diff_content(&old_content, &new_content);
+            let diffs = lib::diff_content(&old_content, &new_content);
+
+            for diff in diffs {
+                match diff {
+                    lib::DiffFragment::ADDED { offset, body } => println!("Added offset={} data={:02X?}", offset, body),
+                    lib::DiffFragment::UNCHANGED { offset, len } => println!("Nothing changed from {} to {}", offset, len),
+                    lib::DiffFragment::DELETED { offset, len } => println!("Deleted offset={} len={}", offset, len),
+                }
+            }
         }
     }
 }
