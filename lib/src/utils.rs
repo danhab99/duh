@@ -1,7 +1,4 @@
-use std::{
-    borrow::BorrowMut,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 pub fn get_cwd() -> String {
     std::env::current_dir()
