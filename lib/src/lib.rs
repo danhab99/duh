@@ -51,56 +51,43 @@ pub fn diff_content(old: &[u8], new: &[u8]) -> Vec<DiffFragment> {
     let mut squished_frags = Vec::<DiffFragment>::new();
 
     for (i, d) in delta.iter().enumerate() {
-        if squished_frags.len() <= 0 {
-            match d {
-                DiffResult::Left(_) => squished_frags.push(DiffFragment::DELETED {
-                    offset: i as u64,
-                    len: 1,
-                }),
-                DiffResult::Both(_, _) => squished_frags.push(DiffFragment::UNCHANGED {
-                    offset: i as u64,
-                    len: 1,
-                }),
-                DiffResult::Right(b) => squished_frags.push(DiffFragment::ADDED {
-                    offset: i as u64,
-                    body: vec![**b],
-                }),
-            }
-            
-            continue;
-        }
-
-        let l = squished_frags.last_mut().unwrap();
+        let l = squished_frags.last_mut();
 
         match (l, d) {
-            (
-                DiffFragment::ADDED {
-                    offset: _,
-                    body: last_body,
-                },
-                DiffResult::Left(d),
-            ) => {
-                last_body.push(**d);
+            (Some(DiffFragment::ADDED { offset: _, body }), DiffResult::Left(d)) => {
+                println!("DIFF ADD: append {}", d);
+                body.push(**d);
             }
-            (
-                DiffFragment::UNCHANGED {
-                    offset: _,
-                    len: last_len,
-                },
-                DiffResult::Both(_, _),
-            ) => {
-                *last_len += 1;
+            (Some(DiffFragment::UNCHANGED { offset, len }), DiffResult::Both(_, _)) => {
+                *len += 1;
+                println!("DIFF UNCHANGED: add {} {}", offset, len);
             }
-            (
-                DiffFragment::DELETED {
-                    offset: _,
-                    len: last_len,
-                },
-                DiffResult::Right(_),
-            ) => {
-                *last_len += 1;
+            (Some(DiffFragment::DELETED { offset, len }), DiffResult::Right(_)) => {
+                *len += 1;
+                println!("DIFF DELETED: deleted {} {}", offset, len);
             }
-            _ => panic!("how??"),
+            (None, DiffResult::Left(_)) => {
+                println!("DIFF ADD: create {}", i);
+                squished_frags.push(DiffFragment::DELETED {
+                    offset: i as u64,
+                    len: 1,
+                })
+            }
+            (None, DiffResult::Both(_, _)) => {
+                println!("DIFF UNCHANGED: create {}", i);
+                squished_frags.push(DiffFragment::UNCHANGED {
+                    offset: i as u64,
+                    len: 1,
+                })
+            }
+            (None, DiffResult::Right(b)) => {
+                println!("DIFF UNCHANGED: create {}", i);
+                squished_frags.push(DiffFragment::ADDED {
+                    offset: i as u64,
+                    body: vec![**b],
+                })
+            }
+            _ => {}
         }
     }
 
