@@ -1,11 +1,13 @@
 use clap::Parser;
 
+mod repo;
+
 mod cli;
+use cli::{Cli, Commands};
+
 mod init;
 mod status;
 mod diff;
-
-use cli::{Cli, Commands};
 
 fn main() {
     let cli = Cli::parse();
