@@ -1,8 +1,14 @@
 use lib::diff;
+use crate::repo::Repo;
 
 pub fn diff(old: &String, new: &String) {
-    let old_content = std::fs::read(old).unwrap();
-    let new_content = std::fs::read(new).unwrap();
+
+    let repo = Repo::at_root_path(None);
+    let old_path = repo.get_path_in_cwd(old);
+    let new_path = repo.get_path_in_cwd(new);
+
+    let old_content = std::fs::read(old_path).unwrap();
+    let new_content = std::fs::read(new_path).unwrap();
 
     let diffs = diff::diff_content(&old_content, &new_content);
 

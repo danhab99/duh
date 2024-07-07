@@ -13,10 +13,16 @@ impl Repo {
         }
     }
 
-    fn get_path_in_repo(&self, p: &str) -> PathBuf {
+    pub fn get_path_in_repo(&self, p: &str) -> PathBuf {
         let mut b = PathBuf::from(self.root_path.clone()).join(p);
         b.push(utils::REPO_METADATA_DIR_NAME);
         return b;
+    }
+
+    pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
+        PathBuf::from(self.root_path.clone())
+            .join(utils::get_cwd())
+            .join(p)
     }
 
     pub fn initalize_at(root_path: Option<String>) -> Result<Repo, Error> {
