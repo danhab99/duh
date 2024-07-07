@@ -7,3 +7,6 @@ edition = "2021"
 
 [dependencies]
 diff = "0.1.13"
+rmp = "0.8.14"
+rmp-serde = "1.3.0"
+serde = { version = "1.0.204", features = ["derive"] }

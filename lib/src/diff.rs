@@ -1,10 +1,8 @@
 use diff::Result as DiffResult;
-use std::{
-    borrow::BorrowMut,
-    path::{Path, PathBuf},
-};
+use serde::{Deserialize, Serialize};
+use std::borrow::BorrowMut;
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, Deserialize, Serialize)]
 pub enum DiffFragment {
     ADDED { offset: u64, body: Vec<u8> },
     UNCHANGED { offset: u64, len: u64 },
@@ -20,8 +18,6 @@ pub fn diff_content(old: &[u8], new: &[u8]) -> Vec<DiffFragment> {
 
     for (i, d) in delta.iter().enumerate() {
         let mut l = squished_frags.last_mut();
-
-        // println!("{:?} {:?}", l.borrow_mut(), d);
 
         match (l.borrow_mut(), d) {
             (Some(DiffFragment::ADDED { offset: _, body }), DiffResult::Right(d)) => {
