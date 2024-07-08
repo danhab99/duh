@@ -19,5 +19,8 @@ pub enum Commands {
         old: String,
         new: String,
     },
+    Track {
+        names: Vec<String>,
+    }
 }
 

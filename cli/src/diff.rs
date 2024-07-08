@@ -1,8 +1,7 @@
-use lib::diff;
 use crate::repo::Repo;
+use lib::diff;
 
 pub fn diff(old: &String, new: &String) {
-
     let repo = Repo::at_root_path(None);
     let old_path = repo.get_path_in_cwd(old);
     let new_path = repo.get_path_in_cwd(new);
