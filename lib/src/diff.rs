@@ -4,9 +4,9 @@ use std::borrow::BorrowMut;
 
 #[derive(PartialEq, Eq, Clone, Debug, Deserialize, Serialize)]
 pub enum DiffFragment {
-    ADDED { offset: u64, body: Vec<u8> },
-    UNCHANGED { offset: u64, len: u64 },
-    DELETED { offset: u64, len: u64 },
+    ADDED { offset: usize, body: Vec<u8> },
+    UNCHANGED { offset: usize, len: usize },
+    DELETED { offset: usize, len: usize },
 }
 
 pub fn diff_content(old: &[u8], new: &[u8]) -> Vec<DiffFragment> {
@@ -30,15 +30,15 @@ pub fn diff_content(old: &[u8], new: &[u8]) -> Vec<DiffFragment> {
                 *len += 1;
             }
             (_, DiffResult::Left(_)) => squished_frags.push(DiffFragment::DELETED {
-                offset: i as u64,
+                offset: i as usize,
                 len: 1,
             }),
             (_, DiffResult::Both(_, _)) => squished_frags.push(DiffFragment::UNCHANGED {
-                offset: i as u64,
+                offset: i as usize,
                 len: 1,
             }),
             (_, DiffResult::Right(b)) => squished_frags.push(DiffFragment::ADDED {
-                offset: i as u64,
+                offset: i as usize,
                 body: vec![**b],
             }),
         }
@@ -46,14 +46,14 @@ pub fn diff_content(old: &[u8], new: &[u8]) -> Vec<DiffFragment> {
 
     if old.len() > new.len() {
         squished_frags.push(DiffFragment::DELETED {
-            offset: new.len() as u64,
-            len: (old.len() - new.len()) as u64,
+            offset: new.len() as usize,
+            len: (old.len() - new.len()) as usize,
         })
     } else if old.len() < new.len() {
         let old_len = old.len();
         let new_len = new.len();
         squished_frags.push(DiffFragment::ADDED {
-            offset: old_len as u64,
+            offset: old_len as usize,
             body: new[old_len..new_len].to_vec(),
         })
     }
