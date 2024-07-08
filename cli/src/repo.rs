@@ -1,5 +1,8 @@
 use clap::error::Error;
-use lib::utils;
+use lib::{
+    object_data::{Commit, Object},
+    utils,
+};
 use std::{fs, path::PathBuf};
 
 pub struct Repo {
@@ -8,6 +11,7 @@ pub struct Repo {
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> Repo {
+        let mut x: Commit;
         Repo {
             root_path: utils::find_repo_root(root_path).unwrap(),
         }
@@ -34,5 +38,11 @@ impl Repo {
         fs::write(repo.get_path_in_repo("HEAD"), "")?;
 
         Ok(repo)
+    }
+
+    pub fn track_new_file(&self, sub_paths: &Vec<String>) {
+        for sub_path in sub_paths {
+            let path = self.get_path_in_cwd(&sub_path);
+        }
     }
 }

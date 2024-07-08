@@ -1,8 +1,14 @@
 use rmp::encode as msgp_w;
 use sha2::{Digest, Sha256};
-use std::error::Error;
+use std::{
+    error::Error,
+    fs,
+    path::{self, Path},
+};
 
 use serde::{Deserialize, Serialize};
+
+use crate::diff::DiffFragment;
 
 #[repr(u8)]
 pub enum ObjectType {
@@ -142,6 +148,27 @@ pub struct File {
     name: String,
     mode: u16,
     fragments: Vec<Fragment>,
+}
+
+fn from_file_path(path: String, prev_file: Option<File>) -> Result<File, Box<dyn Error>> {
+    let content = fs::read(path)?;
+
+    let fragments = Vec::new();
+
+    match prev_file {
+        None => {
+            fragments.push(DiffFragment::ADDED { offset: 0, body: content })
+        }
+        Some(f) => {
+            
+        }
+    }
+
+    Ok(File {
+        name: Path::new(path.as_str()).file_name().unwrap().to_str().unwrap().to_string(),
+        mode: 0u16,
+        fragments:
+    })
 }
 
 impl Object for File {
