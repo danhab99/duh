@@ -1,5 +1,9 @@
 use crate::{object_data::Commit, utils};
-use std::{error::Error, fs::{self, File}, path::PathBuf};
+use std::{error::Error, ffi::OsStr, fs, path::PathBuf};
+
+use rmp_serde::{Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub struct Repo {
     root_path: String,
@@ -36,13 +40,88 @@ impl Repo {
         Ok(repo)
     }
 
-    pub fn track_new_file(&self, sub_paths: &Vec<String>) {
-        for sub_path in sub_paths {
-            let path = self.get_path_in_cwd(&sub_path);
+    fn get_object_path(&self, hash: &[u8]) -> &OsStr {
+        let top = hex::encode(&hash[0..2]);
+        let bottom = hex::encode(&hash[2..hash.len()]);
 
-            let f = File{
+        self.get_path_in_repo(format!("objects/{}/{}", top, bottom).as_str())
+            .as_os_str()
+    }
 
-            }
+    fn save_obj(&self, o: Object) -> Result<(), Box<dyn Error>> {
+        let msgpack = o.to_msgpack();
+        let hash = Sha256::digest(msgpack.clone()).as_slice();
+        let path = self.get_object_path(hash);
+        fs::write(path, msgpack)?;
+        Ok(())
+    }
+
+    fn get_object(&self, hash: &[u8]) -> Result<Object, Box<dyn Error>> {
+        let path = self.get_object_path(hash);
+        let content = fs::read(path)?;
+        let o = Object::from_msgpack(&content)?;
+        return Ok(o);
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Person {
+    name: String,
+    email: String,
+    timestamp: u64,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CommitStruct {
+    parent: String,
+    trees: Vec<TreeStruct>,
+    message: String,
+    comitter: Person,
+    author: Person,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TreeStruct {
+    name: String,
+    trees: Vec<TreeStruct>,
+    files: Vec<FileStruct>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileStruct {
+    name: String,
+    mode: u16,
+    fragments: Vec<FragmentStruct>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FragmentStruct {
+    offset: usize,
+    content: Vec<u8>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Object {
+    Commit(CommitStruct),
+    Tree(TreeStruct),
+    File(FileStruct),
+    Fragment(FragmentStruct),
+}
+
+impl Object {
+    fn get_type(&self) -> u8 {
+        match self {
+            Self::Commit(_) => 0u8,
+            Self::Tree(_) => 1u8,
+            Self::File(_) => 2u8,
+            Self::Fragment(_) => 3u8,
         }
+    }
+
+    fn to_msgpack(&self) -> &[u8] {
+        let mut buf = Vec::new();
+        self.serialize(&mut Serializer::new(&mut buf)).unwrap();
+        buf.as_slice()
+    }
+
+    fn from_msgpack(bin: &[u8]) -> Result<Object, Box<dyn Error>> {
+        let mut d = Deserializer::new(bin);
+        let o = Object::deserialize(&mut d)?;
+        Ok(o)
     }
 }
