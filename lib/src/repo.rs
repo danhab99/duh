@@ -1,4 +1,4 @@
-use crate::{object_data::Commit, utils};
+use crate::{diff::{self, DiffFragment }, utils};
 use std::{error::Error, ffi::OsStr, fs, path::PathBuf};
 
 use rmp_serde::{Deserializer, Serializer};
@@ -11,7 +11,6 @@ pub struct Repo {
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> Repo {
-        let mut x: Commit;
         Repo {
             root_path: utils::find_repo_root(root_path).unwrap(),
         }
@@ -56,11 +55,53 @@ impl Repo {
         Ok(())
     }
 
-    fn get_object(&self, hash: &[u8]) -> Result<Object, Box<dyn Error>> {
+    fn read_object(&self, hash: &[u8]) -> Result<&[u8], Box<dyn Error>> {
         let path = self.get_object_path(hash);
         let content = fs::read(path)?;
+        return  Ok( content.as_slice() );
+    }
+
+    fn get_object(&self, hash: &[u8]) -> Result<Object, Box<dyn Error>> {
+        let content = self.read_object(hash)?;
         let o = Object::from_msgpack(&content)?;
         return Ok(o);
+    }
+
+    fn get_ref_path(&self, name: &str) -> &OsStr {
+        self.get_path_in_repo(format!("refs/{}", name).as_str())
+            .as_os_str()
+    }
+
+    fn set_ref(&self, name: &str, hash: &[u8]) -> Result<(), Box<dyn Error>> {
+        let path = self.get_ref_path(name);
+        let x = fs::write(path, hash)?;
+        return Ok(());
+    }
+
+    fn get_ref(&self, name: &str) -> Result<&[u8], Box<dyn Error>> {
+        let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
+        let ref_hash = fs::read(ref_path)?.as_slice();
+        return Ok(ref_hash);
+    }
+
+    fn get_object_by_ref(&self, name: &str) -> Result<Object, Box<dyn Error>> {
+        let hash = self.get_ref(name)?;
+        self.get_object(&hash)
+    }
+
+    fn get_commit_at_head(&self, hash: &[u8]) -> Result<CommitStruct, Box<dyn Error>> {
+        let head_hash = self.get_ref("HEAD")?;
+        let head_commit: Object = self.get_object(head_hash)?;
+        match head_commit {
+            Object::Commit(c) => Ok(c),
+            _ => Err("object is not a commit".into()),
+        }
+    }
+
+    fn diff_objs(&self, old_path: &[u8], new_path: &[u8]) -> Result<Vec<DiffFragment>, Box<dyn Error>> {
+        let old = self.read_object(old_path)?;
+        let new = self.read_object(new_path)?;
+        Ok(diff::diff_content(old, new))
     }
 }
 
