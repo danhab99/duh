@@ -1,5 +1,8 @@
-use crate::{diff::{self, DiffFragment }, utils};
-use std::{error::Error, ffi::OsStr, fs, path::PathBuf};
+use crate::{
+    diff::{self, DiffFragment},
+    utils,
+};
+use std::{error::Error, ffi::{OsStr, OsString}, fs, path::PathBuf};
 
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
@@ -22,10 +25,24 @@ impl Repo {
         return b;
     }
 
+
+    pub fn get_path_in_repo_str(&self, p: &str) -> String {
+        let b = self.get_path_in_repo(p);
+        let s = b.into_os_string().into_string().unwrap();
+        return s;
+    }
+
     pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
         PathBuf::from(self.root_path.clone())
             .join(utils::get_cwd())
             .join(p)
+    }
+
+    pub fn get_path_in_cwd_str(&self, p: &str) -> String {
+        let b = self.get_path_in_cwd(p);
+        let s = b.into_os_string().into_string().unwrap();
+        return s;
+
     }
 
     pub fn initalize_at(root_path: Option<String>) -> Result<Repo, Box<dyn Error>> {
@@ -39,57 +56,55 @@ impl Repo {
         Ok(repo)
     }
 
-    fn get_object_path(&self, hash: &[u8]) -> &OsStr {
+    fn get_object_path(&self, hash: Vec<u8>) -> PathBuf {
         let top = hex::encode(&hash[0..2]);
         let bottom = hex::encode(&hash[2..hash.len()]);
 
         self.get_path_in_repo(format!("objects/{}/{}", top, bottom).as_str())
-            .as_os_str()
     }
 
     fn save_obj(&self, o: Object) -> Result<(), Box<dyn Error>> {
         let msgpack = o.to_msgpack();
-        let hash = Sha256::digest(msgpack.clone()).as_slice();
+        let hash = Sha256::digest(msgpack.clone()).to_vec();
         let path = self.get_object_path(hash);
         fs::write(path, msgpack)?;
         Ok(())
     }
 
-    fn read_object(&self, hash: &[u8]) -> Result<&[u8], Box<dyn Error>> {
+    fn read_object(&self, hash: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
         let path = self.get_object_path(hash);
         let content = fs::read(path)?;
-        return  Ok( content.as_slice() );
+        return Ok(content.to_vec());
     }
 
-    fn get_object(&self, hash: &[u8]) -> Result<Object, Box<dyn Error>> {
+    fn get_object(&self, hash: Vec<u8>) -> Result<Object, Box<dyn Error>> {
         let content = self.read_object(hash)?;
-        let o = Object::from_msgpack(&content)?;
+        let o = Object::from_msgpack(content)?;
         return Ok(o);
     }
 
-    fn get_ref_path(&self, name: &str) -> &OsStr {
-        self.get_path_in_repo(format!("refs/{}", name).as_str())
-            .as_os_str()
+    fn get_ref_path(&self, name: &str) -> PathBuf {
+        return self.get_path_in_repo(format!("refs/{}", name).as_str());
     }
 
-    fn set_ref(&self, name: &str, hash: &[u8]) -> Result<(), Box<dyn Error>> {
+    fn set_ref(&self, name: &str, hash: Vec<u8>) -> Result<(), Box<dyn Error>> {
         let path = self.get_ref_path(name);
         let x = fs::write(path, hash)?;
         return Ok(());
     }
 
-    fn get_ref(&self, name: &str) -> Result<&[u8], Box<dyn Error>> {
+    fn get_ref(&self, name: &str) -> Result<Vec<u8>, Box<dyn Error>> {
         let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
-        let ref_hash = fs::read(ref_path)?.as_slice();
+        let ref_hash = fs::read(ref_path)?.to_vec();
         return Ok(ref_hash);
     }
 
     fn get_object_by_ref(&self, name: &str) -> Result<Object, Box<dyn Error>> {
         let hash = self.get_ref(name)?;
-        self.get_object(&hash)
+        self.get_object(hash)
     }
 
-    fn get_commit_at_head(&self, hash: &[u8]) -> Result<CommitStruct, Box<dyn Error>> {
+    fn get_commit_at_head(&self) -> Result<CommitStruct, Box<dyn Error>> {
         let head_hash = self.get_ref("HEAD")?;
         let head_commit: Object = self.get_object(head_hash)?;
         match head_commit {
@@ -98,10 +113,14 @@ impl Repo {
         }
     }
 
-    fn diff_objs(&self, old_path: &[u8], new_path: &[u8]) -> Result<Vec<DiffFragment>, Box<dyn Error>> {
+    fn diff_objs(
+        &self,
+        old_path: Vec<u8>,
+        new_path: Vec<u8>,
+    ) -> Result<Vec<DiffFragment>, Box<dyn Error>> {
         let old = self.read_object(old_path)?;
         let new = self.read_object(new_path)?;
-        Ok(diff::diff_content(old, new))
+        Ok(diff::diff_content(old.as_slice(), new.as_slice()))
     }
 }
 
@@ -154,14 +173,14 @@ impl Object {
         }
     }
 
-    fn to_msgpack(&self) -> &[u8] {
+    fn to_msgpack(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         self.serialize(&mut Serializer::new(&mut buf)).unwrap();
-        buf.as_slice()
+        buf.to_vec()
     }
 
-    fn from_msgpack(bin: &[u8]) -> Result<Object, Box<dyn Error>> {
-        let mut d = Deserializer::new(bin);
+    fn from_msgpack(bin: Vec<u8>) -> Result<Object, Box<dyn Error>> {
+        let mut d = Deserializer::new(bin.as_slice());
         let o = Object::deserialize(&mut d)?;
         Ok(o)
     }
