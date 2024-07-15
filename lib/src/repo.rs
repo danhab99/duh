@@ -2,11 +2,7 @@ use crate::{
     diff::{self, DiffFragment},
     utils,
 };
-use std::{
-    error::Error,
-    fs,
-    path::PathBuf,
-};
+use std::{error::Error, fs, iter::zip, path::PathBuf};
 
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
@@ -26,6 +22,7 @@ impl Repo {
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
         let mut b = PathBuf::from(self.root_path.clone()).join(p);
         b.push(utils::REPO_METADATA_DIR_NAME);
+        fs::create_dir_all(p).unwrap();
         return b;
     }
 
@@ -98,7 +95,7 @@ impl Repo {
 
     fn get_ref(&self, name: &str) -> Result<&str, Box<dyn Error>> {
         let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
-        let ref_hash = String::from_utf8( fs::read(ref_path)? )?;
+        let ref_hash = String::from_utf8(fs::read(ref_path)?)?;
         return Ok(ref_hash.as_str());
     }
 
@@ -113,7 +110,7 @@ impl Repo {
     }
 
     fn get_commit_at_head(&self) -> Result<CommitStruct, Box<dyn Error>> {
-        let head_hash = self.get_ref("HEAD")?;
+        let head_hash = self.resolve_ref_name("HEAD")?;
         let head_commit: Object = self.get_object(head_hash)?;
         match head_commit {
             Object::Commit(c) => Ok(c),
@@ -125,6 +122,32 @@ impl Repo {
         let old = self.read_object(old_r)?;
         let new = self.read_object(new_r)?;
         Ok(diff::diff_content(old.as_slice(), new.as_slice()))
+    }
+
+    fn track_file(&self, relative_path: &str) -> Result<(), Box<dyn Error>> {
+        let absolute_path = self.get_path_in_cwd(relative_path);
+        let relative_to_repo_path = absolute_path.strip_prefix(self.root_path)?;
+
+        let head_commit = self.get_commit_at_head()?;
+
+        for p in relative_to_repo_path.iter() {
+            let path_name = p.to_str().unwrap_or("");
+            let tree = head_commit
+                .trees
+                .iter()
+                .filter(|tree| path_name == tree.name)
+                .collect::<Vec<_>>()
+                .first();
+
+            match tree {
+                Some(tree) => {
+
+                },
+                None => {},
+            }
+        }
+
+        Ok(())
     }
 }
 
