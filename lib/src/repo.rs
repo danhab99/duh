@@ -1,9 +1,10 @@
 use crate::{
     diff::{self, DiffFragment},
+    error::NoRepo,
+    hash::Hash,
     utils,
-    hash::Hash
 };
-use std::{error::Error, fs, path::PathBuf};
+use std::{error::Error, fs, path::PathBuf, str::FromStr};
 
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,21 @@ pub struct Repo {
 pub enum ObjectReference {
     Hash(Hash),
     Ref(String),
+}
+
+impl ObjectReference {
+    pub fn ref_from_str(s: &str) -> ObjectReference {
+        ObjectReference::Ref(String::from_str(s))
+    }
+}
+
+macro_rules! assert_variant {
+    ($enum:ident, $variant:path) => {
+        match $enum {
+            $variant(x) => x,
+            _ => return Err(NoRepo::new("not the right variant")),
+        }
+    };
 }
 
 macro_rules! get_objects {
