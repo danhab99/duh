@@ -12,6 +12,7 @@ pub struct Repo {
     root_path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Hash([u8; 64]);
 
 impl std::string::ToString for Hash {
@@ -115,9 +116,12 @@ impl Repo {
         return self.get_path_in_repo(format!("refs/{}", name).as_str());
     }
 
-    fn set_ref(&self, name: &str, hash: Vec<u8>) -> Result<(), Box<dyn Error>> {
+    fn set_ref(&self, name: &str, r: ObjectReference) -> Result<(), Box<dyn Error>> {
         let path = self.get_ref_path(name);
-        fs::write(path, hash)?;
+        fs::write(path, match r {
+            ObjectReference::Hash(h) => h.to_string(),
+            ObjectReference::Ref(r) => format!("ref:{}", r),
+        })?;
         return Ok(());
     }
 
@@ -143,15 +147,47 @@ impl Repo {
         }
     }
 
-    fn get_commit_at_head(&self) -> Result<CommitStruct, Box<dyn Error>> {
-        let head_hash = self.resolve_ref_name(ObjectReference::Ref("HEAD".try_into()?))?;
-        let head_commit: Object = self.get_object(head_hash)?;
-        match head_commit {
-            Object::Commit(c) => Ok(c),
-            _ => Err("object is not a commit".into()),
-        }
+    fn commit_get_trees(&self, c: CommitStruct) -> Vec<TreeStruct> {
+        c.trees
+            .iter()
+            .map(|tree_hash| {
+                let t = self.get_object(*tree_hash).unwrap();
+                match t {
+                    Object::Tree(t) => Some(t),
+                    _ => None,
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>()
     }
 
+    fn tree_get_trees(&self, t: TreeStruct) -> Vec<TreeStruct> {
+        t.trees
+            .iter()
+            .map(|tree_hash| {
+                let t = self.get_object(*tree_hash).unwrap();
+                match t {
+                    Object::Tree(t) => Some(t),
+                    _ => None,
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    }
+
+    fn tree_get_files(&self, t: TreeStruct) -> Vec<FileStruct> {
+        t.files
+            .iter()
+            .map(|tree_hash| {
+                let t = self.get_object(*tree_hash).unwrap();
+                match t {
+                    Object::File(t) => Some(t),
+                    _ => None,
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -163,7 +199,7 @@ pub struct Person {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommitStruct {
     parent: String,
-    trees: Vec<TreeStruct>,
+    trees: Vec<Hash>,
     message: String,
     comitter: Person,
     author: Person,
@@ -171,26 +207,20 @@ pub struct CommitStruct {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TreeStruct {
     name: String,
-    trees: Vec<TreeStruct>,
-    files: Vec<FileStruct>,
+    trees: Vec<Hash>,
+    files: Vec<Hash>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileStruct {
     name: String,
     mode: u16,
-    fragments: Vec<FragmentStruct>,
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FragmentStruct {
-    offset: usize,
-    content: Vec<u8>,
+    fragments: Vec<Hash>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Object {
     Commit(CommitStruct),
     Tree(TreeStruct),
     File(FileStruct),
-    Fragment(FragmentStruct),
 }
 
 impl Object {
@@ -199,7 +229,6 @@ impl Object {
             Self::Commit(_) => 0u8,
             Self::Tree(_) => 1u8,
             Self::File(_) => 2u8,
-            Self::Fragment(_) => 3u8,
         }
     }
 
