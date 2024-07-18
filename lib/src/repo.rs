@@ -1,6 +1,7 @@
 use crate::{
     diff::{self, DiffFragment},
     utils,
+    hash::Hash
 };
 use std::{error::Error, fs, path::PathBuf};
 
@@ -12,33 +13,25 @@ pub struct Repo {
     root_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Hash([u8; 64]);
-
-impl std::string::ToString for Hash {
-    fn to_string(&self) -> String {
-        let v = &self.0;
-        String::from_utf8(v.to_vec()).unwrap()
-    }
-}
-
-impl Hash {
-    pub fn from_string(s: String) -> Hash {
-        let mut h = [0u8; 64];
-        h.copy_from_slice(s.as_bytes());
-        return Hash(h);
-    }
-
-    pub fn from_str(s: &str) -> Hash {
-        let mut h = [0u8; 64];
-        h.copy_from_slice(s.as_bytes());
-        return Hash(h);
-    }
-}
-
 pub enum ObjectReference {
     Hash(Hash),
     Ref(String),
+}
+
+macro_rules! get_objects {
+    ($self:ident, $collection:expr, $variant:path) => {
+        $collection
+            .iter()
+            .map(|hash| {
+                let obj = $self.get_object(*hash).unwrap();
+                match obj {
+                    $variant(obj) => Some(obj),
+                    _ => None,
+                }
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    };
 }
 
 impl Repo {
@@ -118,10 +111,13 @@ impl Repo {
 
     fn set_ref(&self, name: &str, r: ObjectReference) -> Result<(), Box<dyn Error>> {
         let path = self.get_ref_path(name);
-        fs::write(path, match r {
-            ObjectReference::Hash(h) => h.to_string(),
-            ObjectReference::Ref(r) => format!("ref:{}", r),
-        })?;
+        fs::write(
+            path,
+            match r {
+                ObjectReference::Hash(h) => h.to_string(),
+                ObjectReference::Ref(r) => format!("ref:{}", r),
+            },
+        )?;
         return Ok(());
     }
 
@@ -148,45 +144,15 @@ impl Repo {
     }
 
     fn commit_get_trees(&self, c: CommitStruct) -> Vec<TreeStruct> {
-        c.trees
-            .iter()
-            .map(|tree_hash| {
-                let t = self.get_object(*tree_hash).unwrap();
-                match t {
-                    Object::Tree(t) => Some(t),
-                    _ => None,
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>()
+        get_objects!(self, c.trees, Object::Tree)
     }
 
     fn tree_get_trees(&self, t: TreeStruct) -> Vec<TreeStruct> {
-        t.trees
-            .iter()
-            .map(|tree_hash| {
-                let t = self.get_object(*tree_hash).unwrap();
-                match t {
-                    Object::Tree(t) => Some(t),
-                    _ => None,
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>()
+        get_objects!(self, t.trees, Object::Tree)
     }
 
     fn tree_get_files(&self, t: TreeStruct) -> Vec<FileStruct> {
-        t.files
-            .iter()
-            .map(|tree_hash| {
-                let t = self.get_object(*tree_hash).unwrap();
-                match t {
-                    Object::File(t) => Some(t),
-                    _ => None,
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>()
+        get_objects!(self, t.files, Object::File)
     }
 }
 
