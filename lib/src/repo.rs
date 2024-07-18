@@ -2,7 +2,7 @@ use crate::{
     diff::{self, DiffFragment},
     utils,
 };
-use std::{error::Error, fs, iter::zip, path::PathBuf};
+use std::{error::Error, fs, path::PathBuf};
 
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,34 @@ use sha2::{Digest, Sha256};
 
 pub struct Repo {
     root_path: String,
+}
+
+pub struct Hash([u8; 64]);
+
+impl std::string::ToString for Hash {
+    fn to_string(&self) -> String {
+        let v = &self.0;
+        String::from_utf8(v.to_vec()).unwrap()
+    }
+}
+
+impl Hash {
+    pub fn from_string(s: String) -> Hash {
+        let mut h = [0u8; 64];
+        h.copy_from_slice(s.as_bytes());
+        return Hash(h);
+    }
+
+    pub fn from_str(s: &str) -> Hash {
+        let mut h = [0u8; 64];
+        h.copy_from_slice(s.as_bytes());
+        return Hash(h);
+    }
+}
+
+pub enum ObjectReference {
+    Hash(Hash),
+    Ref(String),
 }
 
 impl Repo {
@@ -55,8 +83,8 @@ impl Repo {
         Ok(repo)
     }
 
-    fn get_object_path(&self, r: &str) -> Result<PathBuf, Box<dyn Error>> {
-        let hash = self.resolve_ref_name(r)?;
+    fn get_object_path(&self, r: ObjectReference) -> Result<PathBuf, Box<dyn Error>> {
+        let hash = self.resolve_ref_name(r)?.to_string();
         let top = hex::encode(&hash[0..2]);
         let bottom = hex::encode(&hash[2..hash.len()]);
 
@@ -65,19 +93,19 @@ impl Repo {
 
     fn save_obj(&self, o: Object) -> Result<(), Box<dyn Error>> {
         let msgpack = o.to_msgpack();
-        let hash = String::from_utf8(Sha256::digest(msgpack.clone()).to_vec())?;
-        let path = self.get_object_path(hash.as_str())?;
+        let hash = Hash::from_string(String::from_utf8(Sha256::digest(msgpack.clone()).to_vec())?);
+        let path = self.get_object_path(ObjectReference::Hash(hash))?;
         fs::write(path, msgpack)?;
         Ok(())
     }
 
-    fn read_object(&self, r: &str) -> Result<Vec<u8>, Box<dyn Error>> {
-        let path = self.get_object_path(r)?;
+    fn read_object(&self, r: Hash) -> Result<Vec<u8>, Box<dyn Error>> {
+        let path = self.get_object_path(ObjectReference::Hash(r))?;
         let content = fs::read(path)?;
         return Ok(content.to_vec());
     }
 
-    fn get_object(&self, r: &str) -> Result<Object, Box<dyn Error>> {
+    fn get_object(&self, r: Hash) -> Result<Object, Box<dyn Error>> {
         let content = self.read_object(r)?;
         let o = Object::from_msgpack(content)?;
         return Ok(o);
@@ -93,24 +121,30 @@ impl Repo {
         return Ok(());
     }
 
-    fn get_ref(&self, name: &str) -> Result<&str, Box<dyn Error>> {
+    fn get_ref(&self, name: String) -> Result<ObjectReference, Box<dyn Error>> {
         let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
-        let ref_hash = String::from_utf8(fs::read(ref_path)?)?;
-        return Ok(ref_hash.as_str());
+        let val = String::from_utf8(fs::read(ref_path)?)?;
+        if val.starts_with("ref:") {
+            Ok(ObjectReference::Ref(val))
+        } else {
+            let v = val.as_bytes();
+            let h = Hash(v.try_into()?);
+            Ok(ObjectReference::Hash(h))
+        }
     }
 
-    fn resolve_ref_name(&self, refname: &str) -> Result<&str, Box<dyn Error>> {
-        if refname.starts_with("ref:") {
-            let parts = refname.split(":").collect::<Vec<_>>();
-            let r = self.get_ref(parts[1])?;
-            return self.resolve_ref_name(r);
-        } else {
-            self.get_ref(refname)
+    fn resolve_ref_name(&self, refname: ObjectReference) -> Result<Hash, Box<dyn Error>> {
+        match refname {
+            ObjectReference::Hash(h) => Ok(h),
+            ObjectReference::Ref(r) => {
+                let n = self.get_ref(r)?;
+                return Ok(self.resolve_ref_name(n)?);
+            }
         }
     }
 
     fn get_commit_at_head(&self) -> Result<CommitStruct, Box<dyn Error>> {
-        let head_hash = self.resolve_ref_name("HEAD")?;
+        let head_hash = self.resolve_ref_name(ObjectReference::Ref("HEAD".try_into()?))?;
         let head_commit: Object = self.get_object(head_hash)?;
         match head_commit {
             Object::Commit(c) => Ok(c),
@@ -118,37 +152,6 @@ impl Repo {
         }
     }
 
-    fn diff_objs(&self, old_r: &str, new_r: &str) -> Result<Vec<DiffFragment>, Box<dyn Error>> {
-        let old = self.read_object(old_r)?;
-        let new = self.read_object(new_r)?;
-        Ok(diff::diff_content(old.as_slice(), new.as_slice()))
-    }
-
-    fn track_file(&self, relative_path: &str) -> Result<(), Box<dyn Error>> {
-        let absolute_path = self.get_path_in_cwd(relative_path);
-        let relative_to_repo_path = absolute_path.strip_prefix(self.root_path)?;
-
-        let head_commit = self.get_commit_at_head()?;
-
-        for p in relative_to_repo_path.iter() {
-            let path_name = p.to_str().unwrap_or("");
-            let tree = head_commit
-                .trees
-                .iter()
-                .filter(|tree| path_name == tree.name)
-                .collect::<Vec<_>>()
-                .first();
-
-            match tree {
-                Some(tree) => {
-
-                },
-                None => {},
-            }
-        }
-
-        Ok(())
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
