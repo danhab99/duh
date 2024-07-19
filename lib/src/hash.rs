@@ -9,7 +9,8 @@ pub struct Hash([u8; 64]);
 
 impl<'de> Deserialize<'de> for Hash {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: serde::Deserializer<'de>,
+    where
+        D: serde::Deserializer<'de>,
     {
         struct HashVisitor;
 
@@ -78,5 +79,16 @@ impl Hash {
         let mut h = [0u8; 64];
         h.copy_from_slice(s.as_bytes());
         return Hash(h);
+    }
+
+
+    pub fn from_slice(s: &[u8]) -> Hash {
+        let mut h = [0u8; 64];
+        h.copy_from_slice(s);
+        return Hash(h);
+    }
+
+    pub fn new() -> Hash {
+        Hash([0u8; 64])
     }
 }
