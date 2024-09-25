@@ -1,10 +1,11 @@
-use crate::{
-    diff::{self, DiffFragment},
-    error::NoRepo,
-    hash::Hash,
-    utils,
+use crate::{hash::Hash, utils};
+use std::{
+    error::Error,
+    fs::{self, File},
+    io::{self, Read, Write},
+    path::PathBuf,
+    str::FromStr,
 };
-use std::{error::Error, ffi::OsStr, fs, path::PathBuf, str::FromStr};
 
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use sha2::{Digest, Sha256};
 
 pub struct Repo {
     root_path: String,
+    buffer_size: usize,
 }
 
 pub enum ObjectReference {
@@ -20,19 +22,19 @@ pub enum ObjectReference {
 }
 
 impl ObjectReference {
-    pub fn ref_from_str(s: &str) -> ObjectReference {
-        ObjectReference::Ref(String::from_str(s))
+    pub fn ref_from_str(s: &str) -> Result<ObjectReference, Box<dyn Error>> {
+        Ok(ObjectReference::Ref(String::from_str(s)?)) // TODO ref:
     }
 }
 
-macro_rules! assert_variant {
-    ($enum:ident, $variant:path) => {
-        match $enum {
-            $variant(x) => x,
-            _ => return Err(NoRepo::new("not the right variant")),
-        }
-    };
-}
+// macro_rules! assert_variant {
+//     ($enum:ident, $variant:path) => {
+//         match $enum {
+//             $variant(x) => x,
+//             _ => return Err(NoRepo::new("not the right variant")),
+//         }
+//     };
+// }
 
 macro_rules! get_objects {
     ($self:ident, $collection:expr, $variant:path) => {
@@ -56,10 +58,16 @@ macro_rules! find {
     };
 }
 
+fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
+    let x = String::from_utf8(Sha256::digest(txt.clone()).to_vec())?;
+    Ok(x)
+}
+
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> Repo {
         Repo {
             root_path: utils::find_repo_root(root_path).unwrap(),
+            buffer_size: 1000,
         }
     }
 
@@ -107,23 +115,28 @@ impl Repo {
         Ok(self.get_path_in_repo(format!("objects/{}/{}", top, bottom).as_str()))
     }
 
-    fn save_obj(&self, o: Object) -> Result<(), Box<dyn Error>> {
+    fn save_obj(&self, o: Object) -> Result<Hash, Box<dyn Error>> {
         let (msgpack, hash) = o.hash()?;
         let path = self.get_object_path(ObjectReference::Hash(hash))?;
         fs::write(path, msgpack)?;
-        Ok(())
+        Ok(hash)
     }
 
-    fn read_object(&self, r: Hash) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn read_object(&self, r: Hash) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
         let path = self.get_object_path(ObjectReference::Hash(r))?;
+        if !path.exists() {
+            return Ok(None);
+        }
         let content = fs::read(path)?;
-        return Ok(content.to_vec());
+        return Ok(Some(content.to_vec()));
     }
 
-    fn get_object(&self, r: Hash) -> Result<Object, Box<dyn Error>> {
+    fn get_object(&self, r: Hash) -> Result<Option<Object>, Box<dyn Error>> {
         let content = self.read_object(r)?;
-        let o = Object::from_msgpack(content)?;
-        return Ok(o);
+        match content {
+            Some(content) => Ok(Some(Object::from_msgpack(content)?)),
+            None => Ok(None),
+        }
     }
 
     fn get_ref_path(&self, name: &str) -> PathBuf {
@@ -176,67 +189,155 @@ impl Repo {
     // }
 
     fn is_hash_set(&self, h: Hash) -> Result<bool, Box<dyn Error>> {
-         let x = self.get_object_path(ObjectReference::Hash(h))?.exists();
-         return Ok(x);
+        let x = self.get_object_path(ObjectReference::Hash(h))?.exists();
+        return Ok(x);
     }
 
-    fn get_tree_hash(&self, commit: CommitStruct, path: PathBuf) -> Result<Option<Hash>, Box<dyn Error>> {
-        let mut l = path.iter().rev().collect::<std::collections::VecDeque<_>>();
+    fn get_index(&self) -> Result<Index, Box<dyn Error>> {
+        let bin = fs::read(self.get_path_in_repo("index"))?;
+        let mut d = Deserializer::new(bin.as_slice());
+        let index = Index::deserialize(&mut d)?;
+        Ok(index)
+    }
 
-        let f = l.pop_back().unwrap_or(OsStr::new("")).to_str().unwrap_or("");
-        let mut node_r = find!(commit.trees, f);
-        let mut trees_buff = Vec::<TreeStruct>::new();
+    fn save_index(&self, index: Index) -> Result<(), Box<dyn Error>> {
+        let mut buf = Vec::new();
+        index.serialize(&mut Serializer::new(&mut buf))?;
+        Ok(())
+    }
 
-        while l.len() > 0 {
-            let name = l.pop_back().unwrap_or(OsStr::new("")).to_str().unwrap_or("");
+    pub fn stage_file(&self, file_path: PathBuf) -> Result<Hash, Box<dyn Error>> {
+        let mut hashes = Vec::<Hash>::new();
+        let mut digester = Sha256::new();
+        let mut c = self.buffer_size + 1;
+        let mut f = File::open(file_path)?;
 
-            match node_r {
-                Some(r) => {
-                    let o = self.get_object(r.hash)?;
-                    let tree = assert_variant!(o, Object::Tree);
-                    node_r = find!(tree.trees, name);
-                },
-                None => {
-                    let tree = TreeStruct {
-                        trees: Vec::new(),
-                        files: Vec::new(),
-                    };
+        while c < self.buffer_size {
+            let mut buf = Vec::<u8>::with_capacity(self.buffer_size);
+            c = f.read(&mut buf)?;
+            digester.write(buf.as_slice())?;
+            let frag_hash = self.save_obj(Object::Fragment(Fragment(buf)))?;
+            hashes.push(frag_hash);
+        }
 
-                    trees_buff.push(tree);
-                    node_r = Some(&TreeRefStruct { name: String::from_str(name)?, hash: Hash::new() });
+        let hash = digester.finalize().to_vec();
 
-                    match trees_buff.last() {
-                        None => {
-                            trees_buff.push(tree);
-                        }
-                        Some(s) => {
-                            let (_, hash) = Object::Tree(*s).hash()?;
-                            s.trees.push(TreeRefStruct{
-                                name: String::from_str(name)?,
-                                hash,
-                            });
-                            
-                        }
+        let fs = Object::File(FileStruct {
+            mode: 0u16,
+            content_hash: Hash::from_slice(hash.as_slice()),
+            create_time: 0u64,
+            update_time: 0u64,
+            fragments: hashes,
+        });
+
+        self.save_obj(fs);
+
+        let (_, fs_hash) = fs.hash()?;
+
+        let mut index = self.get_index()?;
+        index.staged_files.push(StagedFile {
+            content_hash: Hash::from_slice(&hash.as_slice()),
+            filestruct_hash: fs_hash,
+            file_path,
+        });
+        self.save_index(index)?;
+
+        Ok(Hash::from_slice(hash.as_slice()))
+    }
+
+    fn build_tree(&self, start: &str) -> Result<TreeStruct, Box<dyn Error>> {
+        let mut tree = TreeStruct {
+            trees: Vec::new(),
+            files: Vec::new(),
+        };
+
+        let dir = self.get_path_in_cwd(start);
+        let index = self.get_index()?;
+
+        for d in fs::read_dir(dir)? {
+            let entry = d?;
+            if entry.metadata()?.is_dir() {
+                let t = self.build_tree(entry.path().as_os_str().to_str().unwrap())?;
+                let (_, h) = Object::Tree(t).hash()?;
+                let ll = entry.path().iter().last().unwrap();
+                let l = ll.to_str().unwrap();
+
+                tree.trees.push(TreeRefStruct {
+                    name: l.to_string(),
+                    hash: h,
+                });
+            } else {
+                let res = index
+                    .staged_files
+                    .iter()
+                    .find(|x| x.file_path.starts_with(entry.path()));
+
+                let fs_hash: Hash = match res {
+                    None => {
+                        let mut digester = Sha256::new();
+                        let mut file = File::open(entry.path())?;
+                        io::copy(&mut file, &mut digester)?;
+                        Hash::from_slice(digester.finalize().to_vec().as_slice())
                     }
-                },
-            };
+                    Some(info) => info.filestruct_hash,
+                };
+
+                tree.files.push(FileRefStruct {
+                    hash: fs_hash,
+                    name: entry.file_name().into_string().unwrap(),
+                    mode: 0u16,
+                });
+            }
         }
 
-        for tree in trees_buff {
-            self.save_obj(Object::Tree(tree));
-        }
+        self.save_obj(Object::Tree(tree))?;
 
-        match node_r {
-            Some(t) => {Ok( Some( t.hash ) )},
-            None => {Ok(None)},
-        }
+        return Ok(tree);
     }
 
-    fn stage_file(&self, rel_path: &str) -> Result<Hash, Box<dyn Error>> {
-        let 
+    pub fn commit(&self, message: String) -> Result<Hash, Box<dyn Error>> {
+        let index = self.get_index()?;
+
+        let tree = self.build_tree("./")?;
+        let (_, tree_hash) = Object::Tree(tree).hash()?;
+
+        let commit = Object::Commit(CommitStruct {
+            parent: Hash::new(),
+            tree: TreeRefStruct {
+                name: String::from_str("")?,
+                hash: tree_hash,
+            },
+            message,
+            comitter: Person {
+                name: String::from(""),
+                email: String::from(""),
+                timestamp: 0,
+            },
+            author: Person {
+                name: String::from(""),
+                email: String::from(""),
+                timestamp: 0,
+            },
+        });
+
+        return self.save_obj(commit);
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct StagedFile {
+    content_hash: Hash,
+    filestruct_hash: Hash,
+    file_path: PathBuf,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Index {
+    staged_files: Vec<StagedFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Fragment(Vec<u8>);
 #[derive(Debug, Serialize, Deserialize)]
 struct TreeRefStruct {
     name: String,
@@ -256,8 +357,8 @@ pub struct Person {
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommitStruct {
-    parent: String,
-    trees: Vec<TreeRefStruct>,
+    parent: Hash,
+    tree: TreeRefStruct,
     message: String,
     comitter: Person,
     author: Person,
@@ -270,6 +371,9 @@ pub struct TreeStruct {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileStruct {
     mode: u16,
+    create_time: u64,
+    update_time: u64,
+    content_hash: Hash,
     fragments: Vec<Hash>,
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -277,6 +381,7 @@ pub enum Object {
     Commit(CommitStruct),
     Tree(TreeStruct),
     File(FileStruct),
+    Fragment(Fragment),
 }
 
 impl Object {
@@ -285,6 +390,7 @@ impl Object {
             Self::Commit(_) => 0u8,
             Self::Tree(_) => 1u8,
             Self::File(_) => 2u8,
+            Self::Fragment(_) => 3u8,
         }
     }
 
@@ -300,9 +406,10 @@ impl Object {
         Ok(o)
     }
 
-    fn hash(&self) -> Result<(Vec<u8>, Hash ), Box<dyn Error>> {
+    fn hash(&self) -> Result<(Vec<u8>, Hash), Box<dyn Error>> {
         let msgpack = self.to_msgpack();
-        let hash = Hash::from_string(String::from_utf8(Sha256::digest(msgpack.clone()).to_vec())?);
+        // let hash = Hash::from_string(String::from_utf8(Sha256::digest(msgpack.clone()).to_vec())?);
+        let hash = Hash::from_string(hash_string(String::from_utf8(self.to_msgpack())?)?);
 
         return Ok((msgpack, hash));
     }

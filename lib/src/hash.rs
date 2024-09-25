@@ -4,7 +4,7 @@ use serde::{
 };
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, Copy)]
 pub struct Hash([u8; 64]);
 
 impl<'de> Deserialize<'de> for Hash {
