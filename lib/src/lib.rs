@@ -1,5 +1,6 @@
-pub mod diff;
-pub mod utils;
-pub mod repo;
-pub mod hash;
+mod diff;
+mod hash;
+mod index;
+mod utils;
 pub mod error;
+pub mod repo;

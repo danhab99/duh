@@ -1,5 +1,10 @@
-use crate::{hash::Hash, utils};
+use crate::{
+    hash::Hash,
+    utils::{self, find_file, REPO_CONFIG_FILE_NAME, REPO_METADATA_DIR_NAME},
+};
 use std::{
+    borrow::BorrowMut,
+    env,
     error::Error,
     fs::{self, File},
     io::{self, Read, Write},
@@ -10,21 +15,12 @@ use std::{
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use toml;
 
 pub struct Repo {
     root_path: String,
     buffer_size: usize,
-}
-
-pub enum ObjectReference {
-    Hash(Hash),
-    Ref(String),
-}
-
-impl ObjectReference {
-    pub fn ref_from_str(s: &str) -> Result<ObjectReference, Box<dyn Error>> {
-        Ok(ObjectReference::Ref(String::from_str(s)?)) // TODO ref:
-    }
+    me: Person,
 }
 
 // macro_rules! assert_variant {
@@ -36,39 +32,50 @@ impl ObjectReference {
 //     };
 // }
 
-macro_rules! get_objects {
-    ($self:ident, $collection:expr, $variant:path) => {
-        $collection
-            .iter()
-            .map(|hash| {
-                let obj = $self.get_object(*hash).unwrap();
-                match obj {
-                    $variant(obj) => Some(obj),
-                    _ => None,
-                }
-            })
-            .flatten()
-            .collect::<Vec<_>>()
-    };
-}
-
-macro_rules! find {
-    ($refs:expr, $name:ident) => {
-        $refs.iter().find(|x| x.name == $name)
-    };
-}
-
-fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
-    let x = String::from_utf8(Sha256::digest(txt.clone()).to_vec())?;
-    Ok(x)
-}
-
 impl Repo {
-    pub fn at_root_path(root_path: Option<String>) -> Repo {
-        Repo {
-            root_path: utils::find_repo_root(root_path).unwrap(),
+    pub fn at_root_path(root_path: Option<String>) -> Result<Repo, Box<dyn Error>> {
+        let rp = match root_path {
+            Some(x) => x,
+            None => {
+                let cwd = env::current_dir()?;
+                let c = cwd.to_str().ok_or("cannot identify dir")?;
+                String::from(c)
+            }
+        };
+
+        let config_path = find_file(rp.as_str(), REPO_CONFIG_FILE_NAME)?;
+
+        let content = fs::read(config_path)?;
+        let decoded = String::from_utf8(content)?;
+        let config = decoded.parse::<toml::Table>()?;
+
+        let user_config = config
+            .get("user")
+            .ok_or("missing user config")?
+            .as_table()
+            .ok_or("user config isn't a table")?;
+
+        Ok(Repo {
+            root_path: find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?,
             buffer_size: 1000,
-        }
+            me: Person {
+                name: String::from(
+                    user_config
+                        .get("name")
+                        .ok_or("missing user.name")?
+                        .as_str()
+                        .unwrap_or("missing user.name"),
+                ),
+                email: String::from(
+                    user_config
+                        .get("email")
+                        .ok_or("missing user.email")?
+                        .as_str()
+                        .unwrap_or("missing user.email"),
+                ),
+                timestamp: 0u64,
+            },
+        })
     }
 
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
@@ -96,15 +103,13 @@ impl Repo {
         return s;
     }
 
-    pub fn initalize_at(root_path: Option<String>) -> Result<Repo, Box<dyn Error>> {
-        let repo = Repo::at_root_path(root_path);
+    pub fn initalize_at(root_path: String) -> Result<Repo, Box<dyn Error>> {
+        fs::create_dir_all(get_path_in_metadata("objects"))?;
+        fs::create_dir_all(get_path_in_metadata("refs"))?;
+        fs::write(get_path_in_metadata("config"), "# duh config")?;
+        fs::write(get_path_in_metadata("HEAD"), "")?;
 
-        fs::create_dir_all(repo.get_path_in_repo("objects"))?;
-        fs::create_dir_all(repo.get_path_in_repo("refs"))?;
-        fs::write(repo.get_path_in_repo("config"), "# duh config")?;
-        fs::write(repo.get_path_in_repo("HEAD"), "")?;
-
-        Ok(repo)
+        Ok(Repo::at_root_path(Some(root_path))?)
     }
 
     fn get_object_path(&self, r: ObjectReference) -> Result<PathBuf, Box<dyn Error>> {
@@ -117,7 +122,7 @@ impl Repo {
 
     fn save_obj(&self, o: Object) -> Result<Hash, Box<dyn Error>> {
         let (msgpack, hash) = o.hash()?;
-        let path = self.get_object_path(ObjectReference::Hash(hash))?;
+        let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
         fs::write(path, msgpack)?;
         Ok(hash)
     }
@@ -176,18 +181,6 @@ impl Repo {
         }
     }
 
-    // fn commit_get_trees(&self, c: CommitStruct) -> Vec<TreeRefStruct> {
-    //     get_objects!(self, c.trees, TreeRefStruct)
-    // }
-
-    // fn tree_get_trees(&self, t: TreeStruct) -> Vec<TreeRefStruct> {
-    //     get_objects!(self, t.trees, Object::Tree)
-    // }
-
-    // fn tree_get_files(&self, t: TreeStruct) -> Vec<FileRefStruct> {
-    //     get_objects!(self, t.files, Object::File)
-    // }
-
     fn is_hash_set(&self, h: Hash) -> Result<bool, Box<dyn Error>> {
         let x = self.get_object_path(ObjectReference::Hash(h))?.exists();
         return Ok(x);
@@ -206,11 +199,12 @@ impl Repo {
         Ok(())
     }
 
-    pub fn stage_file(&self, file_path: PathBuf) -> Result<Hash, Box<dyn Error>> {
+    pub fn stage_file(&self, fp: &str) -> Result<Hash, Box<dyn Error>> {
+        let file_path = PathBuf::from_str(fp)?;
         let mut hashes = Vec::<Hash>::new();
         let mut digester = Sha256::new();
         let mut c = self.buffer_size + 1;
-        let mut f = File::open(file_path)?;
+        let mut f = File::open(file_path.clone())?;
 
         while c < self.buffer_size {
             let mut buf = Vec::<u8>::with_capacity(self.buffer_size);
@@ -223,22 +217,17 @@ impl Repo {
         let hash = digester.finalize().to_vec();
 
         let fs = Object::File(FileStruct {
-            mode: 0u16,
             content_hash: Hash::from_slice(hash.as_slice()),
-            create_time: 0u64,
-            update_time: 0u64,
             fragments: hashes,
         });
 
-        self.save_obj(fs);
-
-        let (_, fs_hash) = fs.hash()?;
+        let fs_hash = self.save_obj(fs)?;
 
         let mut index = self.get_index()?;
         index.staged_files.push(StagedFile {
             content_hash: Hash::from_slice(&hash.as_slice()),
             filestruct_hash: fs_hash,
-            file_path,
+            file_path: file_path.clone(),
         });
         self.save_index(index)?;
 
@@ -259,10 +248,11 @@ impl Repo {
             if entry.metadata()?.is_dir() {
                 let t = self.build_tree(entry.path().as_os_str().to_str().unwrap())?;
                 let (_, h) = Object::Tree(t).hash()?;
-                let ll = entry.path().iter().last().unwrap();
+                let path = entry.path();
+                let ll = path.iter().last().unwrap();
                 let l = ll.to_str().unwrap();
 
-                tree.trees.push(TreeRefStruct {
+                tree.borrow_mut().trees.push(TreeRefStruct {
                     name: l.to_string(),
                     hash: h,
                 });
@@ -277,12 +267,23 @@ impl Repo {
                         let mut digester = Sha256::new();
                         let mut file = File::open(entry.path())?;
                         io::copy(&mut file, &mut digester)?;
-                        Hash::from_slice(digester.finalize().to_vec().as_slice())
+                        let content_hash = digester.finalize().to_vec();
+
+                        let fragments = Vec::<Hash>::new();
+
+                        let fs = FileStruct {
+                            content_hash: Hash::from_slice(content_hash.as_slice()),
+                            fragments,
+                        };
+
+                        self.save_obj(Object::File(fs.clone()));
+
+                        fs.content_hash
                     }
-                    Some(info) => info.filestruct_hash,
+                    Some(info) => info.filestruct_hash.clone(),
                 };
 
-                tree.files.push(FileRefStruct {
+                tree.borrow_mut().files.push(FileRefStruct {
                     hash: fs_hash,
                     name: entry.file_name().into_string().unwrap(),
                     mode: 0u16,
@@ -290,15 +291,13 @@ impl Repo {
             }
         }
 
-        self.save_obj(Object::Tree(tree))?;
+        self.save_obj(Object::Tree(tree.clone()))?;
 
         return Ok(tree);
     }
 
-    pub fn commit(&self, message: String) -> Result<Hash, Box<dyn Error>> {
-        let index = self.get_index()?;
-
-        let tree = self.build_tree("./")?;
+    pub fn commit(&self, message: String, start: &str) -> Result<Hash, Box<dyn Error>> {
+        let tree = self.build_tree(start)?;
         let (_, tree_hash) = Object::Tree(tree).hash()?;
 
         let commit = Object::Commit(CommitStruct {
@@ -308,54 +307,69 @@ impl Repo {
                 hash: tree_hash,
             },
             message,
-            comitter: Person {
-                name: String::from(""),
-                email: String::from(""),
-                timestamp: 0,
-            },
-            author: Person {
-                name: String::from(""),
-                email: String::from(""),
-                timestamp: 0,
-            },
+            comitter: self.me.clone(),
+            author: self.me.clone(),
         });
 
         return self.save_obj(commit);
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+pub enum ObjectReference {
+    Hash(Hash),
+    Ref(String),
+}
+
+impl ObjectReference {
+    pub fn ref_from_str(s: &str) -> Result<ObjectReference, Box<dyn Error>> {
+        Ok(ObjectReference::Ref(String::from_str(s)?)) // TODO ref:
+    }
+}
+
+fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
+    let x = String::from_utf8(Sha256::digest(txt.clone()).to_vec())?;
+    Ok(x)
+}
+
+fn get_path_in_metadata(path: &str) -> PathBuf {
+    let mut p = PathBuf::new();
+    p.push(REPO_METADATA_DIR_NAME);
+    p.push(path);
+    return p;
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct StagedFile {
     content_hash: Hash,
     filestruct_hash: Hash,
     file_path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Index {
     staged_files: Vec<StagedFile>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct Fragment(Vec<u8>);
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct TreeRefStruct {
     name: String,
     hash: Hash,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct FileRefStruct {
     name: String,
     mode: u16,
     hash: Hash,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Person {
     name: String,
     email: String,
     timestamp: u64,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitStruct {
     parent: Hash,
     tree: TreeRefStruct,
@@ -363,20 +377,17 @@ pub struct CommitStruct {
     comitter: Person,
     author: Person,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TreeStruct {
     trees: Vec<TreeRefStruct>,
     files: Vec<FileRefStruct>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileStruct {
-    mode: u16,
-    create_time: u64,
-    update_time: u64,
     content_hash: Hash,
     fragments: Vec<Hash>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Object {
     Commit(CommitStruct),
     Tree(TreeStruct),
@@ -385,15 +396,6 @@ pub enum Object {
 }
 
 impl Object {
-    fn get_type(&self) -> u8 {
-        match self {
-            Self::Commit(_) => 0u8,
-            Self::Tree(_) => 1u8,
-            Self::File(_) => 2u8,
-            Self::Fragment(_) => 3u8,
-        }
-    }
-
     fn to_msgpack(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         self.serialize(&mut Serializer::new(&mut buf)).unwrap();
