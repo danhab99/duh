@@ -1,7 +1,8 @@
-use crate::repo::Repo;
 
-pub fn track(names: &Vec<String>) {
-    let repo = Repo::at_root_path(None);
+use lib::repo::Repo;
 
-    repo. 
+pub fn track(repo: Repo, names: &Vec<String>) {
+    for n in names {
+        repo.stage_file(n)?;
+    }
 }
