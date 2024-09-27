@@ -1,28 +1,27 @@
 use clap::Parser;
+use lib::repo::Repo;
 use sha2::{Sha256, Sha512, Digest};
 
-mod repo;
-
-mod cli;
 use cli::{Cli, Commands};
 use sha2::Sha512;
 
+mod cli;
 mod diff;
 mod init;
 mod status;
 mod track;
+mod commit;
 
 fn main() {
     let cli = Cli::parse();
 
-    let mut hasher = Sha512::new();
-    hasher.update(b"hello world");
-    let result = hasher.finalize().as_slice();
+    let repo = Repo.at_root_path();
 
     match &cli.command {
-        Commands::Init => init::init(),
-        Commands::Status { wd } => status::status(wd.clone()),
-        Commands::Diff { old, new } => diff::diff(old, new),
-        Commands::Track { names } => track::track(names),
+        Commands::Init => init::init,
+        Commands::Status  => status::status,
+        Commands::Diff => diff::diff,
+        Commands::Track(c)  => track::track(repo, c),
+        Commands::Commit => commit::commit,
     }
 }

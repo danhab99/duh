@@ -8,19 +8,30 @@ pub struct Cli {
     pub command: Commands,
 }
 
+pub struct StatusCommand {
+    pub wd: Option<String>,
+}
+
+pub struct DiffCommand {
+    pub old: String,
+    pub new: String,
+}
+
+pub struct TrackCommand {
+    pub names: Vec<String>,
+}
+
+pub struct CommitCommand {
+    pub start: String,
+    pub message: String,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Find out what has changed in this repo
-    Status {
-        wd: Option<String>,
-    },
+    Status(StatusCommand),
     Init,
-    Diff {
-        old: String,
-        new: String,
-    },
-    Track {
-        names: Vec<String>,
-    }
+    Diff(DiffCommand),
+    Track(TrackCommand),
+    Commit(CommitCommand),
 }
-
