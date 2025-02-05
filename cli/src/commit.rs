@@ -1,21 +1,30 @@
+use std::borrow::Borrow;
+
+use clap::clap_derive::Args;
 use lib::{objects::ObjectReference, repo::Repo};
-use serde::de::Error;
 
-use crate::cli::CommitCommand;
+#[derive(Args)]
+pub struct CommitCommand {
+    pub start: String,
+    pub message: String,
+}
 
-pub fn commit(repo: Repo, cmd: CommitCommand) -> Result<(), Box<dyn Error>> {
-    let head_ref = repo.get_ref("HEAD".into())?;
-    let head_commit_hash = repo.resolve_ref_name(head_ref)?;
+pub fn commit(repo: Repo, cmd: &CommitCommand) {
+    let head_ref = repo.get_ref("HEAD".into()).unwrap();
+    let head_commit_hash = repo.resolve_ref_name(head_ref).unwrap();
 
-    let commit_hash = repo.commit(cmd.message, &cmd.start, Some(head_commit_hash))?;
+    let commit_hash = repo
+        .commit(cmd.message.clone(), &cmd.start, Some(head_commit_hash))
+        .unwrap();
+
+    match head_ref {
+        ObjectReference::Hash(hash) => panic 
+    }
 
     repo.set_ref(
         match head_ref {
-            ObjectReference::Hash(_) => "HEAD",
-            ObjectReference::Ref(ref_name) => &ref_name,
         },
-        commit_hash,
-    );
-
-    Ok(())
+        ObjectReference::Hash(commit_hash),
+    )
+    .unwrap();
 }

@@ -1,9 +1,7 @@
 use clap::Parser;
 use lib::repo::Repo;
-use sha2::{Sha256, Sha512, Digest};
 
 use cli::{Cli, Commands};
-use sha2::Sha512;
 
 mod cli;
 mod diff;
@@ -15,13 +13,13 @@ mod commit;
 fn main() {
     let cli = Cli::parse();
 
-    let repo = Repo.at_root_path();
+    let repo = Repo::at_root_path(None).unwrap();
 
     match &cli.command {
-        Commands::Init => init::init,
-        Commands::Status  => status::status,
-        Commands::Diff => diff::diff,
+        Commands::Init => init::init(),
+        Commands::Status(c) => status::status(repo, c),
+        Commands::Diff(c) => diff::diff(repo, c),
         Commands::Track(c)  => track::track(repo, c),
-        Commands::Commit => commit::commit,
+        Commands::Commit(c) => commit::commit(repo, c),
     }
 }

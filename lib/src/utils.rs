@@ -1,3 +1,4 @@
+use core::panic;
 use std::{error::Error, path::{Path, PathBuf}};
 use sha2::{Digest, Sha256};
 
@@ -10,11 +11,12 @@ pub fn get_cwd() -> String {
 }
 
 pub const REPO_METADATA_DIR_NAME: &str = ".duh";
-pub const REPO_CONFIG_FILE_NAME: &str = format!("{}{}", REPO_METADATA_DIR_NAME, "config").as_str();
-pub const REPO_IGNORE_FILE_NAME: &str = format!("{}{}", REPO_METADATA_DIR_NAME, "ignore").as_str();
-
-#[derive(Debug, Clone)]
-pub struct NoRepo;
+pub fn getRepoConfigFileName() -> String {
+    return format!("{}{}", REPO_METADATA_DIR_NAME, "config");
+}
+pub fn getRepoIgnoreFileName() -> String {
+    return format!("{}{}", REPO_METADATA_DIR_NAME, "ignore");
+}
 
 pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error>> {
     let mut path = PathBuf::from(start_path);
@@ -23,7 +25,10 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
         let mut p = path.clone();
 
         if p.eq(&PathBuf::from("/")) {
-            return Err(NoRepo);
+            panic!("TODO proper error");
+            // return Err(NoRepo{
+            //     details: "mm",
+            // });
         }
 
         p.push(target.clone());

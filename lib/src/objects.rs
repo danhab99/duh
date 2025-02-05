@@ -1,10 +1,10 @@
-use std::error::Error;
+use crate::{diff::DiffFragment, hash::Hash, utils::hash_string};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
-use crate::hash::Hash;
+use std::{error::Error, str::FromStr};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Fragment(pub Vec<u8>);
+pub struct Fragment(pub DiffFragment);
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TreeRefStruct {
     pub name: String,
@@ -41,11 +41,14 @@ pub struct FileStruct {
     pub fragments: Vec<Hash>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StagedFileStruct(Vec<u8>);
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Object {
     Commit(CommitStruct),
     Tree(TreeStruct),
     File(FileStruct),
     Fragment(Fragment),
+    StagedFileStruct(StagedFileStruct),
 }
 
 impl Object {
@@ -75,9 +78,30 @@ pub enum ObjectReference {
     Ref(String),
 }
 
-impl ObjectReference {
-    pub fn ref_from_str(s: &str) -> Result<ObjectReference, Box<dyn Error>> {
-        Ok(ObjectReference::Ref(String::from_str(s)?)) // TODO ref:
+impl ToString for ObjectReference {
+    fn to_string(&self) -> String {
+        match self {
+            ObjectReference::Hash(h) => h.to_string(),
+            ObjectReference::Ref(r) => format!("ref:{}", r),
+        }
     }
 }
 
+impl FromStr for ObjectReference {
+    type Err = ();
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.starts_with("ref:") {
+            Ok(ObjectReference::Ref(String::from(s)))
+        } else {
+            let h = Hash::from_str(s);
+            Ok(ObjectReference::Hash(h))
+        }
+    }
+}
+
+impl From<String> for ObjectReference {
+    fn from(value: String) -> Self {
+        return ObjectReference::from_str(&value.as_str()).unwrap();
+    }
+}

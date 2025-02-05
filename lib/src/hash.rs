@@ -2,9 +2,12 @@ use serde::{
     de::{self, SeqAccess, Visitor},
     Deserialize, Serialize,
 };
-use std::fmt;
+use sha2::{Digest, Sha256};
+use std::{error::Error, fmt};
 
-#[derive(Debug, Clone)]
+use crate::utils::hash_string;
+
+#[derive(Debug, Clone, Copy)]
 pub struct Hash([u8; 64]);
 
 impl<'de> Deserialize<'de> for Hash {
@@ -81,14 +84,25 @@ impl Hash {
         return Hash(h);
     }
 
-
     pub fn from_slice(s: &[u8]) -> Hash {
         let mut h = [0u8; 64];
         h.copy_from_slice(s);
         return Hash(h);
     }
 
+    pub fn from_vec(v: Vec<u8>) -> Hash {
+        Hash::from_slice(v.as_slice())
+    }
+
     pub fn new() -> Hash {
         Hash([0u8; 64])
+    }
+
+    pub fn digest_string(s: String) -> Result<Hash, Box<dyn Error>> {
+        Ok(Hash::from_string(hash_string(s)?))
+    }
+
+    pub fn digest_slice(s: &[u8]) -> Result<Hash, Box<dyn Error>> {
+        Ok(Hash::from_slice(Sha256::digest(s).to_vec().as_slice()))
     }
 }

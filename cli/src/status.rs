@@ -1,8 +1,13 @@
-use crate::repo::Repo;
+use lib::repo::Repo;
+use clap::clap_derive::Args;
 
-pub fn status(wd: Option<String>) {
-    let repo = Repo::at_root_path(wd);
+#[derive(Args)]
+pub struct StatusCommand {
+    #[arg(short, long)]
+    pub wd: Option<String>,
+}
 
+pub fn status(repo: Repo, cmd: &StatusCommand) {
     let files = std::fs::read_dir(repo.get_path_in_cwd(""))
         .unwrap()
         .map(|x| x.unwrap())

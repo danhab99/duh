@@ -1,7 +1,7 @@
-mod diff;
 mod hash;
 mod index;
-mod utils;
+pub mod utils;
+pub mod diff;
 pub mod error;
 pub mod objects;
 pub mod repo;
