@@ -20,8 +20,11 @@ pub struct Repo {
     index: IndexManager,
 }
 
+type RepoError = Box<dyn Error>;
+type RepoResult<T> = Result<T, RepoError>;
+
 impl Repo {
-    pub fn at_root_path(root_path: Option<String>) -> Result<Repo, Box<dyn Error>> {
+    pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
         let rp = match root_path {
             Some(x) => x,
             None => {
@@ -104,7 +107,7 @@ impl Repo {
         return s;
     }
 
-    pub fn initalize_at(root_path: String) -> Result<Repo, Box<dyn Error>> {
+    pub fn initalize_at(root_path: String) -> RepoResult<Repo> {
         fs::create_dir_all(get_path_in_metadata("objects"))?;
         fs::create_dir_all(get_path_in_metadata("refs"))?;
         fs::write(get_path_in_metadata("config"), "# duh config")?;
@@ -113,7 +116,7 @@ impl Repo {
         Ok(Repo::at_root_path(Some(root_path))?)
     }
 
-    fn get_object_path(&self, r: ObjectReference) -> Result<PathBuf, Box<dyn Error>> {
+    fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
         let hash = self.resolve_ref_name(r)?.to_string();
         let top = &hash[0..2];
         let bottom = &hash[2..hash.len()];
@@ -121,14 +124,14 @@ impl Repo {
         Ok(self.get_path_in_repo(format!("objects/{}/{}", top, bottom).as_str()))
     }
 
-    fn save_obj(&self, o: Object) -> Result<Hash, Box<dyn Error>> {
+    fn save_obj(&self, o: Object) -> RepoResult<Hash> {
         let (msgpack, hash) = o.hash()?;
         let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
         fs::write(path, msgpack)?;
         Ok(hash)
     }
 
-    fn read_object(&self, r: Hash) -> Result<Option<Vec<u8>>, Box<dyn Error>> {
+    fn read_object(&self, r: Hash) -> RepoResult<Option<Vec<u8>>> {
         let path = self.get_object_path(ObjectReference::Hash(r))?;
         if !path.exists() {
             return Ok(None);
@@ -137,7 +140,7 @@ impl Repo {
         return Ok(Some(content.to_vec()));
     }
 
-    fn get_object(&self, r: Hash) -> Result<Option<Object>, Box<dyn Error>> {
+    fn get_object(&self, r: Hash) -> RepoResult<Option<Object>> {
         let content = self.read_object(r)?;
         match content {
             Some(content) => Ok(Some(Object::from_msgpack(content)?)),
@@ -149,19 +152,19 @@ impl Repo {
         return self.get_path_in_repo(format!("refs/{}", name).as_str());
     }
 
-    fn set_ref(&self, name: &str, r: ObjectReference) -> Result<(), Box<dyn Error>> {
+    fn set_ref(&self, name: &str, r: ObjectReference) -> RepoResult<()> {
         let path = self.get_ref_path(name);
         fs::write(path, r.to_string())?;
         return Ok(());
     }
 
-    fn get_ref(&self, name: String) -> Result<ObjectReference, Box<dyn Error>> {
+    pub fn get_ref(&self, name: String) -> RepoResult<ObjectReference> {
         let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
         let val = String::from_utf8(fs::read(ref_path)?)?;
         Ok(ObjectReference::from(val))
     }
 
-    fn resolve_ref_name(&self, refname: ObjectReference) -> Result<Hash, Box<dyn Error>> {
+    pub fn resolve_ref_name(&self, refname: ObjectReference) -> RepoResult<Hash> {
         match refname {
             ObjectReference::Hash(h) => Ok(h),
             ObjectReference::Ref(r) => {
@@ -171,7 +174,7 @@ impl Repo {
         }
     }
 
-    pub fn stage_file(&mut self, fp: &str) -> Result<Hash, Box<dyn Error>> {
+    pub fn stage_file(&mut self, fp: &str) -> RepoResult<Hash> {
         let file_path = PathBuf::from_str(fp)?;
         let content = fs::read(fp)?;
 
@@ -205,7 +208,7 @@ impl Repo {
         &self,
         new_file: ObjectReference,
         old_file: Option<ObjectReference>,
-    ) -> Result<Hash, Box<dyn Error>> {
+    ) -> RepoResult<Hash> {
         let confirmed_old_file = if let Some(x) = old_file {
             x
         } else {
@@ -236,7 +239,7 @@ impl Repo {
         &self,
         current_path: &str,
         old_tree: Option<TreeStruct>,
-    ) -> Result<Hash, Box<dyn Error>> {
+    ) -> RepoResult<Hash> {
         let current_path_parts = current_path.split("/").collect::<Vec<_>>();
         let current_path_parts_len = current_path_parts.len();
 
