@@ -6,9 +6,7 @@ use cli::{Cli, Commands};
 mod cli;
 mod diff;
 mod init;
-mod status;
-mod track;
-mod commit;
+mod snapshot;
 
 fn main() {
     let cli = Cli::parse();
@@ -17,9 +15,7 @@ fn main() {
 
     match &cli.command {
         Commands::Init => init::init(),
-        Commands::Status(c) => status::status(repo, c),
         Commands::Diff(c) => diff::diff(repo, c),
-        Commands::Track(c)  => track::track(repo, c),
-        Commands::Commit(c) => commit::commit(repo, c),
+        Commands::Snapshot(c) => snapshot::snapshot(repo, c),
     }
 }
