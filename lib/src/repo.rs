@@ -1,27 +1,20 @@
 use crate::{
-    diff::diff_content,
     hash::Hash,
-    index::{IndexManager, StagedFile},
-    objects::{
-        CommitStruct, FileRefStruct, FileStruct, Fragment, Object, ObjectReference, Person,
-        TreeRefStruct, TreeStruct,
-    },
+    objects::{CommitStruct, Object, ObjectReference, Person},
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
-use std::{env, error::Error, fs, io::Write, path::PathBuf, str::FromStr, time::SystemTime};
+use std::{env, error::Error, fs, path::PathBuf, time::SystemTime};
 
-use sha2::{Digest, Sha256};
 use toml;
 
 pub struct Repo {
     root_path: String,
     buffer_size: usize,
     me: Person,
-    index: IndexManager,
 }
 
-type RepoError = Box<dyn Error>;
-type RepoResult<T> = Result<T, RepoError>;
+pub type RepoError = Box<dyn Error>;
+pub type RepoResult<T> = Result<T, RepoError>;
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
@@ -59,7 +52,6 @@ impl Repo {
         let rp = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
 
         Ok(Repo {
-            index: IndexManager::new(rp.as_str()),
             root_path: rp,
             buffer_size,
             me: Person {
@@ -107,7 +99,7 @@ impl Repo {
         return s;
     }
 
-    pub fn initalize_at(root_path: String) -> RepoResult<Repo> {
+    pub fn initialize_at(root_path: String) -> RepoResult<Repo> {
         fs::create_dir_all(get_path_in_metadata("objects"))?;
         fs::create_dir_all(get_path_in_metadata("refs"))?;
         fs::write(get_path_in_metadata("config"), "# duh config")?;
@@ -164,8 +156,8 @@ impl Repo {
         Ok(ObjectReference::from(val))
     }
 
-    pub fn resolve_ref_name(&self, refname: ObjectReference) -> RepoResult<Hash> {
-        match refname {
+    pub fn resolve_ref_name(&self, ref_name: ObjectReference) -> RepoResult<Hash> {
+        match ref_name {
             ObjectReference::Hash(h) => Ok(h),
             ObjectReference::Ref(r) => {
                 let n = self.get_ref(r)?;
@@ -174,130 +166,15 @@ impl Repo {
         }
     }
 
-    pub fn stage_file(&mut self, fp: &str) -> RepoResult<Hash> {
-        let file_path = PathBuf::from_str(fp)?;
-        let content = fs::read(fp)?;
+    pub fn get_commit_object(&self, r: ObjectReference) -> RepoResult<Option<CommitStruct>> {
+        let hash = self.resolve_ref_name(r)?;
+        let obj = self.get_object(hash)?.expect("commit not found");
 
-        let mut digester = Sha256::new();
-        digester.write(&content)?;
-        let d = digester.finalize();
-        let content_hash = Hash::from_slice(d.as_slice());
-
-        fs::copy(
-            fp,
-            format!(
-                "{}/staged/{}",
-                self.get_path_in_repo("index").to_str().unwrap(),
-                content_hash.to_string()
-            ),
-        )?;
-
-        self.index.transaction(move |index| {
-            index.staged_files.push(StagedFile {
-                content_hash,
-                file_path: file_path.clone(),
-            });
-
-            Ok(())
-        })?;
-
-        Ok(content_hash)
-    }
-
-    fn build_file_diff(
-        &self,
-        new_file: ObjectReference,
-        old_file: Option<ObjectReference>,
-    ) -> RepoResult<Hash> {
-        let confirmed_old_file = if let Some(x) = old_file {
-            x
+        if let Object::Commit(commit) = obj {
+            return Ok(Some(commit));
         } else {
-            return self.resolve_ref_name(new_file);
-        };
-
-        let new_file_content = self.read_object(self.resolve_ref_name(new_file)?)?.unwrap();
-        let old_file_content = self
-            .read_object(self.resolve_ref_name(confirmed_old_file)?)?
-            .unwrap();
-
-        let diff_parts = diff_content(old_file_content.as_slice(), new_file_content.as_slice());
-
-        let f = FileStruct {
-            fragments: diff_parts.iter().try_fold(Vec::new(), |mut acc, part| {
-                let p = Object::Fragment(Fragment(part.to_owned()));
-                let h = self.save_obj(p)?;
-                acc.push(h);
-                Ok::<Vec<Hash>, Box<dyn Error>>(acc)
-            })?,
-            content_hash: Hash::digest_slice(new_file_content.as_slice())?,
-        };
-
-        Ok(self.save_obj(Object::File(f))?)
-    }
-
-    fn build_tree_diff(
-        &self,
-        current_path: &str,
-        old_tree: Option<TreeStruct>,
-    ) -> RepoResult<Hash> {
-        let current_path_parts = current_path.split("/").collect::<Vec<_>>();
-        let current_path_parts_len = current_path_parts.len();
-
-        let current_path_parts_for_filter = current_path_parts.clone();
-        let allowed_files = self.index.transaction(move |index| {
-            Ok(index
-                .staged_files
-                .iter()
-                .filter(|staged_file| {
-                    let staged_path_parts = staged_file
-                        .file_path
-                        .iter()
-                        .take(current_path_parts_len)
-                        .map(|x| x.to_str().unwrap())
-                        .collect::<Vec<_>>();
-
-                    return current_path_parts_for_filter == staged_path_parts;
-                })
-                .cloned()
-                .collect::<Vec<StagedFile>>())
-        })?;
-
-        let mut t = TreeStruct {
-            trees: Vec::new(),
-            files: Vec::new(),
-        };
-
-        for x in allowed_files {
-            let search_path = PathBuf::from_iter(x.file_path.iter().take(current_path_parts.len()));
-            let name = String::from(search_path.iter().last().unwrap().to_str().unwrap());
-
-            if search_path.is_file() {
-                t.files.push(FileRefStruct {
-                    name,
-                    mode: 0u16,
-                    hash: self.build_file_diff(ObjectReference::Hash(x.content_hash), None)?,
-                });
-            } else if search_path.is_dir() {
-                let nt = self.build_tree_diff(
-                    name.as_str(),
-                    old_tree
-                        .as_ref()
-                        .and_then(|old_tree| old_tree.trees.iter().find(|x| x.name == name))
-                        .and_then(|next_old_tree| {
-                            self.get_object(next_old_tree.hash).ok().flatten()
-                        })
-                        .map(|next_old_tree| match next_old_tree {
-                            Object::Tree(tree) => tree,
-                            _ => panic!("not a tree"),
-                        }),
-                )?;
-                t.trees.push(TreeRefStruct { name, hash: nt });
-            } else {
-                panic!("what is this");
-            }
+            return Ok(None);
         }
-
-        Ok(self.save_obj(Object::Tree(t))?)
     }
 }
 
