@@ -401,7 +401,7 @@ impl PatchComposer {
     fn process_unchanged(&mut self, mut remaining: usize) {
         while remaining > 0 && self.intermediate_pos < self.segments.len() {
             match &self.segments[self.intermediate_pos] {
-                IntermediateSegment::FromOriginal { offset, len: seg_len } => {
+                IntermediateSegment::FromOriginal { offset: _, len: seg_len } => {
                     let available = seg_len - self.segment_offset;
                     let take = remaining.min(available);
                     
@@ -438,7 +438,7 @@ impl PatchComposer {
     fn process_deleted(&mut self, mut remaining: usize) {
         while remaining > 0 && self.intermediate_pos < self.segments.len() {
             match &self.segments[self.intermediate_pos] {
-                IntermediateSegment::FromOriginal { offset, len: seg_len } => {
+                IntermediateSegment::FromOriginal { offset: _, len: seg_len } => {
                     let available = seg_len - self.segment_offset;
                     let take = remaining.min(available);
                     

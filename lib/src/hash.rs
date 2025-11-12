@@ -4,7 +4,7 @@ use serde::{
     Deserialize, Serialize,
 };
 use sha2::{Digest, Sha256};
-use std::{error::Error, fmt, io::Read};
+use std::{error::Error, fmt};
 
 use crate::utils::hash_string;
 

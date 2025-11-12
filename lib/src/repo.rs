@@ -19,7 +19,7 @@ pub struct Repo {
 pub type RepoError = Box<dyn Error>;
 pub type RepoResult<T> = Result<T, RepoError>;
 
-const BLOCK_SIZE = 512;
+const BLOCK_SIZE: usize = 512;
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
@@ -189,7 +189,7 @@ impl Repo {
     ) -> RepoResult<FileStruct> {
         let mut hashes = Vec::new();
         for frag in diff_fragments {
-            let hash = self.save_obj(Object::Fragment(Fragment(*x)))?;
+            let hash = self.save_obj(Object::Fragment(Fragment(frag.clone())))?;
             hashes.push(hash);
         }
 
@@ -201,10 +201,15 @@ impl Repo {
         return Ok(f);
     }
 
+
+    pub fn get_head_commit_hash(&self) -> RepoResult<Hash> {
+        let r = ObjectReference::from_str("HEAD").unwrap();
+        self.resolve_ref_name(r)
+    }
+
     pub fn get_head_commit(&self) -> RepoResult<Option<CommitStruct>> {
-        let r = ObjectReference::from_str("HEAD")?;
-        let h = self.resolve_ref_name(r)?;
-        self.get_commit_object(h)
+        let r = self.get_head_commit_hash()?;
+        self.get_commit_object(ObjectReference::Hash(r))
     }
 
     /// Get the previous version of a file from the HEAD commit
@@ -236,8 +241,8 @@ impl Repo {
             return Ok(None);
         }
         
-        // Start with the root trees from the commit
-        let mut current_tree_refs = &commit.trees;
+        // Start with the root trees from the commit - clone to own the data
+        let mut current_tree_refs = commit.trees.clone();
         
         // Traverse the tree structure following the path components
         for (i, component) in components.iter().enumerate() {
@@ -247,7 +252,7 @@ impl Repo {
             if is_last {
                 // Last component - look for a file in the current tree level
                 // We need to get the actual tree objects to access files
-                for tree_ref in current_tree_refs {
+                for tree_ref in &current_tree_refs {
                     if let Some(Object::Tree(tree)) = self.get_object(tree_ref.hash.clone())? {
                         // Look for the file in this tree
                         if let Some(file_ref) = tree.files.iter().find(|f| &f.name == component) {
@@ -265,10 +270,10 @@ impl Repo {
                 let matching_tree = current_tree_refs.iter().find(|t| &t.name == component);
                 
                 if let Some(tree_ref) = matching_tree {
-                    // Get the tree object
+                    // Get the tree object and clone its trees to own the data
                     if let Some(Object::Tree(tree)) = self.get_object(tree_ref.hash.clone())? {
-                        // Move to the subtrees of this tree
-                        current_tree_refs = &tree.trees;
+                        // Move to the subtrees of this tree by cloning
+                        current_tree_refs = tree.trees.clone();
                     } else {
                         return Ok(None);
                     }
@@ -434,18 +439,8 @@ impl Repo {
         }
         
         // Step 6: Get the parent commit (if any)
-        let parent_hash = match self.get_head_commit()? {
-            Some(head_commit) => {
-                // Get the hash of the HEAD commit
-                let head_ref = ObjectReference::from_str("HEAD")?;
-                self.resolve_ref_name(head_ref)?
-            }
-            None => {
-                // No previous commit - use empty hash
-                Hash::new()
-            }
-        };
-        
+        let parent_hash = self.get_head_commit_hash()?;
+
         // Step 7: Create the root tree reference
         let root_tree_name = if components.is_empty() {
             String::from(".")
