@@ -1,9 +1,10 @@
+use rmp::encode::RmpWrite;
 use serde::{
     de::{self, SeqAccess, Visitor},
     Deserialize, Serialize,
 };
 use sha2::{Digest, Sha256};
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, io::Read};
 
 use crate::utils::hash_string;
 
@@ -104,5 +105,19 @@ impl Hash {
 
     pub fn digest_slice(s: &[u8]) -> Result<Hash, Box<dyn Error>> {
         Ok(Hash::from_slice(Sha256::digest(s).to_vec().as_slice()))
+    }
+
+    pub fn digest_file_stream<F: std::io::Read>(f: &mut F) -> Result<Hash, Box<dyn Error>> {
+        let mut h = Sha256::new();
+        let mut buf = [0u8; 512];
+
+        while buf.len() >= 512 {
+            f.read_exact(&mut buf)?;
+            h.write_bytes(&mut buf);
+        }
+
+        let d = h.finalize();
+        let s = d.as_slice();
+        Ok(Hash::from_slice(s))
     }
 }
