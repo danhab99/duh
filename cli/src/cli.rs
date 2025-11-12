@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-use crate::{commit::CommitCommand, diff::DiffCommand, status::StatusCommand, track::TrackCommand};
+use crate::{diff::DiffCommand, snapshot::SnapshotCommand};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -12,9 +12,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    Status(StatusCommand),
     Init,
     Diff(DiffCommand),
-    Track(TrackCommand),
-    Commit(CommitCommand),
+    Snapshot(SnapshotCommand),
 }
