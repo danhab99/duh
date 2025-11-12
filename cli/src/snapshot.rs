@@ -1,47 +1,51 @@
-use lib::repo::Repo;
-use lib::diff::diff_content;
+use std::error::Error;
+use std::path::PathBuf;
+
 use clap::clap_derive::Args;
+use lib::repo::Repo;
 
 #[derive(Args)]
 pub struct SnapshotCommand {
     /// Path to the file to snapshot
     pub file_path: String,
+    
+    /// Commit message
+    #[arg(short = 'm', long = "message", default_value = "Snapshot commit")]
+    pub message: String,
 }
 
-pub fn snapshot(repo: Repo, cmd: &SnapshotCommand) {
-    // Get the full path to the file
-    let file_path = repo.get_path_in_cwd(cmd.file_path.as_str());
+pub fn snapshot(repo: Repo, cmd: &SnapshotCommand) -> Result<(), Box<dyn Error>> {
+    // Convert the file path string to a PathBuf
+    let path = PathBuf::from(&cmd.file_path);
     
-    // Read the new file content
-    let new_content = std::fs::read(&file_path).unwrap_or_else(|_| {
-        eprintln!("Error: Could not read file '{}'", cmd.file_path);
+    // Check if the file exists
+    if !path.exists() {
+        eprintln!("Error: File '{}' does not exist", cmd.file_path);
         std::process::exit(1);
-    });
-    
-    // For now, we'll diff against an empty file (initial snapshot)
-    // In a more complete implementation, you'd check if the file has a previous version
-    let old_content = Vec::new();
-    
-    // Calculate the diff
-    let diffs = diff_content(&old_content, &new_content);
-    
-    // Print the diff results
-    println!("Snapshot for file: {}", cmd.file_path);
-    for diff in &diffs {
-        match diff {
-            lib::diff::DiffFragment::ADDED { body } => {
-                println!("  + Added {} bytes", body.len());
-            }
-            lib::diff::DiffFragment::UNCHANGED { len } => {
-                println!("  = Unchanged {} bytes", len);
-            }
-            lib::diff::DiffFragment::DELETED { len } => {
-                println!("  - Deleted {} bytes", len);
-            }
-        }
     }
     
-    // TODO: Add the snapshot to the repo
-    // This would involve creating an object and storing it
-    println!("Snapshot created (storage not yet implemented)");
+    if !path.is_file() {
+        eprintln!("Error: '{}' is not a file", cmd.file_path);
+        std::process::exit(1);
+    }
+    
+    println!("Creating snapshot for: {}", cmd.file_path);
+    
+    // Commit the file using our crown jewel function!
+    match repo.commit_file(&path, cmd.message.clone()) {
+        Ok(commit_hash) => {
+            println!("✓ Snapshot created successfully!");
+            println!("Commit hash: {}", commit_hash);
+            
+            // Optionally show what was tracked
+            let file_size = std::fs::metadata(&path)?.len();
+            println!("File size: {} bytes", file_size);
+            
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Error creating snapshot: {}", e);
+            Err(e)
+        }
+    }
 }
