@@ -25,7 +25,7 @@ pub struct Person {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitStruct {
     pub parent: Hash,
-    pub tree: TreeRefStruct,
+    pub trees: Vec<TreeRefStruct>,
     pub message: String,
     pub comitter: Person,
     pub author: Person,

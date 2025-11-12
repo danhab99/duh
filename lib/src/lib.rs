@@ -1,4 +1,4 @@
-mod hash;
+pub mod hash;
 pub mod utils;
 pub mod diff;
 pub mod error;
