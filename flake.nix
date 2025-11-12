@@ -14,14 +14,19 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+        rustToolchain = pkgs.rust-bin.beta.latest.default.override {
+          extensions = [ "rust-src" "rustfmt" "clippy" ];
+        };
       in
       {
         devShells.default = with pkgs; mkShell {
           buildInputs = [
             pkg-config
-            rust-bin.beta.latest.default
+            rustToolchain
+            pkgs.rust-analyzer
           ];
 
+          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
         };
       }
     );
