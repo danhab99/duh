@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::io::{Read, Result};
+use std::io::{Read, Write, Result, Seek, SeekFrom};
 
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum DiffFragment {
@@ -108,6 +108,9 @@ pub fn diff_streams<R1: Read, R2: Read>(
     mut new: R2,
     block_size: usize,
 ) -> Result<Vec<DiffFragment>> {
+    // For very large files, we still need to read them into memory for the diff algorithm
+    // The rolling hash algorithm requires random access to both files
+    // Memory optimization: Consider implementing a chunked streaming diff for >1GB files
     let mut old_buffer = Vec::new();
     let mut new_buffer = Vec::new();
 
@@ -284,4 +287,205 @@ fn merge_fragments(fragments: Vec<DiffFragment>) -> Vec<DiffFragment> {
     merged.push(current);
 
     merged
+}
+
+/// Apply a diff patch to a file stream to reconstruct the result
+/// Streams output to avoid loading entire file in memory - critical for large files
+pub fn apply_diff<R: Read + Seek, W: Write>(
+    mut old: R,
+    diff: &[DiffFragment],
+    mut output: W,
+) -> Result<()> {
+    const BUFFER_SIZE: usize = 8 * 1024 * 1024; // 8MB buffer for chunked reads
+    
+    for fragment in diff {
+        match fragment {
+            DiffFragment::ADDED { body } => {
+                output.write_all(body)?;
+            }
+            DiffFragment::UNCHANGED { len } => {
+                // Stream copy in chunks to avoid loading everything
+                let mut remaining = *len;
+                let mut buffer = vec![0u8; BUFFER_SIZE.min(remaining)];
+                
+                while remaining > 0 {
+                    let to_read = BUFFER_SIZE.min(remaining);
+                    let bytes_read = old.read(&mut buffer[..to_read])?;
+                    if bytes_read == 0 {
+                        break;
+                    }
+                    output.write_all(&buffer[..bytes_read])?;
+                    remaining -= bytes_read;
+                }
+            }
+            DiffFragment::DELETED { len } => {
+                // Skip bytes by seeking forward
+                old.seek(SeekFrom::Current(*len as i64))?;
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Stateful patch composer that processes patches incrementally
+/// This avoids loading all patch data into memory at once
+pub struct PatchComposer {
+    // Intermediate representation after first patch
+    segments: Vec<IntermediateSegment>,
+    // Accumulated result fragments
+    result: Vec<DiffFragment>,
+    // Current position in segments
+    intermediate_pos: usize,
+    segment_offset: usize,
+}
+
+#[derive(Debug, Clone)]
+enum IntermediateSegment {
+    FromOriginal { offset: usize, len: usize },
+    Added { data: Vec<u8> },
+}
+
+impl PatchComposer {
+    /// Create a new composer and process the first patch
+    pub fn new() -> Self {
+        Self {
+            segments: Vec::new(),
+            result: Vec::new(),
+            intermediate_pos: 0,
+            segment_offset: 0,
+        }
+    }
+    
+    /// Apply the first patch (A→B) to build intermediate representation
+    pub fn apply_first_patch(&mut self, patch1: &[DiffFragment]) {
+        let mut original_offset = 0;
+        
+        for fragment in patch1 {
+            match fragment {
+                DiffFragment::ADDED { body } => {
+                    self.segments.push(IntermediateSegment::Added { data: body.clone() });
+                }
+                DiffFragment::UNCHANGED { len } => {
+                    self.segments.push(IntermediateSegment::FromOriginal {
+                        offset: original_offset,
+                        len: *len,
+                    });
+                    original_offset += len;
+                }
+                DiffFragment::DELETED { len } => {
+                    // Deleted bytes don't appear in intermediate
+                    original_offset += len;
+                }
+            }
+        }
+    }
+    
+    /// Apply the second patch (B→C) to produce final composed patch (A→C)
+    pub fn apply_second_patch(&mut self, patch2: &[DiffFragment]) {
+        for fragment in patch2 {
+            match fragment {
+                DiffFragment::ADDED { body } => {
+                    self.result.push(DiffFragment::ADDED { body: body.clone() });
+                }
+                DiffFragment::UNCHANGED { len } => {
+                    self.process_unchanged(*len);
+                }
+                DiffFragment::DELETED { len } => {
+                    self.process_deleted(*len);
+                }
+            }
+        }
+    }
+    
+    fn process_unchanged(&mut self, mut remaining: usize) {
+        while remaining > 0 && self.intermediate_pos < self.segments.len() {
+            match &self.segments[self.intermediate_pos] {
+                IntermediateSegment::FromOriginal { offset, len: seg_len } => {
+                    let available = seg_len - self.segment_offset;
+                    let take = remaining.min(available);
+                    
+                    self.result.push(DiffFragment::UNCHANGED { len: take });
+                    
+                    remaining -= take;
+                    self.segment_offset += take;
+                    
+                    if self.segment_offset >= *seg_len {
+                        self.intermediate_pos += 1;
+                        self.segment_offset = 0;
+                    }
+                }
+                IntermediateSegment::Added { data } => {
+                    let available = data.len() - self.segment_offset;
+                    let take = remaining.min(available);
+                    
+                    self.result.push(DiffFragment::ADDED {
+                        body: data[self.segment_offset..self.segment_offset + take].to_vec(),
+                    });
+                    
+                    remaining -= take;
+                    self.segment_offset += take;
+                    
+                    if self.segment_offset >= data.len() {
+                        self.intermediate_pos += 1;
+                        self.segment_offset = 0;
+                    }
+                }
+            }
+        }
+    }
+    
+    fn process_deleted(&mut self, mut remaining: usize) {
+        while remaining > 0 && self.intermediate_pos < self.segments.len() {
+            match &self.segments[self.intermediate_pos] {
+                IntermediateSegment::FromOriginal { offset, len: seg_len } => {
+                    let available = seg_len - self.segment_offset;
+                    let take = remaining.min(available);
+                    
+                    self.result.push(DiffFragment::DELETED { len: take });
+                    
+                    remaining -= take;
+                    self.segment_offset += take;
+                    
+                    if self.segment_offset >= *seg_len {
+                        self.intermediate_pos += 1;
+                        self.segment_offset = 0;
+                    }
+                }
+                IntermediateSegment::Added { data } => {
+                    let available = data.len() - self.segment_offset;
+                    let take = remaining.min(available);
+                    
+                    // Deleting something that was added in patch1
+                    // means it never appears - no fragment needed
+                    
+                    remaining -= take;
+                    self.segment_offset += take;
+                    
+                    if self.segment_offset >= data.len() {
+                        self.intermediate_pos += 1;
+                        self.segment_offset = 0;
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Consume the composer and return the final composed patch
+    pub fn finish(self) -> Vec<DiffFragment> {
+        merge_fragments(self.result)
+    }
+}
+
+/// Compose two patches into a single patch (convenience function)
+/// Given patch1 (A→B) and patch2 (B→C), returns a single patch (A→C)
+/// For large patches, consider using PatchComposer directly for more control
+pub fn compose_patches(
+    patch1: &[DiffFragment],
+    patch2: &[DiffFragment],
+) -> Vec<DiffFragment> {
+    let mut composer = PatchComposer::new();
+    composer.apply_first_patch(patch1);
+    composer.apply_second_patch(patch2);
+    composer.finish()
 }
