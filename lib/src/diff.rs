@@ -310,8 +310,8 @@ pub fn apply_diff<R: Read + Seek, W: Write>(
                 
                 while remaining > 0 {
                     let to_read = BUFFER_SIZE.min(remaining);
-                    let bytes_read = old.read(&mut buffer[..to_read])?;
-                    if bytes_read == 0 {
+                    let bytes_read = old.read(&mut buffer[..to_read]).unwrap_or(0usize);
+                    if bytes_read == 0usize {
                         break;
                     }
                     output.write_all(&buffer[..bytes_read])?;

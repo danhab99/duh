@@ -4,7 +4,7 @@ use std::error::Error;
 // Define the custom error type
 #[derive(Debug)]
 pub struct NoRepo {
-    details: String,
+    pub details: String,
 }
 
 // Implement the Error trait for the custom error type
