@@ -1,6 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::*;
 
-use crate::{diff::DiffCommand, snapshot::SnapshotCommand};
+use crate::{snapshot::SnapshotCommand};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -13,6 +13,5 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     Init,
-    Diff(DiffCommand),
     Snapshot(SnapshotCommand),
 }
