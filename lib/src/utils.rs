@@ -1,6 +1,11 @@
 use core::panic;
-use std::{error::Error, path::{Path, PathBuf}};
 use sha2::{Digest, Sha256};
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+};
+
+use crate::error::NoRepo;
 
 pub fn get_cwd() -> String {
     std::env::current_dir()
@@ -12,10 +17,10 @@ pub fn get_cwd() -> String {
 
 pub const REPO_METADATA_DIR_NAME: &str = ".duh";
 pub fn getRepoConfigFileName() -> String {
-    return format!("{}{}", REPO_METADATA_DIR_NAME, "config");
+    return format!("{}/{}", REPO_METADATA_DIR_NAME, "config");
 }
 pub fn getRepoIgnoreFileName() -> String {
-    return format!("{}{}", REPO_METADATA_DIR_NAME, "ignore");
+    return format!("{}/{}", REPO_METADATA_DIR_NAME, "ignore");
 }
 
 pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error>> {
@@ -25,23 +30,22 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
         let mut p = path.clone();
 
         if p.eq(&PathBuf::from("/")) {
-            panic!("TODO proper error");
-            // return Err(NoRepo{
-            //     details: "mm",
-            // });
+            return Err(Box::new(NoRepo { details: "mm".to_string() }));
         }
 
-        p.push(target.clone());
+        p.push(target);
         println!("Checking path {}", p.display());
 
         if Path::new(p.to_str().unwrap_or("")).exists() {
             break;
         }
 
-        path.pop();
+        if !path.pop() {
+            break;
+        }
     }
 
-    Ok(String::from(path.to_str().unwrap()))
+    Ok(format!("{}/{}", String::from(path.to_str().unwrap()), target))
 }
 
 pub fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
