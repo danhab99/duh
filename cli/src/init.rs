@@ -1,7 +1,10 @@
-use lib::utils;
-use lib::repo::Repo;
+use std::error::Error;
 
-pub fn init() {
-    let _ = Repo::initalize_at(utils::get_cwd());
+use lib::repo::Repo;
+use lib::utils;
+
+pub fn init() -> Result<(), Box<dyn Error>> {
+    let _ = Repo::initialize_at(utils::get_cwd())?;
     println!("Initialized new DUH directory");
+    Ok(())
 }

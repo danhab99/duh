@@ -16,16 +16,16 @@ pub struct SnapshotCommand {
 
 pub fn snapshot(repo: Repo, cmd: &SnapshotCommand) -> Result<(), Box<dyn Error>> {
     // Convert the file path string to a PathBuf
-    let path = PathBuf::from(&cmd.file_path);
+    let path = repo.get_path_in_cwd(&cmd.file_path);
     
     // Check if the file exists
     if !path.exists() {
-        eprintln!("Error: File '{}' does not exist", cmd.file_path);
+        eprintln!("Error: File '{}' does not exist", path.as_os_str().to_str().unwrap());
         std::process::exit(1);
     }
     
     if !path.is_file() {
-        eprintln!("Error: '{}' is not a file", cmd.file_path);
+        eprintln!("Error: '{}' is not a file", path.as_os_str().to_str().unwrap());
         std::process::exit(1);
     }
     
@@ -35,7 +35,7 @@ pub fn snapshot(repo: Repo, cmd: &SnapshotCommand) -> Result<(), Box<dyn Error>>
     match repo.commit_file(&path, cmd.message.clone()) {
         Ok(commit_hash) => {
             println!("✓ Snapshot created successfully!");
-            println!("Commit hash: {}", commit_hash);
+            println!("Commit hash: {}", commit_hash.to_string());
             
             // Optionally show what was tracked
             let file_size = std::fs::metadata(&path)?.len();
