@@ -1,19 +1,13 @@
 use crate::{
-    diff::{self, DiffFragment},
     hash::Hash,
-    objects::{
-        CommitStruct, FileRefStruct, FileStruct, Fragment, Object, ObjectReference, Person,
-        TreeRefStruct, TreeStruct,
-    },
+    objects::{Object, ObjectReference, Person},
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
 use std::{
     env,
     error::Error,
-    fs::{self, File},
-    io::Read,
+    fs::{self},
     path::PathBuf,
-    str::FromStr,
     time::SystemTime,
 };
 
@@ -28,7 +22,7 @@ pub struct Repo {
 pub type RepoError = Box<dyn Error>;
 pub type RepoResult<T> = Result<T, RepoError>;
 
-const BLOCK_SIZE: usize = 512;
+pub const BLOCK_SIZE: usize = 512;
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
@@ -132,7 +126,7 @@ impl Repo {
         Ok(self.get_path_in_repo(format!("objects/{}/{}", top, bottom).as_str()))
     }
 
-    fn save_obj(&self, o: Object) -> RepoResult<Hash> {
+    pub fn save_obj(&self, o: Object) -> RepoResult<Hash> {
         let (msgpack, hash) = o.hash()?;
         let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
         fs::write(path, msgpack)?;
@@ -148,7 +142,7 @@ impl Repo {
         return Ok(Some(content.to_vec()));
     }
 
-    fn get_object(&self, r: Hash) -> RepoResult<Option<Object>> {
+    pub fn get_object(&self, r: Hash) -> RepoResult<Option<Object>> {
         let content = self.read_object(r)?;
         match content {
             Some(content) => Ok(Some(Object::from_msgpack(content)?)),
@@ -160,7 +154,7 @@ impl Repo {
         return self.get_path_in_repo(format!("refs/{}", name).as_str());
     }
 
-    fn set_ref(&self, name: &str, r: ObjectReference) -> RepoResult<()> {
+    pub fn set_ref(&self, name: &str, r: ObjectReference) -> RepoResult<()> {
         let path = self.get_ref_path(name);
         fs::write(path, r.to_string())?;
         return Ok(());
@@ -180,304 +174,6 @@ impl Repo {
                 return Ok(self.resolve_ref_name(n)?);
             }
         }
-    }
-
-    pub fn get_commit_object(&self, r: ObjectReference) -> RepoResult<Option<CommitStruct>> {
-        let hash = self.resolve_ref_name(r)?;
-        let obj = self.get_object(hash)?.expect("commit not found");
-
-        if let Object::Commit(commit) = obj {
-            return Ok(Some(commit));
-        } else {
-            return Ok(None);
-        }
-    }
-
-    pub fn build_file_struct(
-        &self,
-        content_hash: Hash,
-        diff_fragments: &[DiffFragment],
-    ) -> RepoResult<FileStruct> {
-        let mut hashes = Vec::new();
-        for frag in diff_fragments {
-            let hash = self.save_obj(Object::Fragment(Fragment(frag.clone())))?;
-            hashes.push(hash);
-        }
-
-        let f = FileStruct {
-            fragments: hashes,
-            content_hash,
-        };
-
-        return Ok(f);
-    }
-
-    pub fn get_head_commit_hash(&self) -> RepoResult<Hash> {
-        let r = ObjectReference::from_str("HEAD").unwrap();
-        self.resolve_ref_name(r)
-    }
-
-    pub fn get_head_commit(&self) -> RepoResult<Option<CommitStruct>> {
-        let r = self.get_head_commit_hash()?;
-        self.get_commit_object(ObjectReference::Hash(r))
-    }
-
-    /// Get the previous version of a file from the HEAD commit
-    ///
-    /// # Arguments
-    /// * `path` - The path to the file relative to the repository root
-    ///
-    /// # Returns
-    /// * `Ok(Some(FileStruct))` - If the file exists in the HEAD commit
-    /// * `Ok(None)` - If there is no HEAD commit or the file doesn't exist in HEAD
-    /// * `Err` - If there was an error accessing the repository
-    fn get_previous_file_version(&self, path: &PathBuf) -> RepoResult<Option<FileStruct>> {
-        // Get the HEAD commit
-        let head = self.get_head_commit()?;
-
-        if head.is_none() {
-            return Ok(None);
-        }
-
-        let commit = head.unwrap();
-
-        // Convert path to components for traversal
-        let components: Vec<String> = path
-            .components()
-            .filter_map(|c| c.as_os_str().to_str().map(String::from))
-            .collect();
-
-        if components.is_empty() {
-            return Ok(None);
-        }
-
-        // Start with the root trees from the commit - clone to own the data
-        let mut current_tree_refs = commit.trees.clone();
-
-        // Traverse the tree structure following the path components
-        for (i, component) in components.iter().enumerate() {
-            let is_last = i == components.len() - 1;
-
-            // Look for a matching tree or file
-            if is_last {
-                // Last component - look for a file in the current tree level
-                // We need to get the actual tree objects to access files
-                for tree_ref in &current_tree_refs {
-                    if let Some(Object::Tree(tree)) = self.get_object(tree_ref.hash.clone())? {
-                        // Look for the file in this tree
-                        if let Some(file_ref) = tree.files.iter().find(|f| &f.name == component) {
-                            // Found the file, now get the FileStruct
-                            if let Some(Object::File(file_struct)) =
-                                self.get_object(file_ref.hash.clone())?
-                            {
-                                return Ok(Some(file_struct));
-                            }
-                        }
-                    }
-                }
-                // File not found in any tree at this level
-                return Ok(None);
-            } else {
-                // Not the last component - look for a matching subtree
-                let matching_tree = current_tree_refs.iter().find(|t| &t.name == component);
-
-                if let Some(tree_ref) = matching_tree {
-                    // Get the tree object and clone its trees to own the data
-                    if let Some(Object::Tree(tree)) = self.get_object(tree_ref.hash.clone())? {
-                        // Move to the subtrees of this tree by cloning
-                        current_tree_refs = tree.trees.clone();
-                    } else {
-                        return Ok(None);
-                    }
-                } else {
-                    // Path component not found
-                    return Ok(None);
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Compute the diff between a file in the worktree and its previous version from HEAD,
-    /// saving the fragment objects and returning their hashes
-    ///
-    /// # Arguments
-    /// * `path` - The path to the file in the worktree
-    ///
-    /// # Returns
-    /// * `Ok(Vec<Hash>)` - The hashes of the saved fragment objects
-    ///   - If no previous version exists, returns a single hash for an ADDED fragment with the entire file
-    ///   - If a previous version exists, returns hashes for the diff fragments between old and new
-    /// * `Err` - If there was an error reading the file or accessing the repository
-    pub fn diff_file_with_previous(&self, path: &PathBuf) -> RepoResult<Vec<Hash>> {
-        // Read the current file from the worktree
-        let mut current_file = File::open(path)?;
-
-        // Try to get the previous version from HEAD
-        let previous_version = self.get_previous_file_version(path)?;
-
-        let diff_fragments = match previous_version {
-            None => {
-                // No previous version - entire file is new
-                let mut body = Vec::new();
-                current_file.read_to_end(&mut body)?;
-                vec![DiffFragment::ADDED { body }]
-            }
-            Some(prev_file_struct) => {
-                // Previous version exists - reconstruct it and compute diff
-
-                // Get all the fragment objects from the previous version
-                let prev_fragments: Vec<Fragment> = prev_file_struct
-                    .fragments
-                    .into_iter()
-                    .filter_map(|hash| {
-                        let obj = self.get_object(hash).ok()??;
-                        if let Object::Fragment(frag) = obj {
-                            Some(frag)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                // Extract the DiffFragments from Fragment wrappers
-                let prev_diff_fragments: Vec<DiffFragment> =
-                    prev_fragments.into_iter().map(|f| f.0).collect();
-
-                // Reconstruct the previous version in memory
-                let mut prev_content = Vec::new();
-                let empty_old = std::io::Cursor::new(Vec::<u8>::new());
-                diff::apply_diff(empty_old, &prev_diff_fragments, &mut prev_content)?;
-
-                // Now compute the diff between previous and current version
-                let prev_cursor = std::io::Cursor::new(prev_content);
-                diff::diff_streams(prev_cursor, current_file, BLOCK_SIZE)?
-            }
-        };
-
-        // Save each diff fragment as an object and collect the hashes
-        let mut hashes = Vec::new();
-        for frag in diff_fragments {
-            let hash = self.save_obj(Object::Fragment(Fragment(frag)))?;
-            hashes.push(hash);
-        }
-
-        Ok(hashes)
-    }
-
-    /// Commit a file in the worktree and return the commit hash
-    ///
-    /// # Arguments
-    /// * `path` - The path to the file in the worktree
-    /// * `message` - The commit message
-    ///
-    /// # Returns
-    /// * `Ok(Hash)` - The hash of the created commit
-    /// * `Err` - If there was an error during the commit process
-    ///
-    /// # Process
-    /// 1. Computes the content hash of the file
-    /// 2. Generates diff fragments and saves them as objects
-    /// 3. Creates and saves a FileStruct object
-    /// 4. Creates and saves a TreeStruct object containing the file
-    /// 5. Creates and saves a CommitStruct with metadata
-    /// 6. Updates HEAD to point to the new commit
-    pub fn commit_file(&self, path: &PathBuf, message: String) -> RepoResult<Hash> {
-        // Step 1: Compute the content hash of the file
-        let content_hash = {
-            let mut file = File::open(path)?;
-            Hash::digest_file_stream(&mut file)?
-        };
-
-        // Step 2: Get the diff fragment hashes (this also saves the fragments)
-        let fragment_hashes = self.diff_file_with_previous(path)?;
-
-        // Step 3: Create and save the FileStruct
-        let file_struct = FileStruct {
-            content_hash,
-            fragments: fragment_hashes,
-        };
-        let file_hash = self.save_obj(Object::File(file_struct))?;
-
-        // Step 4: Create the file reference
-        let file_name = path
-            .file_name()
-            .ok_or("Invalid file path")?
-            .to_str()
-            .ok_or("Invalid file name")?
-            .to_string();
-
-        let file_ref = FileRefStruct {
-            name: file_name,
-            mode: 0o644, // Regular file permissions
-            hash: file_hash,
-        };
-
-        // Step 5: Build the tree structure from the path
-        // We need to create trees for each directory in the path
-        let mut tree_hash = {
-            // Start with a tree containing just the file
-            let leaf_tree = TreeStruct {
-                trees: vec![],
-                files: vec![file_ref],
-            };
-            self.save_obj(Object::Tree(leaf_tree))?
-        };
-
-        // Work backwards through the path components to build parent trees
-        let components: Vec<String> = path
-            .components()
-            .filter_map(|c| c.as_os_str().to_str().map(String::from))
-            .collect();
-
-        // Skip the last component (the filename) and work backwards through directories
-        if components.len() > 1 {
-            for component in components[..components.len() - 1].iter().rev() {
-                let tree_ref = TreeRefStruct {
-                    name: component.clone(),
-                    hash: tree_hash,
-                };
-
-                let parent_tree = TreeStruct {
-                    trees: vec![tree_ref],
-                    files: vec![],
-                };
-
-                tree_hash = self.save_obj(Object::Tree(parent_tree))?;
-            }
-        }
-
-        // Step 6: Get the parent commit (if any)
-        let parent_hash = self.get_head_commit_hash()?;
-
-        // Step 7: Create the root tree reference
-        let root_tree_name = if components.is_empty() {
-            String::from(".")
-        } else {
-            components[0].clone()
-        };
-
-        let root_tree_ref = TreeRefStruct {
-            name: root_tree_name,
-            hash: tree_hash,
-        };
-
-        // Step 8: Create and save the commit
-        let commit = CommitStruct {
-            parent: parent_hash,
-            trees: vec![root_tree_ref],
-            message,
-            comitter: self.me.clone(),
-            author: self.me.clone(),
-        };
-
-        let commit_hash = self.save_obj(Object::Commit(commit))?;
-
-        // Step 9: Update HEAD to point to the new commit
-        self.set_ref("HEAD", ObjectReference::Hash(commit_hash.clone()))?;
-
-        Ok(commit_hash)
     }
 }
 
