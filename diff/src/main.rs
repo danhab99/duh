@@ -21,9 +21,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let original_bytes = File::open(args.original)?;
     let next_bytes = File::open(args.next)?;
 
-    let r = lib::diff::diff_streams(original_bytes, next_bytes, args.blocksize)?;
-    for ele in r {
-        println!("{}", ele);
+    let fragments = lib::diff::build_diff_fragments(original_bytes, next_bytes, args.blocksize)?;
+    
+    println!("Diff fragments:");
+    for fragment in fragments {
+        println!("{}", fragment);
     }
 
     Ok(())
