@@ -8,7 +8,7 @@ use std::{error::Error, fmt};
 
 use crate::utils::hash_string;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hash([u8; 64]);
 
 impl<'de> Deserialize<'de> for Hash {
