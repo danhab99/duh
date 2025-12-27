@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{Read, Result, Write};
 use std::rc::Rc;
-use std::{fmt, io};
+use std::slice::Iter;
+use std::{fmt, io, iter};
 
 use rmp::decode::RmpRead;
 use rmp::encode::RmpWrite;
@@ -24,74 +25,60 @@ impl fmt::Display for DiffFragment {
     }
 }
 
-pub fn collect_until_convergence(old: &[u8], new: &[u8]) -> (Vec<DiffFragment>, usize, usize) {
-    const MASK: u64 = 0b1111_1111;
-    const BASE: u64 = 131;
+pub fn collect_until_converging<R: Read>(old: R, new: R) -> Result<(usize, Vec<u8>)> {
+    // deleted, added
+    const CHUNK_SIZE: usize = 32usize;
 
-    let mut old_index: HashMap<u64, usize> = HashMap::new();
+    let iter_chunk = |mut reader: R| {
+        iter::from_fn(move || {
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            reader.read(&mut buf).unwrap();
 
-    let mut hash = 0u64;
-    let mut len = 0usize;
-    let mut old_pos = 0usize;
-
-    for &b in old {
-        hash = hash.wrapping_mul(BASE).wrapping_add(b as u64);
-        len += 1;
-        old_pos += 1;
-
-        if hash & MASK == 0 {
-            old_index.insert(hash, len);
-            hash = 0;
-            len = 0;
-        }
-    }
-
-    if len > 0 {
-        old_index.insert(hash, len);
-    }
-
-    let mut diffs = Vec::new();
-
-    let mut hash = 0u64;
-    let mut chunk: Vec<u8> = Vec::new();
-    let mut new_pos = 0usize;
-
-    for &b in new {
-        hash = hash.wrapping_mul(BASE).wrapping_add(b as u64);
-        chunk.push(b);
-        new_pos += 1;
-
-        if hash & MASK == 0 {
-            if let Some(old_len) = old_index.get(&hash) {
-                // convergence found
-                if !chunk.is_empty() {
-                    diffs.push(DiffFragment::ADDED {
-                        body: chunk.clone(),
-                    });
-                }
-
-                diffs.push(DiffFragment::DELETED { len: *old_len });
-
-                return (diffs, old_pos - *old_len, new_pos);
+            if buf.len() > 0 {
+                Some(buf)
             } else {
-                diffs.push(DiffFragment::ADDED {
-                    body: std::mem::take(&mut chunk),
-                });
-                hash = 0;
+                None
             }
+        })
+    };
+
+    let iter_hashes = |it: Box<dyn Iterator<Item = Vec<u8>>>| {
+        it.map(|x: Vec<u8>| (x.clone(), xxhash_rust::xxh3::xxh3_64(x.as_slice())))
+    };
+
+    let old_chunks = iter_hashes(Box::new(iter_chunk(old))).collect::<Vec<_>>();
+
+    let mut matched_old_index = None;
+    let mut collected_new_chunks = Vec::new();
+
+    for (data, new_hash) in iter_hashes(Box::new(iter_chunk(new))) {
+        if let Some(pos) = old_chunks
+            .iter()
+            .position(|(_, old_hash)| *old_hash == new_hash)
+        {
+            matched_old_index = Some(pos);
+            break;
         }
+
+        collected_new_chunks.push(data);
     }
 
-    if !chunk.is_empty() {
-        diffs.push(DiffFragment::ADDED { body: chunk });
+    let confident_matched_old_index = match matched_old_index {
+        None => {
+            panic!("how is this possible")
+        }
+        Some(x) => x,
+    };
+
+    let mut total_chunks: Vec<u8> = Vec::new();
+    for mut c in collected_new_chunks {
+        total_chunks.append(&mut c);
     }
 
-    diffs.push(DiffFragment::DELETED { len: old.len() });
-
-    (diffs, old.len(), new.len())
+    Ok((confident_matched_old_index, total_chunks))
 }
 
-fn roll_convergence<R: Read>(mut old: R, mut new: R) -> Result<(usize, DiffFragment)> {
+fn collect_while_converging<R: Read>(mut old: R, mut new: R) -> Result<usize> {
     let mut old_hasher = blake3::Hasher::new();
     let mut new_hasher = blake3::Hasher::new();
     let mut unchanged_len = 0usize;
@@ -110,10 +97,7 @@ fn roll_convergence<R: Read>(mut old: R, mut new: R) -> Result<(usize, DiffFragm
         }
     }
 
-    Ok((
-        unchanged_len,
-        DiffFragment::UNCHANGED { len: unchanged_len },
-    ))
+    Ok(unchanged_len)
 }
 
 pub fn build_diff_fragments<R: Read>(
@@ -142,9 +126,11 @@ pub fn build_diff_fragments<R: Read>(
         move || -> Result<usize> {
             let mut old_ref = old_clone.borrow_mut();
             let mut new_ref = new_clone.borrow_mut();
-            let (size, frag) = roll_convergence(&mut *old_ref, &mut *new_ref)?;
-            fragments.borrow_mut().push(frag);
-            Ok(size)
+            let unchanged = collect_while_converging(&mut *old_ref, &mut *new_ref)?;
+            fragments
+                .borrow_mut()
+                .push(DiffFragment::UNCHANGED { len: unchanged });
+            Ok(unchanged)
         }
     };
 
@@ -157,19 +143,23 @@ pub fn build_diff_fragments<R: Read>(
             let mut new_ref = new_clone.borrow_mut();
             let old_buffer = read_buffer(&mut *old_ref)?;
             let new_buffer = read_buffer(&mut *new_ref)?;
-            let (mut frags, _, _) =
-                collect_until_convergence(old_buffer.as_slice(), new_buffer.as_slice());
+            let (deleted, added) =
+                collect_until_converging(old_buffer.as_slice(), new_buffer.as_slice())?;
 
-            let length = frags.iter().fold(0usize, |sum, x| {
-                sum + match x {
-                    DiffFragment::ADDED { body } => body.len(),
-                    DiffFragment::UNCHANGED { len } | DiffFragment::DELETED { len } => *len,
-                }
-            });
+            let al = added.len();
 
-            fragments.borrow_mut().append(&mut frags);
+            if deleted > 0 {
+                fragments
+                    .borrow_mut()
+                    .push(DiffFragment::DELETED { len: deleted });
+            }
+            if added.len() > 0 {
+                fragments
+                    .borrow_mut()
+                    .push(DiffFragment::ADDED { body: added });
+            }
 
-            return Ok(length);
+            return Ok(deleted + al);
         }
     };
 
