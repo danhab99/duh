@@ -1,8 +1,10 @@
+use ahash::HashSetExt;
 use rmp::decode::RmpRead;
 use rmp::encode::RmpWrite;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::{fmt, io};
+use xxhash_rust::xxh3::Xxh3;
 
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum DiffFragment {
@@ -68,62 +70,157 @@ pub struct Convergence {
     pub converge_b_offset: u64,
 }
 
-pub fn find_convergence<R1: Read, R2: Read>(mut a: R1, mut b: R2) -> io::Result<Option<Convergence>> {
-    let mut buf_a = Vec::new();
-    let mut buf_b = Vec::new();
+pub fn collect_divergence<RS: Read + Seek>(
+    mut old: RS,
+    mut new: RS,
+    window: usize,
+) -> Result<(usize, Vec<u8>), Box<dyn std::error::Error>> {
+    // deleted, added
+    let mut seen_hashes_set = ahash::HashSet::new();
+    let mut seen_hashes_positions = Vec::<u64>::new();
 
-    let mut divergent_a = Vec::new();
-    let mut divergent_b = Vec::new();
+    let mut read_chunk = |reader: &mut RS| -> std::io::Result<(Vec<u8>, bool)> {
+        let mut buf = vec![0u8; 32];
+        let n = reader.read(&mut buf)?;
 
-    let mut offset_a: u64 = 0;
-    let mut offset_b: u64 = 0;
+        if n == 0 {
+            // EOF
+            Ok((Vec::new(), true))
+        } else {
+            buf.truncate(n);
+            Ok((buf, false))
+        }
+    };
 
-    // hash -> offset in A
-    let mut table: HashMap<u64, u64> = HashMap::new();
+    let hash_chunk = |v: Vec<u8>| {
+        let h = Xxh3::new();
+        h.write_bytes(v.as_slice());
+        h.digest()
+    };
+
+    let mut old_eof: bool;
+    let mut new_eof: bool;
+    let mut converged = false;
+
+    let mut deleted_bytes = 0usize;
+    let mut added_bytes = Vec::<u8>::new();
 
     loop {
-        let len_before_a = buf_a.len();
-        let len_before_b = buf_b.len();
-        
-        read_more(&mut a, &mut buf_a)?;
-        read_more(&mut b, &mut buf_b)?;
-        
-        // If no new data was read from either stream, we're at EOF
-        if buf_a.len() == len_before_a && buf_b.len() == len_before_b {
-            // Can't make progress anymore, return None
-            println!("  EOF reached: divergent_a={}, divergent_b={}", divergent_a.len(), divergent_b.len());
-            return Ok(None);
-        }
+        let old_data: Vec<u8> = Vec::with_capacity(window);
+        let new_data: Vec<u8> = Vec::with_capacity(window);
 
-        while buf_a.len() >= WINDOW {
-            let hash = hash(&buf_a[..WINDOW]);
-            table.entry(hash).or_insert(offset_a);
+        (old_data, old_eof) = read_chunk(&mut old)?;
+        deleted_bytes += old_data.len();
+        let old_hash = hash_chunk(old_data);
+        seen_hashes_set.insert(old_hash);
+        seen_hashes_positions.push(old_hash);
 
-            divergent_a.push(buf_a[0]);
-            buf_a.drain(..1);
-            offset_a += 1;
-        }
+        (new_data, new_eof) = read_chunk(&mut new)?;
+        let new_hash = hash_chunk(new_data);
+        added_bytes.append(&mut new_data);
 
-        while buf_b.len() >= WINDOW {
-            let hash = hash(&buf_b[..WINDOW]);
+        if seen_hashes_set.contains(&new_hash) {
+            // convergence found
+            converged = true;
 
-            if let Some(&a_pos) = table.get(&hash) {
-                if verify(&mut a, &mut b)? {
-                    return Ok(Some(Convergence {
-                        divergent_a,
-                        divergent_b,
-                        converge_a_offset: a_pos,
-                        converge_b_offset: offset_b,
-                    }));
-                }
+            let convergence_position = seen_hashes_positions.iter().rposition(|x| *x == new_hash);
+
+            if convergence_position == seen_hashes_positions.len() - 1 {
+                Ok((deleted_bytes, added_bytes))
             }
 
-            divergent_b.push(buf_b[0]);
-            buf_b.drain(..1);
-            offset_b += 1;
+            let next_chunk = hash_chunk(read_chunk(new));
+
+            if next_chunk == seen_hashes_positions[convergence_position + 1] {
+                Ok((deleted_bytes, added_bytes))
+            } else {
+                old.seek(io::SeekFrom::Start(0));
+                new.seek(io::SeekFrom::Start(0));
+                Ok(collect_divergence(old, new, window / 2))
+            }
+
+            break;
+        }
+
+        if old_eof || new_eof {
+            break;
         }
     }
+
+    if converged {
+        if old_eof {
+            let buf = Vec::new();
+            new.read_to_end(buf)?;
+            added_bytes.append(buf);
+        } else if new_eof {
+            let buf = Vec::new();
+            old.read_to_end(buf)?;
+            deleted_bytes += buf.len();
+        }
+
+        Ok((deleted_bytes, added_bytes))
+    } else {
+        Err("unable to find convergence")
+    }
 }
+
+//pub fn find_convergence<R1: Read, R2: Read>(mut a: R1, mut b: R2, window: usize) -> io::Result<Option<Convergence>> {
+
+/* let mut buf_a = Vec::new();
+let mut buf_b = Vec::new();
+
+let mut divergent_a = Vec::new();
+let mut divergent_b = Vec::new();
+
+let mut offset_a: u64 = 0;
+let mut offset_b: u64 = 0;
+
+// hash -> offset in A
+let mut table: HashMap<u64, u64> = HashMap::new();
+
+loop {
+    let len_before_a = buf_a.len();
+    let len_before_b = buf_b.len();
+
+    read_more(&mut a, &mut buf_a)?;
+    read_more(&mut b, &mut buf_b)?;
+
+    // If no new data was read from either stream, we're at EOF
+    if buf_a.len() == len_before_a && buf_b.len() == len_before_b {
+        // Can't make progress anymore, return None
+        println!("  EOF reached: divergent_a={}, divergent_b={}", divergent_a.len(), divergent_b.len());
+        return Ok(None);
+    }
+
+    while buf_a.len() >= WINDOW {
+        let hash = hash(&buf_a[..WINDOW]);
+        table.entry(hash).or_insert(offset_a);
+
+        divergent_a.push(buf_a[0]);
+        buf_a.drain(..1);
+        offset_a += 1;
+    }
+
+    while buf_b.len() >= WINDOW {
+        let hash = hash(&buf_b[..WINDOW]);
+
+        if let Some(&a_pos) = table.get(&hash) {
+            if verify(&mut a, &mut b)? {
+                return Ok(Some(Convergence {
+                    divergent_a,
+                    divergent_b,
+                    converge_a_offset: a_pos,
+                    converge_b_offset: offset_b,
+                }));
+            }
+        }
+
+        divergent_b.push(buf_b[0]);
+        buf_b.drain(..1);
+        offset_b += 1;
+    }
+} */
+// }
 
 fn collect_while_converging<R: Read>(mut old: R, mut new: R) -> io::Result<usize> {
     let mut old_hasher = blake3::Hasher::new();
@@ -160,12 +257,15 @@ pub fn build_diff_fragments<R: Read>(
     let mut last_len = 1;
     let mut iteration = 0;
 
-    println!("Starting build_diff_fragments with block_size={}", block_size);
+    println!(
+        "Starting build_diff_fragments with block_size={}",
+        block_size
+    );
 
     while last_len > 0 {
         iteration += 1;
         println!("Iteration {}: changing={}", iteration, changing);
-        
+
         last_len = if changing {
             // collect_unchanged
             println!("  Collecting unchanged bytes...");
@@ -211,9 +311,7 @@ pub fn build_diff_fragments<R: Read>(
                         let div_b_len = convergence.divergent_b.len();
 
                         if div_a_len > 0 {
-                            fragments.push(DiffFragment::DELETED {
-                                len: div_a_len,
-                            });
+                            fragments.push(DiffFragment::DELETED { len: div_a_len });
                             println!("  Added DELETED fragment: {} bytes", div_a_len);
                         }
                         if div_b_len > 0 {
