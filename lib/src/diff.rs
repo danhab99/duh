@@ -285,6 +285,25 @@ pub fn build_diff_fragments<R: Read + Seek>(
         }
     }
 
-    println!("Completed with {} fragments", fragments.len());
-    Ok(fragments)
+    // Consolidate consecutive fragments of the same type
+    let mut consolidated: Vec<DiffFragment> = Vec::new();
+    for frag in fragments {
+        match (&mut consolidated.last_mut(), &frag) {
+            (Some(DiffFragment::UNCHANGED { len: prev_len }), DiffFragment::UNCHANGED { len }) => {
+                *prev_len += len;
+            }
+            (Some(DiffFragment::DELETED { len: prev_len }), DiffFragment::DELETED { len }) => {
+                *prev_len += len;
+            }
+            (Some(DiffFragment::ADDED { body: prev_body }), DiffFragment::ADDED { body }) => {
+                prev_body.extend(body);
+            }
+            _ => {
+                consolidated.push(frag);
+            }
+        }
+    }
+
+    println!("Completed with {} fragments (consolidated)", consolidated.len());
+    Ok(consolidated)
 }
