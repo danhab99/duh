@@ -47,83 +47,71 @@ pub fn collect_divergence<R: Read + Seek>(
     let old_starting_pos = old.stream_position()?;
     let new_starting_pos = new.stream_position()?;
 
-    // let mut index: HashMap<blake3::Hash, (usize, Vec<u8>)> = HashMap::new();
+    // Phase 1: Build complete hash index from old file
     let mut index: HashMap<blake3::Hash, usize> = HashMap::new();
-    let mut old_total_read_bytes: usize = 0;
-    let mut new_chunk_buffer: Vec<u8> = Vec::new();
-    let mut converged_position: Option<usize> = None;
-
+    let mut old_position: usize = 0;
+    
     loop {
         let (old_chunk, old_eof) = read_chunk(old, window)?;
-        if old_chunk.is_empty() && old_eof {
+        if old_chunk.is_empty() {
             break;
         }
-
-        old_total_read_bytes += old_chunk.len();
-
-        let old_hash = {
-            let mut h = blake3::Hasher::new();
-            h.write_bytes(&old_chunk.clone())?;
-            h.finalize()
-        };
-
-        index.insert(old_hash, old_total_read_bytes);
-
-        let (mut new_chunk, new_eof) = read_chunk(new, window)?;
-        if new_chunk.is_empty() && new_eof {
+        
+        let old_hash = blake3::hash(&old_chunk);
+        index.insert(old_hash, old_position);
+        
+        old_position += old_chunk.len();
+        
+        if old_eof {
             break;
         }
-        let new_hash = {
-            let mut h = blake3::Hasher::new();
-            h.write_bytes(&new_chunk)?;
-            h.finalize()
-        };
-
-        match index.get(&new_hash) {
-            Some(old_position_bytes) => {
-                let deleted = old_position_bytes - window;
+    }
+    
+    // Reset old to starting position
+    old.seek(io::SeekFrom::Start(old_starting_pos))?;
+    
+    // Phase 2: Slide through new file looking for matches
+    let mut new_chunk_buffer: Vec<u8> = Vec::new();
+    
+    loop {
+        let (new_chunk, new_eof) = read_chunk(new, window)?;
+        if new_chunk.is_empty() {
+            break;
+        }
+        
+        let new_hash = blake3::hash(&new_chunk);
+        
+        if let Some(&old_match_pos) = index.get(&new_hash) {
+            // Found potential match - verify with next 2 windows
+            let old_verify_pos = old_starting_pos + old_match_pos as u64 + window as u64;
+            let new_verify_pos = new_starting_pos + new_chunk_buffer.len() as u64 + window as u64;
+            
+            old.seek(io::SeekFrom::Start(old_verify_pos))?;
+            new.seek(io::SeekFrom::Start(new_verify_pos))?;
+            
+            let (old_verify1, _) = read_chunk(old, window)?;
+            let (new_verify1, _) = read_chunk(new, window)?;
+            let (old_verify2, _) = read_chunk(old, window)?;
+            let (new_verify2, _) = read_chunk(new, window)?;
+            
+            if old_verify1 == new_verify1 && old_verify2 == new_verify2 {
+                // True match confirmed
+                let deleted = old_match_pos;
                 
-                let old_seek_to = old_starting_pos + *old_position_bytes as u64;
-                let new_seek_to = new_starting_pos + new_chunk_buffer.len() as u64 + window as u64;
-                
-                // Verify match: check that 2 more windows also match (true convergence)
-                old.seek(io::SeekFrom::Start(old_seek_to))?;
-                new.seek(io::SeekFrom::Start(new_seek_to))?;
-                
-                let (old_verify1, old_eof1) = read_chunk(old, window)?;
-                let (new_verify1, new_eof1) = read_chunk(new, window)?;
-                let (old_verify2, old_eof2) = read_chunk(old, window)?;
-                let (new_verify2, new_eof2) = read_chunk(new, window)?;
-                
-                let eof_ok = old_eof1 || new_eof1 || old_eof2 || new_eof2;
-                
-                if old_verify1 != new_verify1 || old_verify2 != new_verify2 {
-                    if !eof_ok {
-                        // Spurious match - next 2 windows don't match, skip
-                        // Restore positions and continue searching
-                        old.seek(io::SeekFrom::Start(old_starting_pos + old_total_read_bytes as u64))?;
-                        new.seek(io::SeekFrom::Start(new_starting_pos + new_chunk_buffer.len() as u64 + window as u64))?;
-                        new_chunk_buffer.append(&mut new_chunk);
-                        if old_eof || new_eof {
-                            break;
-                        }
-                        continue;
-                    }
-                }
-                
-                // Seek to after the matched chunk (not the verification chunks)
-                old.seek(io::SeekFrom::Start(old_seek_to))?;
-                new.seek(io::SeekFrom::Start(new_seek_to))?;
+                // Position streams after the matched window
+                old.seek(io::SeekFrom::Start(old_starting_pos + old_match_pos as u64 + window as u64))?;
+                new.seek(io::SeekFrom::Start(new_verify_pos))?;
                 
                 return Ok((deleted, new_chunk_buffer, window));
             }
-            None => {}
+            
+            // Spurious match - restore new position and continue
+            new.seek(io::SeekFrom::Start(new_starting_pos + new_chunk_buffer.len() as u64 + window as u64))?;
         }
-
-        // Only append after checking - matched chunk should NOT be in added
-        new_chunk_buffer.append(&mut new_chunk);
-
-        if old_eof || new_eof {
+        
+        new_chunk_buffer.extend_from_slice(&new_chunk);
+        
+        if new_eof {
             break;
         }
     }
@@ -135,6 +123,7 @@ pub fn collect_divergence<R: Read + Seek>(
         return collect_divergence(old, new, window / 2);
     }
     
+    // No match at all - return everything as diverged
     old.seek(io::SeekFrom::Start(old_starting_pos))?;
     new.seek(io::SeekFrom::Start(new_starting_pos))?;
     
