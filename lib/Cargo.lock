@@ -182,6 +182,7 @@ dependencies = [
  "blake3",
  "diff",
  "hex",
+ "memchr",
  "rmp",
  "rmp-serde",
  "serde",
