@@ -31,7 +31,6 @@ fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>,
     let n = reader.read(&mut buf)?;
 
     if n == 0 {
-        println!("eof");
         Ok((Vec::new(), true))
     } else {
         buf.truncate(n);
@@ -101,8 +100,6 @@ pub fn collect_divergence<R: Read + Seek>(
                 if old_verify1 != new_verify1 || old_verify2 != new_verify2 {
                     if !eof_ok {
                         // Spurious match - next 2 windows don't match, skip
-                        println!("SPURIOUS: deleted={} added={} window={} - next windows differ", 
-                                 deleted, new_chunk_buffer.len(), window);
                         // Restore positions and continue searching
                         old.seek(io::SeekFrom::Start(old_starting_pos + old_total_read_bytes as u64))?;
                         new.seek(io::SeekFrom::Start(new_starting_pos + new_chunk_buffer.len() as u64 + window as u64))?;
@@ -113,8 +110,6 @@ pub fn collect_divergence<R: Read + Seek>(
                         continue;
                     }
                 }
-                
-                println!("MATCH: deleted={} added={} matched={} window={}", deleted, new_chunk_buffer.len(), window, window);
                 
                 // Seek to after the matched chunk (not the verification chunks)
                 old.seek(io::SeekFrom::Start(old_seek_to))?;
@@ -137,7 +132,6 @@ pub fn collect_divergence<R: Read + Seek>(
     if window > MIN_WINDOW {
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
-        println!("!!! failed to collect divergence at end window={}", window);
         return collect_divergence(old, new, window / 2);
     }
     
@@ -149,7 +143,6 @@ pub fn collect_divergence<R: Read + Seek>(
     old.read_to_end(&mut remaining_old)?;
     new.read_to_end(&mut remaining_new)?;
     
-    println!("NO CONVERGENCE POSSIBLE: remaining old={} new={}", remaining_old.len(), remaining_new.len());
     Ok((remaining_old.len(), remaining_new, 0))
 }
 
@@ -187,23 +180,17 @@ fn collect_convergence<R: Read + Seek>(
         unchanged_len += old_buf.len();
 
         if hit_eof {
-            println!("eof break");
             return Ok(unchanged_len);
         }
     }
 
     if unchanged_len == 0 {
         // Files diverge immediately at this position - that's fine, return 0
-        println!("convergence=0 at window={}", window);
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
         return Ok(0);
     }
 
-    println!(
-        "success collecting convergence window={} len={}",
-        window, unchanged_len
-    );
     Ok(unchanged_len)
 }
 
@@ -213,7 +200,6 @@ fn test_eof<R: Read + Seek>(reader: &mut R) -> Result<bool, Box<dyn std::error::
     if c.len() > 0 {
         reader.seek(io::SeekFrom::Start(p))?;
     }
-    println!("test eof {} {} {}", p, c.len(), eof);
     return Ok(eof);
 }
 
@@ -224,6 +210,7 @@ pub struct DiffFragmentIter<R: Read + Seek> {
     window: usize,
     done: bool,
     pending: Option<DiffFragment>, // For consolidation
+    queue: Vec<DiffFragment>,      // Queue for fragments from divergence
 }
 
 impl<R: Read + Seek> DiffFragmentIter<R> {
@@ -234,10 +221,16 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
             window,
             done: false,
             pending: None,
+            queue: Vec::new(),
         }
     }
     
     fn next_raw(&mut self) -> Option<Result<DiffFragment, Box<dyn std::error::Error>>> {
+        // First drain the queue
+        if !self.queue.is_empty() {
+            return Some(Ok(self.queue.remove(0)));
+        }
+        
         if self.done {
             return None;
         }
@@ -294,26 +287,22 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
         // Then divergence
         match collect_divergence(&mut self.old, &mut self.new, self.window) {
             Ok((deleted, added, matched)) => {
-                // Return deleted first, queue added and matched
+                // Queue all non-empty fragments
                 if deleted > 0 {
-                    // We need to return deleted now, but also return added and matched later
-                    // For simplicity, we'll handle this by returning a composite approach
-                    // Actually let's return them in sequence using pending
-                    
-                    // Queue up the rest if needed
-                    if added.len() > 0 || matched > 0 {
-                        // Store added for next call, matched for after that
-                        // This is getting complex - let's just return deleted and 
-                        // let the next call naturally pick up from the new position
-                    }
-                    return Some(Ok(DiffFragment::DELETED { len: deleted }));
+                    self.queue.push(DiffFragment::DELETED { len: deleted });
                 }
                 if added.len() > 0 {
-                    return Some(Ok(DiffFragment::ADDED { body: added }));
+                    self.queue.push(DiffFragment::ADDED { body: added });
                 }
                 if matched > 0 {
-                    return Some(Ok(DiffFragment::UNCHANGED { len: matched }));
+                    self.queue.push(DiffFragment::UNCHANGED { len: matched });
                 }
+                
+                // Return first from queue
+                if !self.queue.is_empty() {
+                    return Some(Ok(self.queue.remove(0)));
+                }
+                
                 // Nothing happened, try again
                 self.next_raw()
             }
