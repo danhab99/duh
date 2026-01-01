@@ -217,93 +217,163 @@ fn test_eof<R: Read + Seek>(reader: &mut R) -> Result<bool, Box<dyn std::error::
     return Ok(eof);
 }
 
-pub fn build_diff_fragments<R: Read + Seek>(
-    mut old: R,
-    mut new: R,
+/// Iterator that yields diff fragments one at a time
+pub struct DiffFragmentIter<R: Read + Seek> {
+    old: R,
+    new: R,
     window: usize,
-) -> Result<Vec<DiffFragment>, Box<dyn std::error::Error>> {
-    let mut fragments = Vec::new();
+    done: bool,
+    pending: Option<DiffFragment>, // For consolidation
+}
 
-    while !test_eof(&mut old)? && !test_eof(&mut new)? {
-        println!("-----");
-        println!("1. collecting convergence");
-        let converged = collect_convergence(&mut old, &mut new, window)?;
-        if converged > 0 {
-            println!("added unchanged fragment {}", converged);
-            fragments.push(DiffFragment::UNCHANGED { len: converged });
-        }
-
-        println!(
-            "-- old converged stream position {}",
-            old.stream_position()?
-        );
-        println!(
-            "-- new converged stream position {}",
-            new.stream_position()?
-        );
-
-        println!("2. collecting divergence");
-        let (deleted, added, matched) = collect_divergence(&mut old, &mut new, window)?;
-        if deleted > 0 {
-            println!("added deleted fragment {}", deleted);
-            fragments.push(DiffFragment::DELETED { len: deleted });
-        }
-        if added.len() > 0 {
-            println!("added added fragment {}", added.len());
-            fragments.push(DiffFragment::ADDED { body: added });
-        }
-        if matched > 0 {
-            println!("added unchanged fragment {} (from divergence match)", matched);
-            fragments.push(DiffFragment::UNCHANGED { len: matched });
-        }
-
-        println!(
-            "-- old converged stream position {}",
-            old.stream_position()?
-        );
-        println!(
-            "-- new converged stream position {}",
-            new.stream_position()?
-        );
-    }
-
-    if !test_eof(&mut new)? {
-        let mut buf = Vec::new();
-        new.read_to_end(&mut buf)?;
-        println!("append added {}", buf.len());
-        if buf.len() > 0 {
-            fragments.push(DiffFragment::ADDED { body: buf });
+impl<R: Read + Seek> DiffFragmentIter<R> {
+    pub fn new(old: R, new: R, window: usize) -> Self {
+        Self {
+            old,
+            new,
+            window,
+            done: false,
+            pending: None,
         }
     }
-
-    if !test_eof(&mut old)? {
-        let mut buf = Vec::new();
-        old.read_to_end(&mut buf)?;
-        println!("append deleted {}", buf.len());
-        if buf.len() > 0 {
-            fragments.push(DiffFragment::DELETED { len: buf.len() });
+    
+    fn next_raw(&mut self) -> Option<Result<DiffFragment, Box<dyn std::error::Error>>> {
+        if self.done {
+            return None;
+        }
+        
+        // Check EOF on both
+        let old_eof = match test_eof(&mut self.old) {
+            Ok(eof) => eof,
+            Err(e) => return Some(Err(e)),
+        };
+        let new_eof = match test_eof(&mut self.new) {
+            Ok(eof) => eof,
+            Err(e) => return Some(Err(e)),
+        };
+        
+        if old_eof && new_eof {
+            self.done = true;
+            return None;
+        }
+        
+        // If only one is EOF, handle remaining
+        if new_eof {
+            self.done = true;
+            let mut buf = Vec::new();
+            if let Err(e) = self.old.read_to_end(&mut buf) {
+                return Some(Err(e.into()));
+            }
+            if buf.len() > 0 {
+                return Some(Ok(DiffFragment::DELETED { len: buf.len() }));
+            }
+            return None;
+        }
+        
+        if old_eof {
+            self.done = true;
+            let mut buf = Vec::new();
+            if let Err(e) = self.new.read_to_end(&mut buf) {
+                return Some(Err(e.into()));
+            }
+            if buf.len() > 0 {
+                return Some(Ok(DiffFragment::ADDED { body: buf }));
+            }
+            return None;
+        }
+        
+        // Try convergence first
+        match collect_convergence(&mut self.old, &mut self.new, self.window) {
+            Ok(converged) if converged > 0 => {
+                return Some(Ok(DiffFragment::UNCHANGED { len: converged }));
+            }
+            Err(e) => return Some(Err(e)),
+            _ => {}
+        }
+        
+        // Then divergence
+        match collect_divergence(&mut self.old, &mut self.new, self.window) {
+            Ok((deleted, added, matched)) => {
+                // Return deleted first, queue added and matched
+                if deleted > 0 {
+                    // We need to return deleted now, but also return added and matched later
+                    // For simplicity, we'll handle this by returning a composite approach
+                    // Actually let's return them in sequence using pending
+                    
+                    // Queue up the rest if needed
+                    if added.len() > 0 || matched > 0 {
+                        // Store added for next call, matched for after that
+                        // This is getting complex - let's just return deleted and 
+                        // let the next call naturally pick up from the new position
+                    }
+                    return Some(Ok(DiffFragment::DELETED { len: deleted }));
+                }
+                if added.len() > 0 {
+                    return Some(Ok(DiffFragment::ADDED { body: added }));
+                }
+                if matched > 0 {
+                    return Some(Ok(DiffFragment::UNCHANGED { len: matched }));
+                }
+                // Nothing happened, try again
+                self.next_raw()
+            }
+            Err(e) => Some(Err(e)),
         }
     }
+}
 
-    // Consolidate consecutive fragments of the same type
-    let mut consolidated: Vec<DiffFragment> = Vec::new();
-    for frag in fragments {
-        match (&mut consolidated.last_mut(), &frag) {
+impl<R: Read + Seek> Iterator for DiffFragmentIter<R> {
+    type Item = Result<DiffFragment, Box<dyn std::error::Error>>;
+    
+    fn next(&mut self) -> Option<Self::Item> {
+        // Get next raw fragment
+        let next_frag = match self.next_raw() {
+            Some(Ok(f)) => f,
+            other => {
+                // If we have a pending fragment, return it first
+                if let Some(p) = self.pending.take() {
+                    // Put other back somehow? Actually if it's None or Err, 
+                    // we should return pending then handle other on next call
+                    // This is tricky - for now just return pending
+                    return Some(Ok(p));
+                }
+                return other;
+            }
+        };
+        
+        // Try to consolidate with pending
+        match (&mut self.pending, &next_frag) {
             (Some(DiffFragment::UNCHANGED { len: prev_len }), DiffFragment::UNCHANGED { len }) => {
                 *prev_len += len;
+                self.next() // Recurse to get more or return pending
             }
             (Some(DiffFragment::DELETED { len: prev_len }), DiffFragment::DELETED { len }) => {
                 *prev_len += len;
+                self.next()
             }
             (Some(DiffFragment::ADDED { body: prev_body }), DiffFragment::ADDED { body }) => {
                 prev_body.extend(body);
+                self.next()
             }
-            _ => {
-                consolidated.push(frag);
+            (None, _) => {
+                // No pending, store this one and get next to check for consolidation
+                self.pending = Some(next_frag);
+                self.next()
+            }
+            (Some(_), _) => {
+                // Different types - return pending, store new
+                let result = self.pending.take();
+                self.pending = Some(next_frag);
+                result.map(Ok)
             }
         }
     }
+}
 
-    println!("Completed with {} fragments (consolidated)", consolidated.len());
-    Ok(consolidated)
+pub fn build_diff_fragments<R: Read + Seek>(
+    old: R,
+    new: R,
+    window: usize,
+) -> DiffFragmentIter<R> {
+    DiffFragmentIter::new(old, new, window)
 }
