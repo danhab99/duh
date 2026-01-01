@@ -1,10 +1,7 @@
-use memchr::memmem;
+use ahash::{HashMap, HashMapExt};
+use rmp::encode::RmpWrite;
 use std::io::{Read, Seek};
 use std::{fmt, io};
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    memmem::find(haystack, needle)
-}
 
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum DiffFragment {
@@ -45,88 +42,67 @@ pub fn collect_divergence<R: Read + Seek>(
     window: usize,
 ) -> Result<(usize, Vec<u8>), Box<dyn std::error::Error>> {
     // deleted, added
-
+    //
     let old_starting_pos = old.stream_position()?;
     let new_starting_pos = new.stream_position()?;
 
-    if window == 0 {
-        return Err("window is 0".into());
-    }
-
-    // Buffer old data to search for convergence
-    let mut old_data = Vec::new();
-    old.read_to_end(&mut old_data)?;
-
-    // Need at least 2 windows worth of data to find convergence
-    let needle_size = window * 2;
-
-    // Read new data incrementally, building up potential added bytes
-    let mut added_bytes = Vec::new();
-    let mut needle = vec![0u8; needle_size];
-    let mut needle_filled = 0usize;
+    // let mut index: HashMap<blake3::Hash, (usize, Vec<u8>)> = HashMap::new();
+    let mut index: HashMap<blake3::Hash, usize> = HashMap::new();
+    let mut old_total_read_bytes: usize = 0;
+    let mut new_chunk_buffer: Vec<u8> = Vec::new();
+    let mut converged_position: Option<usize> = None;
 
     loop {
-        // Read one window at a time from new
-        let (chunk, eof) = read_chunk(new, window)?;
-        if chunk.is_empty() && eof {
+        let (old_chunk, old_eof) = read_chunk(old, window)?;
+        if old_chunk.is_empty() && old_eof {
             break;
         }
 
-        // Shift needle and append new chunk
-        if needle_filled >= needle_size {
-            // Move the second half to the first half
-            needle.copy_within(window..needle_size, 0);
-            needle[window..needle_size].copy_from_slice(&chunk);
-            // The bytes that fell off the front are confirmed added
-            added_bytes.extend_from_slice(&needle[..window.min(chunk.len())]);
-        } else {
-            // Still filling the needle
-            let copy_len = chunk.len().min(needle_size - needle_filled);
-            needle[needle_filled..needle_filled + copy_len].copy_from_slice(&chunk[..copy_len]);
-            needle_filled += copy_len;
+        old_total_read_bytes += old_chunk.len();
+
+        let old_hash = {
+            let mut h = blake3::Hasher::new();
+            h.write_bytes(&old_chunk.clone())?;
+            h.finalize()
+        };
+
+        index.insert(old_hash, old_total_read_bytes);
+
+        let (mut new_chunk, new_eof) = read_chunk(new, window)?;
+        if new_chunk.is_empty() && new_eof {
+            break;
         }
+        let new_hash = {
+            let mut h = blake3::Hasher::new();
+            h.write_bytes(&new_chunk)?;
+            h.finalize()
+        };
+        new_chunk_buffer.append(&mut new_chunk);
 
-        // Once we have a full needle, try to find it in old
-        if needle_filled >= needle_size {
-            if let Some(pos) = find(&old_data, &needle) {
-                // Found convergence point
-                let deleted_bytes = pos;
-
-                // Seek both files to after the convergence point
-                old.seek(io::SeekFrom::Start(old_starting_pos + pos as u64 + needle_size as u64))?;
-                // new is already positioned after the needle
-
-                println!(
-                    "success collecting divergence deleted={} added={} window={}",
-                    deleted_bytes,
-                    added_bytes.len(),
-                    window
-                );
-                return Ok((deleted_bytes, added_bytes));
+        match index.get(&new_hash) {
+            Some(old_position_bytes) => {
+                old.seek(io::SeekFrom::Start(
+                    old_starting_pos + *old_position_bytes as u64,
+                ))?;
+                return Ok((*old_position_bytes, new_chunk_buffer));
             }
+            None => {}
         }
 
-        if eof {
+        if old_eof || new_eof {
             break;
         }
     }
 
     // No convergence found, try with smaller window
-    if window > 1 {
+    if window > 0 {
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
         println!("!!! failed to collect divergence at end window={}", window);
         return collect_divergence(old, new, window / 2);
+    } else {
+        Err("cannot converge".into())
     }
-
-    // Smallest window, return all as divergence
-    // Need to collect remaining new data
-    let mut remaining = Vec::new();
-    new.seek(io::SeekFrom::Start(new_starting_pos))?;
-    new.read_to_end(&mut remaining)?;
-
-    println!("no convergence found, returning all as divergence");
-    Ok((old_data.len(), remaining))
 }
 
 fn collect_convergence<R: Read + Seek>(
