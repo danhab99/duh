@@ -3,6 +3,9 @@ use rmp::encode::RmpWrite;
 use std::io::{Read, Seek};
 use std::{fmt, io};
 
+/// Minimum window size for matching - prevents spurious matches on short byte sequences
+const MIN_WINDOW: usize = 64;
+
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum DiffFragment {
     ADDED { body: Vec<u8> },
@@ -40,9 +43,8 @@ pub fn collect_divergence<R: Read + Seek>(
     old: &mut R,
     new: &mut R,
     window: usize,
-) -> Result<(usize, Vec<u8>), Box<dyn std::error::Error>> {
-    // deleted, added
-    //
+) -> Result<(usize, Vec<u8>, usize), Box<dyn std::error::Error>> {
+    // Returns: (deleted_bytes, added_bytes, matched_bytes)
     let old_starting_pos = old.stream_position()?;
     let new_starting_pos = new.stream_position()?;
 
@@ -85,13 +87,40 @@ pub fn collect_divergence<R: Read + Seek>(
                 let old_seek_to = old_starting_pos + *old_position_bytes as u64;
                 let new_seek_to = new_starting_pos + new_chunk_buffer.len() as u64 + window as u64;
                 
-                println!("MATCH: deleted={} added={} window={}", deleted, new_chunk_buffer.len(), window);
-                
-                // Seek to after the matched chunk
+                // Verify match: check that 2 more windows also match (true convergence)
                 old.seek(io::SeekFrom::Start(old_seek_to))?;
                 new.seek(io::SeekFrom::Start(new_seek_to))?;
                 
-                return Ok((deleted, new_chunk_buffer));
+                let (old_verify1, old_eof1) = read_chunk(old, window)?;
+                let (new_verify1, new_eof1) = read_chunk(new, window)?;
+                let (old_verify2, old_eof2) = read_chunk(old, window)?;
+                let (new_verify2, new_eof2) = read_chunk(new, window)?;
+                
+                let eof_ok = old_eof1 || new_eof1 || old_eof2 || new_eof2;
+                
+                if old_verify1 != new_verify1 || old_verify2 != new_verify2 {
+                    if !eof_ok {
+                        // Spurious match - next 2 windows don't match, skip
+                        println!("SPURIOUS: deleted={} added={} window={} - next windows differ", 
+                                 deleted, new_chunk_buffer.len(), window);
+                        // Restore positions and continue searching
+                        old.seek(io::SeekFrom::Start(old_starting_pos + old_total_read_bytes as u64))?;
+                        new.seek(io::SeekFrom::Start(new_starting_pos + new_chunk_buffer.len() as u64 + window as u64))?;
+                        new_chunk_buffer.append(&mut new_chunk);
+                        if old_eof || new_eof {
+                            break;
+                        }
+                        continue;
+                    }
+                }
+                
+                println!("MATCH: deleted={} added={} matched={} window={}", deleted, new_chunk_buffer.len(), window, window);
+                
+                // Seek to after the matched chunk (not the verification chunks)
+                old.seek(io::SeekFrom::Start(old_seek_to))?;
+                new.seek(io::SeekFrom::Start(new_seek_to))?;
+                
+                return Ok((deleted, new_chunk_buffer, window));
             }
             None => {}
         }
@@ -105,7 +134,7 @@ pub fn collect_divergence<R: Read + Seek>(
     }
 
     // No convergence found, try with smaller window
-    if window > 1 {
+    if window > MIN_WINDOW {
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
         println!("!!! failed to collect divergence at end window={}", window);
@@ -121,7 +150,7 @@ pub fn collect_divergence<R: Read + Seek>(
     new.read_to_end(&mut remaining_new)?;
     
     println!("NO CONVERGENCE POSSIBLE: remaining old={} new={}", remaining_old.len(), remaining_new.len());
-    Ok((remaining_old.len(), remaining_new))
+    Ok((remaining_old.len(), remaining_new, 0))
 }
 
 fn collect_convergence<R: Read + Seek>(
@@ -214,7 +243,7 @@ pub fn build_diff_fragments<R: Read + Seek>(
         );
 
         println!("2. collecting divergence");
-        let (deleted, added) = collect_divergence(&mut old, &mut new, window)?;
+        let (deleted, added, matched) = collect_divergence(&mut old, &mut new, window)?;
         if deleted > 0 {
             println!("added deleted fragment {}", deleted);
             fragments.push(DiffFragment::DELETED { len: deleted });
@@ -222,6 +251,10 @@ pub fn build_diff_fragments<R: Read + Seek>(
         if added.len() > 0 {
             println!("added added fragment {}", added.len());
             fragments.push(DiffFragment::ADDED { body: added });
+        }
+        if matched > 0 {
+            println!("added unchanged fragment {} (from divergence match)", matched);
+            fragments.push(DiffFragment::UNCHANGED { len: matched });
         }
 
         println!(
