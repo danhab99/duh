@@ -77,17 +77,27 @@ pub fn collect_divergence<R: Read + Seek>(
             h.write_bytes(&new_chunk)?;
             h.finalize()
         };
-        new_chunk_buffer.append(&mut new_chunk);
 
         match index.get(&new_hash) {
             Some(old_position_bytes) => {
-                old.seek(io::SeekFrom::Start(
-                    old_starting_pos + *old_position_bytes as u64,
-                ))?;
-                return Ok((*old_position_bytes, new_chunk_buffer));
+                let deleted = old_position_bytes - window;
+                
+                let old_seek_to = old_starting_pos + *old_position_bytes as u64;
+                let new_seek_to = new_starting_pos + new_chunk_buffer.len() as u64 + window as u64;
+                
+                println!("MATCH: deleted={} added={} window={}", deleted, new_chunk_buffer.len(), window);
+                
+                // Seek to after the matched chunk
+                old.seek(io::SeekFrom::Start(old_seek_to))?;
+                new.seek(io::SeekFrom::Start(new_seek_to))?;
+                
+                return Ok((deleted, new_chunk_buffer));
             }
             None => {}
         }
+
+        // Only append after checking - matched chunk should NOT be in added
+        new_chunk_buffer.append(&mut new_chunk);
 
         if old_eof || new_eof {
             break;
@@ -95,14 +105,23 @@ pub fn collect_divergence<R: Read + Seek>(
     }
 
     // No convergence found, try with smaller window
-    if window > 0 {
+    if window > 1 {
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
         println!("!!! failed to collect divergence at end window={}", window);
         return collect_divergence(old, new, window / 2);
-    } else {
-        Err("cannot converge".into())
     }
+    
+    old.seek(io::SeekFrom::Start(old_starting_pos))?;
+    new.seek(io::SeekFrom::Start(new_starting_pos))?;
+    
+    let mut remaining_old = Vec::new();
+    let mut remaining_new = Vec::new();
+    old.read_to_end(&mut remaining_old)?;
+    new.read_to_end(&mut remaining_new)?;
+    
+    println!("NO CONVERGENCE POSSIBLE: remaining old={} new={}", remaining_old.len(), remaining_new.len());
+    Ok((remaining_old.len(), remaining_new))
 }
 
 fn collect_convergence<R: Read + Seek>(
@@ -144,12 +163,12 @@ fn collect_convergence<R: Read + Seek>(
         }
     }
 
-    if unchanged_len == 0 && !hit_eof {
-        // No convergence yet, but not EOF - try smaller window
-        println!("!!! failed collecting convergence window={}", window);
+    if unchanged_len == 0 {
+        // Files diverge immediately at this position - that's fine, return 0
+        println!("convergence=0 at window={}", window);
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
-        return collect_convergence(old, new, window / 2);
+        return Ok(0);
     }
 
     println!(
