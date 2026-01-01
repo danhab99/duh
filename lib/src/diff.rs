@@ -1,8 +1,10 @@
-use ahash::HashSetExt;
-use rmp::encode::RmpWrite;
+use memchr::memmem;
 use std::io::{Read, Seek};
 use std::{fmt, io};
-use xxhash_rust::xxh3::Xxh3;
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    memmem::find(haystack, needle)
+}
 
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum DiffFragment {
@@ -22,11 +24,14 @@ impl fmt::Display for DiffFragment {
 }
 
 fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    if size == 0 {
+        return Ok((vec![0u8; 0], false));
+    }
     let mut buf = vec![0u8; size];
     let n = reader.read(&mut buf)?;
 
     if n == 0 {
-        // EOF
+        println!("eof");
         Ok((Vec::new(), true))
     } else {
         buf.truncate(n);
@@ -35,128 +40,157 @@ fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>,
 }
 
 pub fn collect_divergence<R: Read + Seek>(
-    mut old: &mut R,
-    mut new: &mut R,
+    old: &mut R,
+    new: &mut R,
     window: usize,
 ) -> Result<(usize, Vec<u8>), Box<dyn std::error::Error>> {
     // deleted, added
+
+    let old_starting_pos = old.stream_position()?;
+    let new_starting_pos = new.stream_position()?;
 
     if window == 0 {
         return Err("window is 0".into());
     }
 
-    let mut seen_hashes_set = ahash::HashSet::new();
-    let mut seen_hashes_positions = Vec::<u64>::new();
+    // Buffer old data to search for convergence
+    let mut old_data = Vec::new();
+    old.read_to_end(&mut old_data)?;
 
-    let hash_chunk = |v: Vec<u8>| -> Result<_, Box<dyn std::error::Error>> {
-        let mut h = Xxh3::new();
-        h.write_bytes(v.as_slice())?;
-        Ok(h.digest())
-    };
+    // Need at least 2 windows worth of data to find convergence
+    let needle_size = window * 2;
 
-    let mut old_eof: bool;
-    let mut new_eof: bool;
-    let mut converged = false;
-
-    let mut deleted_bytes = 0usize;
-    let mut added_bytes = Vec::<u8>::new();
+    // Read new data incrementally, building up potential added bytes
+    let mut added_bytes = Vec::new();
+    let mut needle = vec![0u8; needle_size];
+    let mut needle_filled = 0usize;
 
     loop {
-        let mut old_data = vec![0u8; window];
-        let mut new_data = vec![0u8; window];
+        // Read one window at a time from new
+        let (chunk, eof) = read_chunk(new, window)?;
+        if chunk.is_empty() && eof {
+            break;
+        }
 
-        (old_data, old_eof) = read_chunk(&mut old, 32)?;
-        let old_hash = hash_chunk(old_data)?;
-        seen_hashes_set.insert(old_hash);
-        seen_hashes_positions.push(old_hash);
+        // Shift needle and append new chunk
+        if needle_filled >= needle_size {
+            // Move the second half to the first half
+            needle.copy_within(window..needle_size, 0);
+            needle[window..needle_size].copy_from_slice(&chunk);
+            // The bytes that fell off the front are confirmed added
+            added_bytes.extend_from_slice(&needle[..window.min(chunk.len())]);
+        } else {
+            // Still filling the needle
+            let copy_len = chunk.len().min(needle_size - needle_filled);
+            needle[needle_filled..needle_filled + copy_len].copy_from_slice(&chunk[..copy_len]);
+            needle_filled += copy_len;
+        }
 
-        (new_data, new_eof) = read_chunk(&mut new, 32)?;
-        let new_hash = hash_chunk(new_data.clone())?;
-        added_bytes.append(&mut new_data);
+        // Once we have a full needle, try to find it in old
+        if needle_filled >= needle_size {
+            if let Some(pos) = find(&old_data, &needle) {
+                // Found convergence point
+                let deleted_bytes = pos;
 
-        if seen_hashes_set.contains(&new_hash) && seen_hashes_set.len() > 1 {
-            // convergence found
-            converged = true;
+                // Seek both files to after the convergence point
+                old.seek(io::SeekFrom::Start(old_starting_pos + pos as u64 + needle_size as u64))?;
+                // new is already positioned after the needle
 
-            if let Some(convergence_position) =
-                seen_hashes_positions.iter().rposition(|x| *x == new_hash)
-            {
-
-                (new_data, new_eof) = read_chunk(&mut new, 32)?;
-                let next_chunk = hash_chunk(new_data)?;
-
-                if convergence_position < seen_hashes_positions.len() - 2
-                    && next_chunk == seen_hashes_positions[convergence_position + 1]
-                {
-                    deleted_bytes = convergence_position * window;
-                    return Ok((deleted_bytes, added_bytes));
-                }
+                println!(
+                    "success collecting divergence deleted={} added={} window={}",
+                    deleted_bytes,
+                    added_bytes.len(),
+                    window
+                );
+                return Ok((deleted_bytes, added_bytes));
             }
         }
 
-        if old_eof || new_eof {
+        if eof {
             break;
         }
     }
 
-    if converged {
-        if old_eof {
-            let mut buf = Vec::new();
-            new.read_to_end(&mut buf)?;
-            added_bytes.append(&mut buf);
-        } else if new_eof {
-            let mut buf = Vec::new();
-            old.read_to_end(&mut buf)?;
-            deleted_bytes = buf.len() * (seen_hashes_set.len() * window);
-        }
-
-        Ok((deleted_bytes, added_bytes))
-    } else {
-        old.seek(io::SeekFrom::Start(0))?;
-        new.seek(io::SeekFrom::Start(0))?;
-        println!("failed to collect divergence at end window={}", window);
+    // No convergence found, try with smaller window
+    if window > 1 {
+        old.seek(io::SeekFrom::Start(old_starting_pos))?;
+        new.seek(io::SeekFrom::Start(new_starting_pos))?;
+        println!("!!! failed to collect divergence at end window={}", window);
         return collect_divergence(old, new, window / 2);
     }
+
+    // Smallest window, return all as divergence
+    // Need to collect remaining new data
+    let mut remaining = Vec::new();
+    new.seek(io::SeekFrom::Start(new_starting_pos))?;
+    new.read_to_end(&mut remaining)?;
+
+    println!("no convergence found, returning all as divergence");
+    Ok((old_data.len(), remaining))
 }
 
-fn collect_convergence<R: Read>(
+fn collect_convergence<R: Read + Seek>(
     old: &mut R,
     new: &mut R,
     window: usize,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    if window <= 4 {
-        return Err("window is 4".into());
+    if window < 1 {
+        return Err("window is too small".into());
     }
 
-    let mut old_hasher = blake3::Hasher::new();
-    let mut new_hasher = blake3::Hasher::new();
+    let old_starting_pos = old.stream_position()?;
+    let new_starting_pos = new.stream_position()?;
+
     let mut unchanged_len = 0usize;
+    let mut hit_eof = false;
 
     loop {
         let (old_buf, old_eof) = read_chunk(old, window)?;
-        let _ = old_hasher.write_bytes(old_buf.as_slice());
-
         let (new_buf, new_eof) = read_chunk(new, window)?;
-        let _ = new_hasher.write_bytes(new_buf.as_slice());
-
-        let old_hash = old_hasher.finalize();
-        let new_hash = new_hasher.finalize();
-
-        unchanged_len += window;
 
         if old_eof || new_eof {
+            hit_eof = true;
+        }
+
+        // Direct byte comparison
+        if old_buf != new_buf {
+            // Found divergence, rewind to before this chunk
+            old.seek(io::SeekFrom::Start(old_starting_pos + unchanged_len as u64))?;
+            new.seek(io::SeekFrom::Start(new_starting_pos + unchanged_len as u64))?;
             break;
         }
-        if old_hash != new_hash {
-            break;
+
+        unchanged_len += old_buf.len();
+
+        if hit_eof {
+            println!("eof break");
+            return Ok(unchanged_len);
         }
     }
 
-    if unchanged_len <= window {
+    if unchanged_len == 0 && !hit_eof {
+        // No convergence yet, but not EOF - try smaller window
+        println!("!!! failed collecting convergence window={}", window);
+        old.seek(io::SeekFrom::Start(old_starting_pos))?;
+        new.seek(io::SeekFrom::Start(new_starting_pos))?;
         return collect_convergence(old, new, window / 2);
     }
 
+    println!(
+        "success collecting convergence window={} len={}",
+        window, unchanged_len
+    );
     Ok(unchanged_len)
+}
+
+fn test_eof<R: Read + Seek>(reader: &mut R) -> Result<bool, Box<dyn std::error::Error>> {
+    let p = reader.stream_position()?;
+    let (c, eof) = read_chunk(reader, 1)?;
+    if c.len() > 0 {
+        reader.seek(io::SeekFrom::Start(p))?;
+    }
+    println!("test eof {} {} {}", p, c.len(), eof);
+    return Ok(eof);
 }
 
 pub fn build_diff_fragments<R: Read + Seek>(
@@ -165,24 +199,61 @@ pub fn build_diff_fragments<R: Read + Seek>(
     window: usize,
 ) -> Result<Vec<DiffFragment>, Box<dyn std::error::Error>> {
     let mut fragments = Vec::new();
-    let mut added_fragment = true;
 
-    while added_fragment {
-        added_fragment = false;
+    while !test_eof(&mut old)? && !test_eof(&mut new)? {
+        println!("-----");
+        println!("1. collecting convergence");
         let converged = collect_convergence(&mut old, &mut new, window)?;
         if converged > 0 {
+            println!("added unchanged fragment {}", converged);
             fragments.push(DiffFragment::UNCHANGED { len: converged });
-            added_fragment = true;
         }
 
+        println!(
+            "-- old converged stream position {}",
+            old.stream_position()?
+        );
+        println!(
+            "-- new converged stream position {}",
+            new.stream_position()?
+        );
+
+        println!("2. collecting divergence");
         let (deleted, added) = collect_divergence(&mut old, &mut new, window)?;
         if deleted > 0 {
+            println!("added deleted fragment {}", deleted);
             fragments.push(DiffFragment::DELETED { len: deleted });
-            added_fragment = true;
         }
         if added.len() > 0 {
+            println!("added added fragment {}", added.len());
             fragments.push(DiffFragment::ADDED { body: added });
-            added_fragment = true;
+        }
+
+        println!(
+            "-- old converged stream position {}",
+            old.stream_position()?
+        );
+        println!(
+            "-- new converged stream position {}",
+            new.stream_position()?
+        );
+    }
+
+    if !test_eof(&mut new)? {
+        let mut buf = Vec::new();
+        new.read_to_end(&mut buf)?;
+        println!("append added {}", buf.len());
+        if buf.len() > 0 {
+            fragments.push(DiffFragment::ADDED { body: buf });
+        }
+    }
+
+    if !test_eof(&mut old)? {
+        let mut buf = Vec::new();
+        old.read_to_end(&mut buf)?;
+        println!("append deleted {}", buf.len());
+        if buf.len() > 0 {
+            fragments.push(DiffFragment::DELETED { len: buf.len() });
         }
     }
 
