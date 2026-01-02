@@ -2,20 +2,24 @@ use clap::{self, Parser};
 use std::{
     fs::{self, File},
     os::unix::fs::MetadataExt,
+    path::PathBuf,
 };
 
 /// Demo of CDC-based diff fragment detection
 #[derive(clap::Parser, Debug)]
 #[command(version, about)]
 struct Args {
-    #[arg(short, long)]
+    #[arg(long)]
     pub original: String,
 
-    #[arg(short, long)]
+    #[arg(long)]
     pub next: String,
 
-    #[arg(short, long)]
+    #[arg(long)]
     pub window: usize,
+
+    #[arg(long)]
+    pub output: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,6 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  New: {}", args.next);
     println!();
 
+    // Create output directory
+    let output_dir = PathBuf::from(&args.output);
+    fs::create_dir_all(&output_dir)?;
+
     let mut fragments = Vec::new();
     let mut total_added = 0;
     let mut total_unchanged = 0;
@@ -45,17 +53,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let fragment = frag_result?;
         count += 1;
         
+        // Wrap in Fragment and Object for saving
+        let obj = lib::objects::Object::Fragment(lib::objects::Fragment(fragment.clone()));
+        let (msgpack, hash) = obj.hash()?;
+        
+        // Save to output directory
+        let top = &hash.to_string()[0..2];
+        let bottom = &hash.to_string()[2..];
+        let obj_dir = output_dir.join(top);
+        fs::create_dir_all(&obj_dir)?;
+        let obj_path = obj_dir.join(bottom);
+        fs::write(&obj_path, msgpack)?;
+        
         match &fragment {
             lib::diff::DiffFragment::ADDED { body } => {
-                println!("{:4}. ADDED      {} bytes", count, body.len());
+                println!("{:4}. ADDED      {} bytes  -> {}", count, body.len(), hash.to_string());
                 total_added += body.len();
             }
             lib::diff::DiffFragment::UNCHANGED { len } => {
-                println!("{:4}. UNCHANGED  {} bytes", count, len);
+                println!("{:4}. UNCHANGED  {} bytes  -> {}", count, len, hash.to_string());
                 total_unchanged += len;
             }
             lib::diff::DiffFragment::DELETED { len } => {
-                println!("{:4}. DELETED    {} bytes", count, len);
+                println!("{:4}. DELETED    {} bytes  -> {}", count, len, hash.to_string());
                 total_deleted += len;
             }
         }
@@ -72,6 +92,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Unchanged: {} bytes", total_unchanged);
     println!("  Deleted:   {} bytes", total_deleted);
     println!("  Total diff size: {} fragments", count);
+    println!();
+    println!("Fragments saved to: {}", output_dir.display());
 
     Ok(())
 }
