@@ -1,4 +1,4 @@
-use crate::{hash::Hash, utils::hash_string};
+use crate::{hash::Hash, utils::{hash_string, hash_bytes}, diff::DiffFragment};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, str::FromStr};
@@ -42,6 +42,19 @@ pub struct FileStruct {
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StagedFileStruct(Vec<u8>);
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileVersion {
+    pub hash: Hash,
+    pub prev_hash: Hash,
+    pub fragments: Vec<FileDiffFragment>,
+}
+#[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub enum FileDiffFragment {
+    ADDED { body: Hash },
+    UNCHANGED { len: usize },
+    DELETED { len: usize },
+}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Object {
     Commit(CommitStruct),
@@ -68,19 +81,20 @@ impl Object {
 
     pub fn hash(&self) -> Result<(Vec<u8>, Hash), Box<dyn Error>> {
         let msgpack = self.to_msgpack();
-        // let hash = Hash::from_string(String::from_utf8(Sha256::digest(msgpack.clone()).to_vec())?);
-        let hash = Hash::from_string(hash_string(String::from_utf8(self.to_msgpack())?)?);
+        let hash = Hash::from_string(hash_bytes(&msgpack));
 
         return Ok((msgpack, hash));
     }
 
     pub fn get_classification(self) -> String {
         match self {
-            Self::FileVersion(_) => "file",
-            Self::FileDiffFragment(_) => "fragment",
+            Self::FileVersion(_) => "fileversion",
+            Self::FileDiffFragment(_) => "filedifffragment",
+            Self::Fragment(_) => "fragment",
             Self::Commit(_) => "commit",
             Self::Tree(_) => "tree",
             Self::StagedFileStruct(_) => "stagedfilestruct",
+            Self::File(_) => "file"
         }
         .into()
     }
