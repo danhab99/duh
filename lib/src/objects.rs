@@ -1,4 +1,4 @@
-use crate::{diff::DiffFragment, hash::Hash, utils::hash_string};
+use crate::{hash::Hash, utils::hash_string};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, str::FromStr};
@@ -49,6 +49,8 @@ pub enum Object {
     File(FileStruct),
     Fragment(Fragment),
     StagedFileStruct(StagedFileStruct),
+    FileVersion(FileVersion),
+    FileDiffFragment(FileDiffFragment),
 }
 
 impl Object {
@@ -71,6 +73,17 @@ impl Object {
 
         return Ok((msgpack, hash));
     }
+
+    pub fn get_classification(self) -> String {
+        match self {
+            Self::FileVersion(_) => "file",
+            Self::FileDiffFragment(_) => "fragment",
+            Self::Commit(_) => "commit",
+            Self::Tree(_) => "tree",
+            Self::StagedFileStruct(_) => "stagedfilestruct",
+        }
+        .into()
+    }
 }
 
 pub enum ObjectReference {
@@ -89,7 +102,7 @@ impl ToString for ObjectReference {
 
 impl FromStr for ObjectReference {
     type Err = ();
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.starts_with("ref:") {
             Ok(ObjectReference::Ref(String::from(s)))
