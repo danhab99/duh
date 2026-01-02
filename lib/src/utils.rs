@@ -52,3 +52,8 @@ pub fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
     let x = String::from_utf8(Sha256::digest(txt.clone()).to_vec())?;
     Ok(x)
 }
+
+pub fn hash_bytes(data: &[u8]) -> String {
+    let digest = Sha256::digest(data);
+    hex::encode(digest)
+}
