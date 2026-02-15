@@ -1,22 +1,21 @@
 use crate::{
     diff::DiffFragment,
     hash::Hash,
-    objects::{
-        CommitStruct, FileDiffFragment, FileVersion, Fragment, Object, ObjectReference, Person,
-    },
+    objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference, Person},
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
 use std::{
     collections::HashMap,
     error::Error,
     fs::{self, File},
-    io::{BufReader, BufWriter, Read, Seek},
+    io::{Read, Seek},
     path::PathBuf,
     time::SystemTime,
 };
 
-use std::{fmt, io};
+use serde::Serialize;
 use std::env;
+use std::io;
 
 // Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
 pub trait ReadSeek: Read + Seek {}
@@ -35,6 +34,10 @@ pub type RepoError = Box<dyn Error>;
 pub type RepoResult<T> = Result<T, RepoError>;
 
 pub const BLOCK_SIZE: usize = 512;
+
+/// Maximum size (bytes) for a single stored ADDED fragment. Larger ADDED
+/// bodies are split into multiple Fragment objects at stage time.
+pub const MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
@@ -181,12 +184,66 @@ impl Repo {
     }
 
     pub fn save_obj(&self, o: Object) -> RepoResult<Hash> {
-        let (msgpack, hash) = o.hash()?;
+        use rmp_serde::Serializer;
+        use sha2::{Digest, Sha256};
+        use std::io::Write as IoWrite;
+        use tempfile::NamedTempFile;
+
+        // Ensure objects dir exists
+        let objects_dir = self.get_path_in_repo("objects");
+        fs::create_dir_all(&objects_dir)?;
+
+        // Create a named temp file inside the objects dir so rename/persist is atomic
+        let mut tmp = NamedTempFile::new_in(&objects_dir)?;
+
+        // Hasher to compute hash of the *msgpack* bytes as they are written
+        let mut hasher = Sha256::new();
+
+        // A small writer that writes to the temp file and updates the hasher
+        struct HashingWriter<'a, W: IoWrite> {
+            inner: &'a mut W,
+            hasher: &'a mut Sha256,
+        }
+
+        impl<'a, W: IoWrite> IoWrite for HashingWriter<'a, W> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.inner.write_all(buf)?;
+                self.hasher.update(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.inner.flush()
+            }
+        }
+
+        // Serialize the object directly into the temp file while hashing
+        {
+            let mut hw = HashingWriter {
+                inner: &mut tmp,
+                hasher: &mut hasher,
+            };
+            let mut ser = Serializer::new(&mut hw);
+            o.serialize(&mut ser).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::Other, format!("serialize: {}", e))
+            })?;
+            hw.flush()?;
+        }
+
+        // finalize hash and build Hash value (hex-encoded sha256)
+        let digest = hasher.finalize();
+        let hex = hex::encode(digest);
+        let hash = Hash::from_string(hex);
+
+        // Persist temp file to final object path
         let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, msgpack)?;
+        tmp.persist(&path)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        // NOTE: `.raw` sidecars removed — fragment bytes are stored only inside the
+        // serialized `Fragment` object on disk and will be deserialized when first read.
         Ok(hash)
     }
 
@@ -241,63 +298,73 @@ impl Repo {
     }
 
     pub fn stage_file(&mut self, file_path: String) -> RepoResult<Hash> {
-        println!("stage_file: opening '{}'", file_path);
-        let mut new = File::open(file_path.clone())?;
+        let fp = self.get_path_in_cwd_str(&file_path);
+
+        println!("stage_file: opening '{}'", fp);
+        let mut new = File::open(fp.clone())?;
         println!("stage_file: opened");
 
         let content_hash = Hash::digest_file_stream(&mut new)?;
         println!("stage_file: content hash computed");
 
         let head_commit_hash = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
-        println!("stage_file: head_commit_hash = {}", head_commit_hash.to_string());
+        println!(
+            "stage_file: head_commit_hash = {}",
+            head_commit_hash.to_string()
+        );
 
-        let old = self.open_file(file_path.clone(), head_commit_hash)?;
+        let old: Box<dyn ReadSeek> = if head_commit_hash.is_zero() {
+            println!("stage_file: stub file",);
+            Box::new(tempfile::tempfile()?)
+        } else {
+            println!(
+                "stage_file: open prev file {}",
+                head_commit_hash.to_string()
+            );
+            self.open_file(fp.clone(), head_commit_hash)?
+        };
+
         println!("stage_file: opened old file reader");
 
         new.seek(io::SeekFrom::Start(0))?;
 
         let fragments = crate::diff::build_diff_fragments(old, Box::new(new), BLOCK_SIZE);
 
-        let file_diff_fragments = fragments.flat_map(|fragment_res| {
+        // Collect `FileFragment` entries directly in the FileVersion so we avoid
+        // creating a separate FileDiffFragment object for every ADDED fragment.
+        let mut file_fragments: Vec<FileFragment> = Vec::new();
+
+        for fragment_res in fragments {
             match fragment_res {
                 Ok(DiffFragment::ADDED { body }) => {
-                    // split large added bodies into bounded-size Fragment objects
-                    let mut hashes = Vec::new();
-                    for chunk in body.chunks(self.buffer_size) {
-                        let frag_hash = self
-                            .save_obj(Object::Fragment(Fragment(chunk.to_vec())))
-                            .unwrap();
-                        let fdf = FileDiffFragment::ADDED {
+                    // split large ADDED bodies into FRAGMENT-sized chunks
+                    for chunk in body.chunks(MAX_FRAGMENT_SIZE) {
+                        let frag_hash =
+                            self.save_obj(Object::Fragment(Fragment(chunk.to_vec())))?;
+                        file_fragments.push(FileFragment::ADDED {
                             body: frag_hash,
                             len: chunk.len(),
-                        };
-                        let fdf_hash = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
-                        hashes.push(fdf_hash);
+                        });
                     }
-                    hashes.into_iter()
                 }
                 Ok(DiffFragment::UNCHANGED { len }) => {
-                    let fdf = FileDiffFragment::UNCHANGED { len };
-                    let h = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
-                    vec![h].into_iter()
+                    file_fragments.push(FileFragment::UNCHANGED { len });
                 }
                 Ok(DiffFragment::DELETED { len }) => {
-                    let fdf = FileDiffFragment::DELETED { len };
-                    let h = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
-                    vec![h].into_iter()
+                    file_fragments.push(FileFragment::DELETED { len });
                 }
                 Err(x) => panic!("{}", x),
             }
-        });
+        }
 
         let version = FileVersion {
             content_hash: content_hash,
-            fragments: file_diff_fragments.collect::<Vec<_>>(),
+            fragments: file_fragments,
         };
 
         let version_hash = self.save_obj(Object::FileVersion(version))?;
 
-        self.index.insert(file_path, version_hash);
+        self.index.insert(fp.to_string(), version_hash);
 
         Ok(version_hash)
     }
@@ -322,6 +389,8 @@ impl Repo {
 
     pub fn open_file(&mut self, file_path: String, hash: Hash) -> RepoResult<Box<dyn ReadSeek>> {
         // Resolve the commit pointed to by `hash`; if it doesn't exist, return an empty reader.
+        let fp = self.get_path_in_cwd_str(&file_path);
+
         let commit = match self.get_object(hash)? {
             Some(Object::Commit(c)) => c,
             None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
@@ -330,14 +399,19 @@ impl Repo {
 
         // Open the parent file (or an empty cursor if there is no parent commit).
         let mut parent_reader: Box<dyn ReadSeek> = match self.get_object(commit.parent)? {
-            Some(Object::Commit(_)) => self.open_file(file_path.clone(), commit.parent)?,
+            Some(Object::Commit(_)) => self.open_file(fp.clone(), commit.parent)?,
             None => Box::new(io::Cursor::new(Vec::<u8>::new())),
             _ => panic!("expected commit object for parent"),
         };
 
-        let file_version_hash = match commit.files.get(&file_path) {
+        for (path, file) in &commit.files {
+            println!("File path: {}", path);
+            println!("File info: {:#?}", file);
+        }
+
+        let file_version_hash = match commit.files.get(fp.as_str()) {
             Some(x) => x,
-            _ => panic!("file does not exist in this commit"),
+            _ => panic!("file does not exist in this commit {}", fp.as_str()),
         };
 
         let file_version = match self.get_object(*file_version_hash)? {
@@ -350,21 +424,12 @@ impl Repo {
         let mut output_cursor: u64 = 0;
         let mut parent_cursor: u64 = 0;
 
-        for fdf_hash in file_version.fragments.iter() {
-            let fdf_obj = self
-                .get_object(*fdf_hash)?
-                .ok_or("missing filediff fragment object")?;
-
-            let fdf = match fdf_obj {
-                Object::FileDiffFragment(f) => f,
-                _ => panic!("expected FileDiffFragment"),
-            };
-
-            match fdf {
-                FileDiffFragment::ADDED { body, len } => {
+        for ff in file_version.fragments.iter() {
+            match ff {
+                FileFragment::ADDED { body, len } => {
                     // don't load the fragment body into RAM here — store object path + length
                     let obj_path = self.get_object_path(ObjectReference::Hash(body.clone()))?;
-                    let len_u64 = len as u64;
+                    let len_u64 = *len as u64;
                     spans.push(FragmentSpan {
                         output_start: output_cursor,
                         output_end: output_cursor + len_u64,
@@ -378,8 +443,8 @@ impl Repo {
 
                     output_cursor += len_u64;
                 }
-                FileDiffFragment::UNCHANGED { len } => {
-                    let len_u64 = len as u64;
+                FileFragment::UNCHANGED { len } => {
+                    let len_u64 = *len as u64;
                     spans.push(FragmentSpan {
                         output_start: output_cursor,
                         output_end: output_cursor + len_u64,
@@ -391,8 +456,8 @@ impl Repo {
                     output_cursor += len_u64;
                     parent_cursor += len_u64;
                 }
-                FileDiffFragment::DELETED { len } => {
-                    parent_cursor += len as u64;
+                FileFragment::DELETED { len } => {
+                    parent_cursor += *len as u64;
                 }
             }
         }
@@ -417,7 +482,9 @@ enum FragmentKind {
         len: u64,
         cache: Option<Vec<u8>>,
     },
-    Unchanged { parent_offset: u64 },
+    Unchanged {
+        parent_offset: u64,
+    },
 }
 
 struct RepoSeekableFile {
@@ -489,11 +556,12 @@ impl std::io::Read for RepoSeekableFile {
                     hash: _,
                     cache,
                 } => {
-                    // lazily load the fragment body (cache it for repeated reads)
+                    // Load fragment bytes from the serialized `Fragment` object on first access.
                     if cache.is_none() {
                         let packed = fs::read(path)?;
-                        let obj = Object::from_msgpack(packed)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                        let obj = Object::from_msgpack(packed).map_err(|e| {
+                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        })?;
                         let frag_bytes = match obj {
                             Object::Fragment(Fragment(b)) => b,
                             _ => panic!("expected Fragment body"),
