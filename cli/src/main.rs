@@ -18,8 +18,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let _ = init::init()?;
         }
         Commands::Snapshot(c) => {
-            let repo = Repo::at_root_path(None)?;
-            snapshot::snapshot(repo, c).expect("Unable to snapshot");
+            let mut repo = Repo::at_root_path(None)?;
+            snapshot::snapshot(&mut repo, c).expect("Unable to snapshot");
         }
     };
 
