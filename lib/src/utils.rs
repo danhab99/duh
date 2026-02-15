@@ -49,8 +49,8 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
 }
 
 pub fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
-    let x = String::from_utf8(Sha256::digest(txt.clone()).to_vec())?;
-    Ok(x)
+    let digest = Sha256::digest(txt.as_bytes());
+    Ok(hex::encode(digest))
 }
 
 pub fn hash_bytes(data: &[u8]) -> String {

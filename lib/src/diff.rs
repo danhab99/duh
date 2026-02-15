@@ -355,3 +355,75 @@ pub fn build_diff_fragments<R: Read + Seek>(
 ) -> DiffFragmentIter<R> {
     DiffFragmentIter::new(old, new, window)
 }
+
+/// Apply a sequence of `DiffFragment` values to `old`, writing the resulting
+/// bytes into `out`.
+///
+/// Behavior:
+/// - `UNCHANGED { len }`  — copy `len` bytes from `old` to `out`.
+/// - `DELETED { len }`    — consume (skip) `len` bytes from `old`.
+/// - `ADDED { body }`     — write `body` into `out`.
+///
+/// Returns an error if fragments attempt to read past the end of `old` or
+/// any underlying I/O error occurs.
+pub fn apply_fragments<R: Read + Seek, W: io::Write, I: Iterator<Item = DiffFragment>>(
+    old: &mut R,
+    fragments: I,
+    out: &mut W,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for frag in fragments {
+        match frag {
+            DiffFragment::UNCHANGED { len } => {
+                let mut remaining = len;
+                let mut buf = [0u8; 8 * 1024];
+                while remaining > 0 {
+                    let to_read = std::cmp::min(remaining, buf.len());
+                    let n = old.read(&mut buf[..to_read])?;
+                    if n == 0 {
+                        return Err("unexpected EOF while applying UNCHANGED fragment".into());
+                    }
+                    out.write_all(&buf[..n])?;
+                    remaining -= n;
+                }
+            }
+            DiffFragment::DELETED { len } => {
+                // Consume (and discard) `len` bytes from `old`.
+                let mut remaining = len;
+                let mut buf = [0u8; 8 * 1024];
+                while remaining > 0 {
+                    let to_read = std::cmp::min(remaining, buf.len());
+                    let n = old.read(&mut buf[..to_read])?;
+                    if n == 0 {
+                        return Err("unexpected EOF while applying DELETED fragment".into());
+                    }
+                    remaining -= n;
+                }
+            }
+            DiffFragment::ADDED { body } => {
+                out.write_all(&body)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Convenience wrapper for applying an iterator that yields
+/// `Result<DiffFragment, Box<dyn Error>>` (the same type produced by
+/// `build_diff_fragments`). Errors from the fragment iterator are
+/// propagated immediately.
+pub fn apply_fragments_result_iter<
+    R: Read + Seek,
+    W: io::Write,
+    I: Iterator<Item = Result<DiffFragment, Box<dyn std::error::Error>>>,
+>(
+    old: &mut R,
+    fragments: I,
+    out: &mut W,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for frag_res in fragments {
+        let frag = frag_res?;
+        apply_fragments(old, std::iter::once(frag), out)?;
+    }
+    Ok(())
+}
