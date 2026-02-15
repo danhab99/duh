@@ -1,15 +1,10 @@
-use crate::{hash::Hash, utils::{hash_string, hash_bytes}, diff::DiffFragment};
+use crate::{hash::Hash, utils::hash_bytes};
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, str::FromStr};
+use std::{collections::HashMap, error::Error, str::FromStr};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Fragment(pub DiffFragment);
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TreeRefStruct {
-    pub name: String,
-    pub hash: Hash,
-}
+pub struct Fragment(pub Vec<u8>);
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileRefStruct {
     pub name: String,
@@ -25,15 +20,10 @@ pub struct Person {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitStruct {
     pub parent: Hash,
-    pub trees: Vec<TreeRefStruct>,
+    pub files: HashMap<String, Hash>,
     pub message: String,
     pub comitter: Person,
     pub author: Person,
-}
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TreeStruct {
-    pub trees: Vec<TreeRefStruct>,
-    pub files: Vec<FileRefStruct>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileStruct {
@@ -45,8 +35,7 @@ pub struct StagedFileStruct(Vec<u8>);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileVersion {
-    pub hash: Hash,
-    pub prev_hash: Option<Hash>,
+    pub content_hash: Hash,
     pub fragments: Vec<Hash>,
 }
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -58,7 +47,6 @@ pub enum FileDiffFragment {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Object {
     Commit(CommitStruct),
-    Tree(TreeStruct),
     File(FileStruct),
     Fragment(Fragment),
     StagedFileStruct(StagedFileStruct),
@@ -92,9 +80,8 @@ impl Object {
             Self::FileDiffFragment(_) => "filedifffragment",
             Self::Fragment(_) => "fragment",
             Self::Commit(_) => "commit",
-            Self::Tree(_) => "tree",
             Self::StagedFileStruct(_) => "stagedfilestruct",
-            Self::File(_) => "file"
+            Self::File(_) => "file",
         }
         .into()
     }
