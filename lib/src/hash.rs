@@ -123,4 +123,8 @@ impl Hash {
         let d = h.finalize();
         Ok(Hash::from_string(hex::encode(d)))
     }
+
+    pub fn is_zero(self) -> bool {
+        self.0.iter().all(|x| *x == 0)
+    }
 }

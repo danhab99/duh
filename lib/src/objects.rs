@@ -33,11 +33,19 @@ pub struct FileStruct {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StagedFileStruct(Vec<u8>);
 
+#[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub enum FileFragment {
+    ADDED { body: Hash, len: usize },
+    UNCHANGED { len: usize },
+    DELETED { len: usize },
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileVersion {
     pub content_hash: Hash,
-    pub fragments: Vec<Hash>,
+    pub fragments: Vec<FileFragment>,
 }
+
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum FileDiffFragment {
     ADDED { body: Hash, len: usize },
