@@ -104,20 +104,23 @@ impl Hash {
     }
 
     pub fn digest_slice(s: &[u8]) -> Result<Hash, Box<dyn Error>> {
-        Ok(Hash::from_slice(Sha256::digest(s).to_vec().as_slice()))
+        let d = Sha256::digest(s);
+        Ok(Hash::from_string(hex::encode(d)))
     }
 
     pub fn digest_file_stream<F: std::io::Read>(f: &mut F) -> Result<Hash, Box<dyn Error>> {
         let mut h = Sha256::new();
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 8 * 1024];
 
-        while buf.len() >= 512 {
-            f.read_exact(&mut buf)?;
-            h.write_bytes(&mut buf);
+        loop {
+            let n = f.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            h.update(&buf[..n]);
         }
 
         let d = h.finalize();
-        let s = d.as_slice();
-        Ok(Hash::from_slice(s))
+        Ok(Hash::from_string(hex::encode(d)))
     }
 }

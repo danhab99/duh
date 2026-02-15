@@ -6,7 +6,21 @@ use crate::{
     },
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
-use std::{collections::HashMap, error::Error, fs, io::Read, path::PathBuf, time::SystemTime};
+use std::{
+    collections::HashMap,
+    error::Error,
+    fs::{self, File},
+    io::{BufReader, BufWriter, Read, Seek},
+    path::PathBuf,
+    time::SystemTime,
+};
+
+use std::{fmt, io};
+use std::env;
+
+// Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
+pub trait ReadSeek: Read + Seek {}
+impl<T: Read + Seek + ?Sized> ReadSeek for T {}
 
 use toml;
 
@@ -55,10 +69,16 @@ impl Repo {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let rp = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
+        let metadata_path = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
+        // metadata_path == "<repo-root>/.duh" — store the repo root (parent of .duh)
+        let repo_root = PathBuf::from(&metadata_path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .ok_or("couldn't determine repo root")?
+            .to_string();
 
         let mut r = Repo {
-            root_path: rp,
+            root_path: repo_root,
             buffer_size,
             me: Person {
                 name: String::from(
@@ -102,9 +122,11 @@ impl Repo {
     }
 
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
-        let mut b = PathBuf::from(self.root_path.clone()).join(p);
+        // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
+        let mut b = PathBuf::from(self.root_path.clone());
         b.push(utils::REPO_METADATA_DIR_NAME);
-        fs::create_dir_all(p).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        b.push(p);
         return b;
     }
 
@@ -128,10 +150,24 @@ impl Repo {
     }
 
     pub fn initialize_at(root_path: String) -> RepoResult<Repo> {
-        fs::create_dir_all(get_path_in_metadata("objects"))?;
-        fs::create_dir_all(get_path_in_metadata("refs"))?;
-        fs::write(get_path_in_metadata("config"), "# duh config")?;
-        fs::write(get_path_in_metadata("HEAD"), "")?;
+        // Create the metadata directory tree under the provided root path so
+        // `at_root_path(Some(root_path))` can locate it reliably (don't rely on CWD).
+        let base = PathBuf::from(root_path.clone()).join(utils::REPO_METADATA_DIR_NAME);
+        fs::create_dir_all(base.join("objects"))?;
+        fs::create_dir_all(base.join("refs"))?;
+
+        // Write a minimal, valid TOML config so `at_root_path` can parse required fields.
+        let default_config = format!(
+            "chunk_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
+            BLOCK_SIZE
+        );
+        fs::write(base.join("config"), default_config)?;
+
+        // Initialize HEAD and index (also create refs/HEAD so lookups succeed)
+        fs::write(base.join("HEAD"), "")?;
+        fs::write(base.join("index"), "")?;
+        fs::create_dir_all(base.join("refs"))?;
+        fs::write(base.join("refs").join("HEAD"), "")?;
 
         Ok(Repo::at_root_path(Some(root_path))?)
     }
@@ -147,6 +183,9 @@ impl Repo {
     pub fn save_obj(&self, o: Object) -> RepoResult<Hash> {
         let (msgpack, hash) = o.hash()?;
         let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::write(path, msgpack)?;
         Ok(hash)
     }
@@ -181,6 +220,13 @@ impl Repo {
     pub fn get_ref(&self, name: String) -> RepoResult<ObjectReference> {
         let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
         let val = String::from_utf8(fs::read(ref_path)?)?;
+
+        // Treat an empty ref file as "no parent" (map to zero hash) to make the
+        // first commit/HEAD behaviour safe.
+        if val.trim().is_empty() {
+            return Ok(ObjectReference::Hash(Hash::new()));
+        }
+
         Ok(ObjectReference::from(val))
     }
 
@@ -194,25 +240,54 @@ impl Repo {
         }
     }
 
-    pub fn stage_file<I: Iterator<Item = DiffFragment>>(
-        &mut self,
-        filepath: String,
-        fragments: I,
-        content_hash: Hash,
-    ) -> RepoResult<Hash> {
-        let file_diff_fragments = fragments.into_iter().map(|fragment| {
-            let fdf = match fragment {
-                DiffFragment::ADDED { body } => {
-                    let frag_hash = self.save_obj(Object::Fragment(Fragment(body))).unwrap();
-                    FileDiffFragment::ADDED { body: frag_hash }
+    pub fn stage_file(&mut self, file_path: String) -> RepoResult<Hash> {
+        println!("stage_file: opening '{}'", file_path);
+        let mut new = File::open(file_path.clone())?;
+        println!("stage_file: opened");
+
+        let content_hash = Hash::digest_file_stream(&mut new)?;
+        println!("stage_file: content hash computed");
+
+        let head_commit_hash = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+        println!("stage_file: head_commit_hash = {}", head_commit_hash.to_string());
+
+        let old = self.open_file(file_path.clone(), head_commit_hash)?;
+        println!("stage_file: opened old file reader");
+
+        new.seek(io::SeekFrom::Start(0))?;
+
+        let fragments = crate::diff::build_diff_fragments(old, Box::new(new), BLOCK_SIZE);
+
+        let file_diff_fragments = fragments.flat_map(|fragment_res| {
+            match fragment_res {
+                Ok(DiffFragment::ADDED { body }) => {
+                    // split large added bodies into bounded-size Fragment objects
+                    let mut hashes = Vec::new();
+                    for chunk in body.chunks(self.buffer_size) {
+                        let frag_hash = self
+                            .save_obj(Object::Fragment(Fragment(chunk.to_vec())))
+                            .unwrap();
+                        let fdf = FileDiffFragment::ADDED {
+                            body: frag_hash,
+                            len: chunk.len(),
+                        };
+                        let fdf_hash = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
+                        hashes.push(fdf_hash);
+                    }
+                    hashes.into_iter()
                 }
-                DiffFragment::UNCHANGED { len } => FileDiffFragment::UNCHANGED { len },
-                DiffFragment::DELETED { len } => FileDiffFragment::DELETED { len },
-            };
-
-            let hash = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
-
-            return hash;
+                Ok(DiffFragment::UNCHANGED { len }) => {
+                    let fdf = FileDiffFragment::UNCHANGED { len };
+                    let h = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
+                    vec![h].into_iter()
+                }
+                Ok(DiffFragment::DELETED { len }) => {
+                    let fdf = FileDiffFragment::DELETED { len };
+                    let h = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
+                    vec![h].into_iter()
+                }
+                Err(x) => panic!("{}", x),
+            }
         });
 
         let version = FileVersion {
@@ -222,7 +297,7 @@ impl Repo {
 
         let version_hash = self.save_obj(Object::FileVersion(version))?;
 
-        self.index.insert(filepath, version_hash);
+        self.index.insert(file_path, version_hash);
 
         Ok(version_hash)
     }
@@ -243,6 +318,232 @@ impl Repo {
         self.set_ref("HEAD", ObjectReference::Hash(commit_hash))?;
 
         Ok(commit_hash)
+    }
+
+    pub fn open_file(&mut self, file_path: String, hash: Hash) -> RepoResult<Box<dyn ReadSeek>> {
+        // Resolve the commit pointed to by `hash`; if it doesn't exist, return an empty reader.
+        let commit = match self.get_object(hash)? {
+            Some(Object::Commit(c)) => c,
+            None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
+            _ => panic!("expected commit object"),
+        };
+
+        // Open the parent file (or an empty cursor if there is no parent commit).
+        let mut parent_reader: Box<dyn ReadSeek> = match self.get_object(commit.parent)? {
+            Some(Object::Commit(_)) => self.open_file(file_path.clone(), commit.parent)?,
+            None => Box::new(io::Cursor::new(Vec::<u8>::new())),
+            _ => panic!("expected commit object for parent"),
+        };
+
+        let file_version_hash = match commit.files.get(&file_path) {
+            Some(x) => x,
+            _ => panic!("file does not exist in this commit"),
+        };
+
+        let file_version = match self.get_object(*file_version_hash)? {
+            Some(Object::FileVersion(c)) => c,
+            _ => panic!("expected file version"),
+        };
+
+        // Build an index of fragments describing how to materialize this file.
+        let mut spans: Vec<FragmentSpan> = Vec::new();
+        let mut output_cursor: u64 = 0;
+        let mut parent_cursor: u64 = 0;
+
+        for fdf_hash in file_version.fragments.iter() {
+            let fdf_obj = self
+                .get_object(*fdf_hash)?
+                .ok_or("missing filediff fragment object")?;
+
+            let fdf = match fdf_obj {
+                Object::FileDiffFragment(f) => f,
+                _ => panic!("expected FileDiffFragment"),
+            };
+
+            match fdf {
+                FileDiffFragment::ADDED { body, len } => {
+                    // don't load the fragment body into RAM here — store object path + length
+                    let obj_path = self.get_object_path(ObjectReference::Hash(body.clone()))?;
+                    let len_u64 = len as u64;
+                    spans.push(FragmentSpan {
+                        output_start: output_cursor,
+                        output_end: output_cursor + len_u64,
+                        kind: FragmentKind::Added {
+                            path: obj_path,
+                            len: len_u64,
+                            hash: body.clone(),
+                            cache: None,
+                        },
+                    });
+
+                    output_cursor += len_u64;
+                }
+                FileDiffFragment::UNCHANGED { len } => {
+                    let len_u64 = len as u64;
+                    spans.push(FragmentSpan {
+                        output_start: output_cursor,
+                        output_end: output_cursor + len_u64,
+                        kind: FragmentKind::Unchanged {
+                            parent_offset: parent_cursor,
+                        },
+                    });
+
+                    output_cursor += len_u64;
+                    parent_cursor += len_u64;
+                }
+                FileDiffFragment::DELETED { len } => {
+                    parent_cursor += len as u64;
+                }
+            }
+        }
+
+        let reader = RepoSeekableFile::new(spans, output_cursor, parent_reader);
+
+        Ok(Box::new(reader))
+    }
+}
+
+/// Represents a byte-producing slice of the reconstructed file.
+struct FragmentSpan {
+    output_start: u64,
+    output_end: u64,
+    kind: FragmentKind,
+}
+
+enum FragmentKind {
+    Added {
+        path: PathBuf,
+        hash: Hash,
+        len: u64,
+        cache: Option<Vec<u8>>,
+    },
+    Unchanged { parent_offset: u64 },
+}
+
+struct RepoSeekableFile {
+    spans: Vec<FragmentSpan>,
+    pos: u64,
+    total_len: u64,
+    parent: Box<dyn ReadSeek>,
+}
+
+impl RepoSeekableFile {
+    fn new(spans: Vec<FragmentSpan>, total_len: u64, parent: Box<dyn ReadSeek>) -> Self {
+        Self {
+            spans,
+            pos: 0,
+            total_len,
+            parent,
+        }
+    }
+
+    fn find_span_index(&self, offset: u64) -> Option<usize> {
+        if self.spans.is_empty() {
+            return None;
+        }
+
+        let mut lo = 0usize;
+        let mut hi = self.spans.len();
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            let span = &self.spans[mid];
+            if offset < span.output_start {
+                hi = mid;
+            } else if offset >= span.output_end {
+                lo = mid + 1;
+            } else {
+                return Some(mid);
+            }
+        }
+        None
+    }
+}
+
+impl std::io::Read for RepoSeekableFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        if self.pos >= self.total_len {
+            return Ok(0);
+        }
+
+        let mut written = 0usize;
+        while written < buf.len() && self.pos < self.total_len {
+            let span_idx = match self.find_span_index(self.pos) {
+                Some(i) => i,
+                None => break,
+            };
+
+            let span = &mut self.spans[span_idx];
+            let span_offset = self.pos - span.output_start;
+            let span_remaining = (span.output_end - self.pos) as usize;
+            let dest_remaining = buf.len() - written;
+            let to_xfer = std::cmp::min(span_remaining, dest_remaining);
+
+            match &mut span.kind {
+                FragmentKind::Added {
+                    path,
+                    len: _,
+                    hash: _,
+                    cache,
+                } => {
+                    // lazily load the fragment body (cache it for repeated reads)
+                    if cache.is_none() {
+                        let packed = fs::read(path)?;
+                        let obj = Object::from_msgpack(packed)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+                        let frag_bytes = match obj {
+                            Object::Fragment(Fragment(b)) => b,
+                            _ => panic!("expected Fragment body"),
+                        };
+                        *cache = Some(frag_bytes);
+                    }
+
+                    let body = cache.as_ref().unwrap();
+                    let start = span_offset as usize;
+                    let end = start + to_xfer;
+                    buf[written..written + to_xfer].copy_from_slice(&body[start..end]);
+                    self.pos += to_xfer as u64;
+                    written += to_xfer;
+                }
+                FragmentKind::Unchanged { parent_offset } => {
+                    let absolute_parent_offset = *parent_offset + span_offset;
+                    self.parent
+                        .seek(std::io::SeekFrom::Start(absolute_parent_offset))?;
+                    let n = self.parent.read(&mut buf[written..written + to_xfer])?;
+                    self.pos += n as u64;
+                    written += n;
+                    if n == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(written)
+    }
+}
+
+impl std::io::Seek for RepoSeekableFile {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let new_pos: i128 = match pos {
+            std::io::SeekFrom::Start(o) => o as i128,
+            std::io::SeekFrom::End(o) => self.total_len as i128 + o as i128,
+            std::io::SeekFrom::Current(o) => self.pos as i128 + o as i128,
+        };
+
+        if new_pos < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek before start",
+            ));
+        }
+
+        let capped = std::cmp::min(new_pos as u64, self.total_len);
+        self.pos = capped;
+        Ok(self.pos)
     }
 }
 

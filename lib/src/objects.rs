@@ -40,7 +40,7 @@ pub struct FileVersion {
 }
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum FileDiffFragment {
-    ADDED { body: Hash },
+    ADDED { body: Hash, len: usize },
     UNCHANGED { len: usize },
     DELETED { len: usize },
 }
