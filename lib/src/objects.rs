@@ -46,8 +46,8 @@ pub struct StagedFileStruct(Vec<u8>);
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileVersion {
     pub hash: Hash,
-    pub prev_hash: Hash,
-    pub fragments: Vec<FileDiffFragment>,
+    pub prev_hash: Option<Hash>,
+    pub fragments: Vec<Hash>,
 }
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum FileDiffFragment {

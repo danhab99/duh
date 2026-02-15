@@ -175,6 +175,40 @@ impl Repo {
             }
         }
     }
+
+    pub fn stage_file<I: Iterator<Item = DiffFragment>>(
+        &mut self,
+        filepath: String,
+        fragments: I,
+        content_hash: Hash,
+    ) -> RepoResult<Hash> {
+        let file_diff_fragments = fragments.into_iter().map(|fragment| {
+            let fdf = match fragment {
+                DiffFragment::ADDED { body } => {
+                    let frag_hash = self.save_obj(Object::Fragment(Fragment(body))).unwrap();
+                    FileDiffFragment::ADDED { body: frag_hash }
+                }
+                DiffFragment::UNCHANGED { len } => FileDiffFragment::UNCHANGED { len },
+                DiffFragment::DELETED { len } => FileDiffFragment::DELETED { len },
+            };
+
+            let hash = self.save_obj(Object::FileDiffFragment(fdf)).unwrap();
+
+            return hash;
+        });
+
+        let version = FileVersion {
+            content_hash: content_hash,
+            fragments: file_diff_fragments.collect::<Vec<_>>(),
+        };
+
+        let version_hash = self.save_obj(Object::FileVersion(version))?;
+
+        self.index.insert(filepath, version_hash)
+
+        self.Ok(version_hash)
+    }
+
 }
 
 fn get_path_in_metadata(path: &str) -> PathBuf {
