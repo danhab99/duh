@@ -1,15 +1,12 @@
 use crate::{
+    diff::DiffFragment,
     hash::Hash,
-    objects::{Object, ObjectReference, Person},
+    objects::{
+        CommitStruct, FileDiffFragment, FileVersion, Fragment, Object, ObjectReference, Person,
+    },
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
-use std::{
-    env,
-    error::Error,
-    fs::{self},
-    path::PathBuf,
-    time::SystemTime,
-};
+use std::{collections::HashMap, error::Error, fs, io::Read, path::PathBuf, time::SystemTime};
 
 use toml;
 
@@ -17,6 +14,7 @@ pub struct Repo {
     root_path: String,
     buffer_size: usize,
     me: Person,
+    index: HashMap<String, Hash>,
 }
 
 pub type RepoError = Box<dyn Error>;
@@ -59,7 +57,7 @@ impl Repo {
 
         let rp = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
 
-        Ok(Repo {
+        let mut r = Repo {
             root_path: rp,
             buffer_size,
             me: Person {
@@ -79,7 +77,28 @@ impl Repo {
                 ),
                 timestamp: now,
             },
-        })
+            index: HashMap::new(),
+        };
+
+        let index_file_path = r.get_path_in_repo("index");
+
+        let mut index_file = fs::File::open(index_file_path).unwrap();
+        let mut contents = String::new();
+        index_file.read_to_string(&mut contents)?;
+        for line in contents.lines() {
+            let parts = line.split("=").collect::<Vec<_>>();
+            assert!(parts.len() == 2);
+
+            let filepath_part = parts[0];
+            let hash_part = parts[1];
+
+            r.index.insert(
+                filepath_part.to_string(),
+                Hash::from_string(hash_part.to_string()),
+            );
+        }
+
+        Ok(r)
     }
 
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
@@ -96,8 +115,7 @@ impl Repo {
     }
 
     pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
-        PathBuf::from(utils::get_cwd())
-            .join(p)
+        PathBuf::from(utils::get_cwd()).join(p)
         // PathBuf::from(self.root_path.clone())
         //     .join(utils::get_cwd())
         //     .join(p)
@@ -204,11 +222,28 @@ impl Repo {
 
         let version_hash = self.save_obj(Object::FileVersion(version))?;
 
-        self.index.insert(filepath, version_hash)
+        self.index.insert(filepath, version_hash);
 
-        self.Ok(version_hash)
+        Ok(version_hash)
     }
 
+    pub fn commit(&mut self, message: String) -> RepoResult<Hash> {
+        let head_commit = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+
+        let commit = CommitStruct {
+            parent: head_commit,
+            message: message,
+            comitter: self.me.clone(),
+            author: self.me.clone(),
+            files: self.index.clone(),
+        };
+
+        let commit_hash = self.save_obj(Object::Commit(commit))?;
+
+        self.set_ref("HEAD", ObjectReference::Hash(commit_hash))?;
+
+        Ok(commit_hash)
+    }
 }
 
 fn get_path_in_metadata(path: &str) -> PathBuf {
