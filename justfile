@@ -34,13 +34,17 @@ demo_script td:
     cd {{ td }} && duh init
 
     cd {{ td }} && cat abd > file
+    cd {{ td }} && duh status
     cd {{ td }} && duh stage file
+    cd {{ td }} && duh status
     cd {{ td }} && duh commit -m "commit 1"
 
     cd {{ td }} && duh show
 
     cd {{ td }} && cat acd > file
+    cd {{ td }} && duh status
     cd {{ td }} && duh stage file
+    cd {{ td }} && duh status
     cd {{ td }} && duh commit -m "commit 2"
 
     cd {{ td }} && duh show
