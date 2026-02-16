@@ -53,29 +53,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let fragment = frag_result?;
         count += 1;
         
-        // Wrap in Fragment and Object for saving
-        let obj = lib::objects::Object::Fragment(lib::objects::Fragment(fragment.clone()));
-        let (msgpack, hash) = obj.hash()?;
-        
-        // Save to output directory
-        let top = &hash.to_string()[0..2];
-        let bottom = &hash.to_string()[2..];
-        let obj_dir = output_dir.join(top);
-        fs::create_dir_all(&obj_dir)?;
-        let obj_path = obj_dir.join(bottom);
-        fs::write(&obj_path, msgpack)?;
-        
         match &fragment {
             lib::diff::DiffFragment::ADDED { body } => {
+                // Wrap ADDED fragments in Fragment and Object for saving
+                let obj = lib::objects::Object::Fragment(lib::objects::Fragment(body.clone()));
+                let (msgpack, hash) = obj.hash()?;
+                
+                // Save to output directory
+                let top = &hash.to_string()[0..2];
+                let bottom = &hash.to_string()[2..];
+                let obj_dir = output_dir.join(top);
+                fs::create_dir_all(&obj_dir)?;
+                let obj_path = obj_dir.join(bottom);
+                fs::write(&obj_path, msgpack)?;
+                
                 println!("{:4}. ADDED      {} bytes  -> {}", count, body.len(), hash.to_string());
                 total_added += body.len();
             }
             lib::diff::DiffFragment::UNCHANGED { len } => {
-                println!("{:4}. UNCHANGED  {} bytes  -> {}", count, len, hash.to_string());
+                println!("{:4}. UNCHANGED  {} bytes", count, len);
                 total_unchanged += len;
             }
             lib::diff::DiffFragment::DELETED { len } => {
-                println!("{:4}. DELETED    {} bytes  -> {}", count, len, hash.to_string());
+                println!("{:4}. DELETED    {} bytes", count, len);
                 total_deleted += len;
             }
         }
