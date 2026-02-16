@@ -77,7 +77,7 @@ impl Object {
 
     pub fn hash(&self) -> Result<(Vec<u8>, Hash), Box<dyn Error>> {
         let msgpack = self.to_msgpack();
-        let hash = Hash::from_string(hash_bytes(&msgpack));
+        let hash = Hash::from_string(hash_bytes(&msgpack))?;
 
         return Ok((msgpack, hash));
     }

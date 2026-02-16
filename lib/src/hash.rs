@@ -1,4 +1,3 @@
-use rmp::encode::RmpWrite;
 use serde::{
     de::{self, SeqAccess, Visitor},
     Deserialize, Serialize,
@@ -73,10 +72,13 @@ impl std::string::ToString for Hash {
 }
 
 impl Hash {
-    pub fn from_string(s: String) -> Hash {
+    pub fn from_string(s: String) -> Result<Hash, Box<dyn Error>> {
+        let v = hex::decode(s)?;
         let mut h = [0u8; 64];
-        h.copy_from_slice(s.as_bytes());
-        return Hash(h);
+
+        h.copy_from_slice(v.as_slice());
+
+        return Ok(Hash(h));
     }
 
     pub fn from_str(s: &str) -> Hash {
@@ -100,12 +102,12 @@ impl Hash {
     }
 
     pub fn digest_string(s: String) -> Result<Hash, Box<dyn Error>> {
-        Ok(Hash::from_string(hash_string(s)?))
+        Ok(Hash::from_string(hash_string(s)?)?)
     }
 
     pub fn digest_slice(s: &[u8]) -> Result<Hash, Box<dyn Error>> {
         let d = Sha256::digest(s);
-        Ok(Hash::from_string(hex::encode(d)))
+        Ok(Hash::from_string(hex::encode(d))?)
     }
 
     pub fn digest_file_stream<F: std::io::Read>(f: &mut F) -> Result<Hash, Box<dyn Error>> {
@@ -121,7 +123,7 @@ impl Hash {
         }
 
         let d = h.finalize();
-        Ok(Hash::from_string(hex::encode(d)))
+        Ok(Hash::from_string(hex::encode(d))?)
     }
 
     pub fn is_zero(self) -> bool {
