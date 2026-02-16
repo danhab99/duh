@@ -1,4 +1,4 @@
-# duh - Binary-Optimized Version Control
+# D[eduplicative] U[pdate] H[elper]
 
 A version control system designed to handle large binary files efficiently using rolling hash algorithms, inspired by rsync's delta synchronization approach.
 
