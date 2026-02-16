@@ -25,7 +25,6 @@ use toml;
 
 pub struct Repo {
     root_path: String,
-    buffer_size: usize,
     me: Person,
     index: HashMap<String, Hash>,
 }
@@ -63,11 +62,11 @@ impl Repo {
             .as_table()
             .ok_or("user config isn't a table")?;
 
-        let buffer_size = config
-            .get("chunk_size")
-            .ok_or("missing chunk_size")?
-            .as_integer()
-            .ok_or("chunk_size is not a number")? as usize;
+        // let buffer_size = config
+        //     .get("chunk_size")
+        //     .ok_or("missing chunk_size")?
+        //     .as_integer()
+        //     .ok_or("chunk_size is not a number")? as usize;
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
@@ -83,7 +82,7 @@ impl Repo {
 
         let mut r = Repo {
             root_path: repo_root,
-            buffer_size,
+            // buffer_size,
             me: Person {
                 name: String::from(
                     user_config
@@ -473,7 +472,7 @@ impl Repo {
 
         for ff in file_version.fragments.iter() {
             match ff {
-                FileFragment::ADDED { body, len } => {
+                FileFragment::ADDED { body, len: _ } => {
                     // Load the fragment data
                     let obj_path = self.get_object_path(ObjectReference::Hash(body.clone()))?;
                     let packed = fs::read(obj_path)?;
@@ -511,6 +510,12 @@ impl Repo {
         );
 
         Ok(Box::new(io::Cursor::new(output)))
+    }
+
+    pub fn save_index(&mut self) -> RepoResult<()> {
+        let index_bytes = toml::to_string(&self.index)?;
+        fs::write(self.get_path_in_repo("index"), index_bytes)?;
+        Ok(())
     }
 }
 
