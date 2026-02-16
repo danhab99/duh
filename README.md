@@ -133,6 +133,51 @@ name = "Your Name"
 email = "your.email@example.com"
 ```
 
+## Build & development (Nix + justfile) 🔧
+
+- Uses a Nix flake to build a single derivation for the `cli` crate (`duh`).
+
+### Quick commands
+
+- Build (Nix):
+
+  `nix build .#duh`  — binary appears at `./result/bin/duh`
+
+- Enter development shell (Nix):
+
+  `nix develop .#duh`
+
+- Build locally with Cargo (alternative):
+
+  `cd cli && cargo build --release`  — binary at `cli/target/release/duh`
+
+### justfile demo
+
+- Run the full demo (generates test files, init, stage/commit, show):
+
+  `just demo`
+
+- Create test-data only:
+
+  `just generate-test-files <outdir>`
+
+- Update the vendored crates & print the nix hash (paste into `flake.nix`):
+
+  `just update-vendor-hash`
+
+  This runs `cargo vendor` (under `cli/`) and prints the `cargoVendorHash` line you should copy into the flake.
+
+### Troubleshooting
+
+- If `nix build` fails with `cargoSha256` / `cargoHash` out of date:
+  1. Run `just update-vendor-hash`.
+  2. Replace `cargoVendorHash` in `flake.nix` with the printed value.
+  3. Re-run `nix build .#duh`.
+
+- If you get Cargo path-dep errors, ensure you build the flake target (`.#duh`) which selects the `cli/` package in the workspace.
+
+---
+
 ## How It Works: Rolling Hash Delta Storage
 
 ### Example: Editing a Large Binary File
