@@ -456,15 +456,24 @@ impl Repo {
             files: self.index.clone(),
         };
 
+        let files_count = commit.files.len();
         vlog!(
             "repo::commit: creating commit with {} files",
-            commit.files.len()
+            files_count
         );
 
         let commit_hash = self.save_obj(Object::Commit(commit))?;
 
-        self.set_ref("HEAD", ObjectReference::Hash(commit_hash))?;
+        self.set_ref("HEAD", ObjectReference::Hash(commit_hash.clone()))?;
         vlog!("repo::commit: new HEAD = {}", commit_hash.to_string());
+
+        // Remove the committed entries from the index (they were staged and are now part of history)
+        if files_count > 0 {
+            self.index.clear();
+            vlog!("repo::commit: cleared {} entries from index", files_count);
+            // persist index immediately so callers don't need to remember to call save_index()
+            self.save_index()?;
+        }
 
         Ok(commit_hash)
     }
