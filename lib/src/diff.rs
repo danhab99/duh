@@ -1,5 +1,4 @@
 use ahash::{HashMap, HashMapExt};
-use rmp::encode::RmpWrite;
 use std::io::{Read, Seek};
 use std::{fmt, io};
 
@@ -366,7 +365,7 @@ pub fn build_diff_fragments<R: Read + Seek>(
 ///
 /// Returns an error if fragments attempt to read past the end of `old` or
 /// any underlying I/O error occurs.
-pub fn apply_fragments<R: Read + Seek, W: io::Write, I: Iterator<Item = DiffFragment>>(
+pub fn apply_fragments<R: Read, W: io::Write, I: Iterator<Item = DiffFragment>>(
     old: &mut R,
     fragments: I,
     out: &mut W,
@@ -413,7 +412,7 @@ pub fn apply_fragments<R: Read + Seek, W: io::Write, I: Iterator<Item = DiffFrag
 /// `build_diff_fragments`). Errors from the fragment iterator are
 /// propagated immediately.
 pub fn apply_fragments_result_iter<
-    R: Read + Seek,
+    R: Read,
     W: io::Write,
     I: Iterator<Item = Result<DiffFragment, Box<dyn std::error::Error>>>,
 >(
