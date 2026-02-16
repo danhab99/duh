@@ -1,6 +1,6 @@
 use clap::*;
 
-use crate::{snapshot::SnapshotCommand};
+use crate::{commit::CommitCommand, snapshot::SnapshotCommand, stage::StageCommand};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -14,4 +14,6 @@ pub struct Cli {
 pub enum Commands {
     Init,
     Snapshot(SnapshotCommand),
+    Stage(StageCommand),
+    Commit(CommitCommand),
 }
