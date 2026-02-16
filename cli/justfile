@@ -1,0 +1,22 @@
+build:
+    cargo build
+
+debug: build
+    rust-gdb --args target/debug/cli snapshot --message "initial commit" test-data/abd
+
+init: build
+    rm -rf .duh
+    cargo run -- init
+
+run: build init
+    cargo run -- snapshot --message "initial commit" test-data/abd
+
+    @echo ===========================
+    @echo Object Count $(ls .duh/objects | wc -l)
+    @echo ===========================
+
+    cargo run -- snapshot --message "change" test-data/acd
+
+    @echo ===========================
+    @echo Object Count $(ls .duh/objects | wc -l)
+    @echo ===========================
