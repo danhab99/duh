@@ -1,6 +1,6 @@
 use clap::*;
 
-use crate::{commit::CommitCommand, snapshot::SnapshotCommand, stage::StageCommand, show::ShowCommand, checkout::CheckoutCommand, log::LogCommand};
+use crate::{commit::CommitCommand, snapshot::SnapshotCommand, stage::StageCommand, show::ShowCommand, checkout::CheckoutCommand, log::LogCommand, status::StatusCommand};
 
 /// `duh` — tiny duplicate-aware snapshot tool.
 #[derive(Parser)]
@@ -34,4 +34,7 @@ pub enum Commands {
 
     /// Show the commit log (history) starting at HEAD
     Log(LogCommand),
+
+    /// Show which tracked files have changed compared to the index
+    Status(StatusCommand),
 }
