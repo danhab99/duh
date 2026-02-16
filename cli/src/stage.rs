@@ -4,8 +4,10 @@ use clap::clap_derive::Args;
 use lib::repo::Repo;
 
 #[derive(Args)]
+#[command(about = "Stage a file (produce fragment objects without committing)")]
 pub struct StageCommand {
-    /// Path to the file to snapshot
+    /// Path to the file to stage
+    #[arg(help = "Path to the file to stage (relative to current working directory)")]
     pub file_path: String,
 }
 
