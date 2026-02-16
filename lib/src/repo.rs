@@ -1,10 +1,10 @@
+use crate::vlog;
 use crate::{
     diff::DiffFragment,
     hash::Hash,
     objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference, Person},
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
-use crate::vlog;
 use std::{
     collections::HashMap,
     error::Error,
@@ -28,16 +28,18 @@ pub struct Repo {
     root_path: String,
     me: Person,
     index: HashMap<String, Hash>,
+    chunk_size: usize,
+    max_size: usize,
 }
 
 pub type RepoError = Box<dyn Error>;
 pub type RepoResult<T> = Result<T, RepoError>;
 
-pub const BLOCK_SIZE: usize = 32;
+pub const DEFAULT_BLOCK_SIZE: usize = 32;
 
 /// Maximum size (bytes) for a single stored ADDED fragment. Larger ADDED
 /// bodies are split into multiple Fragment objects at stage time.
-pub const MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
@@ -63,11 +65,17 @@ impl Repo {
             .as_table()
             .ok_or("user config isn't a table")?;
 
-        // let buffer_size = config
-        //     .get("chunk_size")
-        //     .ok_or("missing chunk_size")?
-        //     .as_integer()
-        //     .ok_or("chunk_size is not a number")? as usize;
+        let chunk_size = config
+            .get("chunk_size")
+            .ok_or("missing chunk_size")?
+            .as_integer()
+            .ok_or("chunk_size is not a number")? as usize;
+
+        let max_size = config
+            .get("max_size")
+            .ok_or("missing chunk_size")?
+            .as_integer()
+            .ok_or("chunk_size is not a number")? as usize;
 
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
@@ -83,7 +91,8 @@ impl Repo {
 
         let mut r = Repo {
             root_path: repo_root,
-            // buffer_size,
+            chunk_size,
+            max_size,
             me: Person {
                 name: String::from(
                     user_config
@@ -105,10 +114,18 @@ impl Repo {
         };
 
         // Verbose: show resolved repo/user info
-        vlog!("repo::at_root_path: user='{} <{}>' repo_root='{}'", r.me.name, r.me.email, r.root_path);
+        vlog!(
+            "repo::at_root_path: user='{} <{}>' repo_root='{}'",
+            r.me.name,
+            r.me.email,
+            r.root_path
+        );
 
         let index_file_path = r.get_path_in_repo("index");
-        vlog!("repo::at_root_path: index path = {}", index_file_path.display());
+        vlog!(
+            "repo::at_root_path: index path = {}",
+            index_file_path.display()
+        );
 
         let mut index_file = fs::File::open(index_file_path).unwrap();
         let mut contents = String::new();
@@ -143,11 +160,11 @@ impl Repo {
         return b;
     }
 
-    fn get_path_in_repo_str(&self, p: &str) -> String {
-        let b = self.get_path_in_repo(p);
-        let s = b.into_os_string().into_string().unwrap();
-        return s;
-    }
+    // fn get_path_in_repo_str(&self, p: &str) -> String {
+    //     let b = self.get_path_in_repo(p);
+    //     let s = b.into_os_string().into_string().unwrap();
+    //     return s;
+    // }
 
     pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
         vlog!("repo::get_path_in_cwd: p='{}' cwd={}", p, utils::get_cwd());
@@ -163,6 +180,16 @@ impl Repo {
         return s;
     }
 
+    /// Return a list of file paths currently present in the index (cloned).
+    pub fn index_paths(&self) -> Vec<String> {
+        self.index.keys().cloned().collect()
+    }
+
+    /// Return the stored FileVersion *object* hash for `path` if present in the index.
+    pub fn get_indexed_version(&self, path: &str) -> Option<Hash> {
+        self.index.get(path).cloned()
+    }
+
     pub fn initialize_at(root_path: String) -> RepoResult<Repo> {
         vlog!("repo::initialize_at: root_path='{}'", root_path);
         // Create the metadata directory tree under the provided root path so
@@ -173,13 +200,12 @@ impl Repo {
 
         // Write a minimal, valid TOML config so `at_root_path` can parse required fields.
         let default_config = format!(
-            "chunk_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
-            BLOCK_SIZE
+            "chunk_size = {}\nmax_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
+            DEFAULT_BLOCK_SIZE, DEFAULT_MAX_FRAGMENT_SIZE
         );
         fs::write(base.join("config"), default_config)?;
 
         // Initialize HEAD and index (also create refs/HEAD so lookups succeed)
-        fs::write(base.join("HEAD"), "")?;
         fs::write(base.join("index"), "")?;
         fs::create_dir_all(base.join("refs"))?;
         fs::write(base.join("refs").join("HEAD"), "")?;
@@ -365,7 +391,7 @@ impl Repo {
 
         new.seek(io::SeekFrom::Start(0))?;
 
-        let fragments = crate::diff::build_diff_fragments(old, Box::new(new), BLOCK_SIZE);
+        let fragments = crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size);
 
         // Collect `FileFragment` entries directly in the FileVersion so we avoid
         // creating a separate FileDiffFragment object for every ADDED fragment.
@@ -375,7 +401,7 @@ impl Repo {
             match fragment_res {
                 Ok(DiffFragment::ADDED { body }) => {
                     // split large ADDED bodies into FRAGMENT-sized chunks
-                    for chunk in body.chunks(MAX_FRAGMENT_SIZE) {
+                    for chunk in body.chunks(self.max_size) {
                         let frag_hash =
                             self.save_obj(Object::Fragment(Fragment(chunk.to_vec())))?;
                         vlog!(
@@ -430,7 +456,10 @@ impl Repo {
             files: self.index.clone(),
         };
 
-        vlog!("repo::commit: creating commit with {} files", commit.files.len());
+        vlog!(
+            "repo::commit: creating commit with {} files",
+            commit.files.len()
+        );
 
         let commit_hash = self.save_obj(Object::Commit(commit))?;
 
@@ -483,7 +512,11 @@ impl Repo {
             parent_reader.read_to_end(&mut data)?;
             data
         };
-        vlog!("repo::open_file: parent_data_len={} parent_hash={}", parent_data.len(), commit.parent.to_string());
+        vlog!(
+            "repo::open_file: parent_data_len={} parent_hash={}",
+            parent_data.len(),
+            commit.parent.to_string()
+        );
 
         // Reconstruct this file by applying fragments
         let mut output = Vec::new();
@@ -551,10 +584,10 @@ impl Repo {
     }
 }
 
-fn get_path_in_metadata(path: &str) -> PathBuf {
-    vlog!("repo::get_path_in_metadata: path='{}'", path);
-    let mut p = PathBuf::new();
-    p.push(REPO_METADATA_DIR_NAME);
-    p.push(path);
-    return p;
-}
+// fn get_path_in_metadata(path: &str) -> PathBuf {
+//     vlog!("repo::get_path_in_metadata: path='{}'", path);
+//     let mut p = PathBuf::new();
+//     p.push(REPO_METADATA_DIR_NAME);
+//     p.push(path);
+//     return p;
+// }
