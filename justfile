@@ -12,5 +12,5 @@ generate-test-files:
     rm -rf test-data
     mkdir test-data
 
-    cat {{ a }} {{ b }} {{ d }} > test-data/abd
-    cat {{ a }} {{ c }} {{ d }} > test-data/acd
+    cat {{ a }} {{ b }} {{ d }} > cli/test-data/abd
+    cat {{ a }} {{ c }} {{ d }} > cli/test-data/acd
