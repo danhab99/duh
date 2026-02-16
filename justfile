@@ -35,15 +35,16 @@ demo_script td:
 
     cd {{ td }} && cat abd > file
     cd {{ td }} && duh stage file
-    cd {{ td }} && duh commit "commit 1"
+    cd {{ td }} && duh commit -m "commit 1"
 
     cd {{ td }} && duh show
 
     cd {{ td }} && cat acd > file
     cd {{ td }} && duh stage file
-    cd {{ td }} && duh commit "commit 2"
+    cd {{ td }} && duh commit -m "commit 2"
 
     cd {{ td }} && duh show
+    cd {{ td }} && duh log
 
 demo: (generate-test-files tmpdir)
     nix develop .#duh --command bash -c "just demo_script {{ tmpdir }}"
