@@ -73,12 +73,18 @@ impl std::string::ToString for Hash {
 
 impl Hash {
     pub fn from_string(s: String) -> Result<Hash, Box<dyn Error>> {
-        let v = hex::decode(s)?;
+        // Expect a 64-character hex string (hex-encoded SHA-256). Store the
+        // ASCII hex bytes directly in the 64-byte internal buffer.
+        if s.len() != 64 {
+            return Err(format!("invalid hash string length: expected 64, got {}", s.len()).into());
+        }
+
+        // Validate that it's valid hex (but don't decode — we store the ASCII).
+        hex::decode(&s).map_err(|e| format!("invalid hex in hash string: {}", e))?;
+
         let mut h = [0u8; 64];
-
-        h.copy_from_slice(v.as_slice());
-
-        return Ok(Hash(h));
+        h.copy_from_slice(s.as_bytes());
+        Ok(Hash(h))
     }
 
     pub fn from_str(s: &str) -> Hash {
