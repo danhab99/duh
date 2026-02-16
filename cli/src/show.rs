@@ -19,14 +19,14 @@ pub fn show(repo: &mut Repo, _cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
 
     match repo.get_object(head)? {
         Some(Object::Commit(c)) => {
-            println!("{}", head.to_string());
-            println!("parent: {}", c.parent.to_string());
+            println!("{}", crate::colors::cyan(&head.to_string()));
+            println!("parent: {}", crate::colors::dim(&c.parent.to_string()));
             println!("author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
             println!("committer: {} <{}> {}", c.comitter.name, c.comitter.email, c.comitter.timestamp);
             println!("\n    {}\n", c.message);
-            println!("files:");
+            println!("{}", crate::colors::bold("files:"));
             for (path, h) in c.files.iter() {
-                println!("  {} -> {}", path, h.to_string());
+                println!("  {} -> {}", crate::colors::cyan(path), crate::colors::green(&h.to_string()));
             }
         }
         _ => println!("HEAD does not point to a commit"),

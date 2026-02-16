@@ -5,6 +5,6 @@ use lib::utils;
 
 pub fn init() -> Result<(), Box<dyn Error>> {
     let _ = Repo::initialize_at(utils::get_cwd())?;
-    println!("Initialized new DUH directory");
+    println!("{}", crate::colors::green("Initialized new DUH directory"));
     Ok(())
 }

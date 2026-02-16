@@ -55,22 +55,22 @@ pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<(), Box<dyn Error
     }
 
     if !changed.is_empty() {
-        println!("Modified files:");
-        for p in &changed { println!("  {}", p); }
+        println!("{}", crate::colors::yellow("Modified files:"));
+        for p in &changed { println!("  {}", crate::colors::yellow(p)); }
     }
 
     if !missing.is_empty() {
-        println!("Deleted / missing files:");
-        for p in &missing { println!("  {}", p); }
+        println!("{}", crate::colors::red("Deleted / missing files:"));
+        for p in &missing { println!("  {}", crate::colors::red(p)); }
     }
 
     if !unchanged.is_empty() {
-        println!("Staged / up-to-date files:");
-        for p in &unchanged { println!("  {}", p); }
+        println!("{}", crate::colors::green("Staged / up-to-date files:"));
+        for p in &unchanged { println!("  {}", crate::colors::green(p)); }
     }
 
     if changed.is_empty() && missing.is_empty() && unchanged.is_empty() {
-        println!("Index is empty (no tracked files). Use `duh stage <file>` to add files.");
+        println!("{}", crate::colors::dim("Index is empty (no tracked files). Use `duh stage <file>` to add files."));
     }
 
     Ok(())

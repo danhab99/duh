@@ -14,6 +14,7 @@ mod show;
 mod snapshot;
 mod stage;
 mod status;
+mod colors;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();

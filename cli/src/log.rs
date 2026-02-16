@@ -24,7 +24,7 @@ pub fn log(repo: &mut Repo, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
     while !cur.is_zero() {
         match repo.get_object(cur)? {
             Some(Object::Commit(c)) => {
-                println!("commit {}", cur.to_string());
+                println!("commit {}", crate::colors::cyan(&cur.to_string()));
                 println!("Author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
                 // show only first line of message as summary
                 if let Some(summary) = c.message.lines().next() {

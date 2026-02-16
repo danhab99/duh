@@ -20,14 +20,14 @@ pub struct CommitCommand {
 
 pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
     if let Some(fp) = &cmd.file_path {
-        println!("Staging file {}", fp);
+        println!("{} {}", crate::colors::cyan("Staging file"), fp);
         repo.stage_file(fp.clone())?;
     } else {
-        println!("No file provided — committing staged files in index");
+        println!("{}", crate::colors::dim("No file provided — committing staged files in index"));
     }
 
-    println!("Committing");
+    println!("{}", crate::colors::cyan("Committing"));
     let h = repo.commit(cmd.message.clone())?;
-    println!("Committed {} — index preserved (staged files remain). Run `duh status` to inspect.", h.to_string());
+    println!("{} {} — index cleared. Run `duh status` to inspect.", crate::colors::green(&h.to_string()), crate::colors::bold("Committed"));
     Ok(())
 }
