@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, error::Error, str::FromStr};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Fragment(pub Vec<u8>);
+pub struct Fragment(#[serde(with = "serde_bytes")] pub Vec<u8>);
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FileRefStruct {
     pub name: String,
