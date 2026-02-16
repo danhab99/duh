@@ -1,0 +1,36 @@
+use std::error::Error;
+
+use clap::clap_derive::Args;
+use lib::objects::{Object, ObjectReference};
+use lib::repo::Repo;
+
+/// Show the commit currently referenced by HEAD
+#[derive(Args)]
+#[command(about = "Display the HEAD commit (hash, author, message, files)")]
+pub struct ShowCommand {}
+
+pub fn show(repo: &mut Repo, _cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
+    let head = repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+
+    if head.is_zero() {
+        println!("No commits yet");
+        return Ok(());
+    }
+
+    match repo.get_object(head)? {
+        Some(Object::Commit(c)) => {
+            println!("{}", head.to_string());
+            println!("parent: {}", c.parent.to_string());
+            println!("author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
+            println!("committer: {} <{}> {}", c.comitter.name, c.comitter.email, c.comitter.timestamp);
+            println!("\n    {}\n", c.message);
+            println!("files:");
+            for (path, h) in c.files.iter() {
+                println!("  {} -> {}", path, h.to_string());
+            }
+        }
+        _ => println!("HEAD does not point to a commit"),
+    }
+
+    Ok(())
+}
