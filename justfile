@@ -3,17 +3,17 @@ b := `mktemp`
 c := `mktemp`
 d := `mktemp`
 
-generate-test-files:
-    dd if=/dev/urandom count=10 bs=1M of={{ a }}
-    dd if=/dev/urandom count=10 bs=1M of={{ b }} 
-    dd if=/dev/urandom count=10 bs=1M of={{ c }} 
-    dd if=/dev/urandom count=10 bs=1M of={{ d }} 
+generate-test-files outdir:
+    dd if=/dev/urandom count=1 bs=1M of={{ a }}
+    dd if=/dev/urandom count=2 bs=1M of={{ b }} 
+    dd if=/dev/urandom count=3 bs=1M of={{ c }} 
+    dd if=/dev/urandom count=4 bs=1M of={{ d }} 
 
     rm -rf test-data
     mkdir test-data
 
-    cat {{ a }} {{ b }} {{ d }} > cli/test-data/abd
-    cat {{ a }} {{ c }} {{ d }} > cli/test-data/acd
+    cat {{ a }} {{ b }} {{ d }} > {{ outdir }}/abd
+    cat {{ a }} {{ c }} {{ d }} > {{ outdir }}/acd
 
 update-vendor-hash:
     #!/usr/bin/env bash
@@ -25,3 +25,25 @@ update-vendor-hash:
     echo ""
     echo "Vendor hash for flake.nix:"
     echo "  cargoVendorHash = \"$hash\";"
+
+tmpdir := `mktemp -d`
+
+demo_script td:
+    @echo TEST PATH {{ td }}
+
+    cd {{ td }} && duh init
+
+    cd {{ td }} && cat abd > file
+    cd {{ td }} && duh stage file
+    cd {{ td }} && duh commit "commit 1"
+
+    cd {{ td }} && duh show
+
+    cd {{ td }} && cat acd > file
+    cd {{ td }} && duh stage file
+    cd {{ td }} && duh commit "commit 2"
+
+    cd {{ td }} && duh show
+
+demo: (generate-test-files tmpdir)
+    nix develop .#duh --command bash -c "just demo_script {{ tmpdir }}"
