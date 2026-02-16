@@ -21,3 +21,5 @@ target
 #.idea/
 cli/test
 cli/test-data
+# cli/vendor
+cli/vendor

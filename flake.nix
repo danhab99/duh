@@ -18,18 +18,59 @@
         rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
           extensions = [ "rust-src" "rustfmt" "clippy" ];
         };
+
+        cliToml = builtins.fromTOML (builtins.readFile ./cli/Cargo.toml);
+
+        # pinned vendor hash (computed locally with `cargo vendor` + `nix hash`)
+        cargoVendorHash = "sha256-3tBgsSofdwz6fU31+7IohiGPJZr8IcL0DBibucwXn5Q=";
+
+        duh = pkgs.rustPlatform.buildRustPackage {
+          pname = "duh";
+          version = cliToml.package.version;
+          
+          # build from the workspace root and select the `cli/` package
+          src = ./.;
+          setSourceRoot = "sourceRoot=$(echo */cli)";
+          cargoLock = { lockFile = ./cli/Cargo.lock; };
+          cargoSha256 = cargoVendorHash;
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
+          
+          meta = with pkgs.lib; {
+            description = "deduplicative update helper";
+            homepage = "https://github.com/danhab99/duh";
+            license = licenses.mit;
+            maintainers = [{
+              name = "Dan Habot";
+              email = "dan.habot@gmail.com";
+            }];
+          };
+        };
+        # (the `cli` crate lives in the `cli/` subdirectory).
       in
       {
-        devShells.default = with pkgs; mkShell {
-          buildInputs = [
-            pkg-config
-            rustToolchain
-            pkgs.rust-analyzer
-            rustup
-            gdb
-          ];
+        packages = {
+          inherit duh;
+        };
 
-          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+        devShells = {
+          default = with pkgs; mkShell {
+            buildInputs = [
+              pkg-config
+              rustToolchain
+              pkgs.rust-analyzer
+              rustup
+              gdb
+            ];
+
+            RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
+          };
+
+          duh = pkgs.mkShell {
+            buildInputs = [ duh ];
+          };
         };
       }
     );

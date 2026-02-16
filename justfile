@@ -14,3 +14,14 @@ generate-test-files:
 
     cat {{ a }} {{ b }} {{ d }} > cli/test-data/abd
     cat {{ a }} {{ c }} {{ d }} > cli/test-data/acd
+
+update-vendor-hash:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd cli
+    cargo vendor --versioned-dirs 2>&1 | head -n1
+    cd ..
+    hash=$(nix hash path cli/vendor)
+    echo ""
+    echo "Vendor hash for flake.nix:"
+    echo "  cargoVendorHash = \"$hash\";"
