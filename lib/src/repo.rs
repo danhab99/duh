@@ -4,6 +4,7 @@ use crate::{
     objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference, Person},
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
+use crate::vlog;
 use std::{
     collections::HashMap,
     error::Error,
@@ -40,7 +41,7 @@ pub const MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
-        println!("repo::at_root_path called with root_path={:?}", root_path);
+        vlog!("repo::at_root_path called with root_path={:?}", root_path);
         let rp = match root_path {
             Some(x) => x,
             None => {
@@ -103,7 +104,11 @@ impl Repo {
             index: HashMap::new(),
         };
 
+        // Verbose: show resolved repo/user info
+        vlog!("repo::at_root_path: user='{} <{}>' repo_root='{}'", r.me.name, r.me.email, r.root_path);
+
         let index_file_path = r.get_path_in_repo("index");
+        vlog!("repo::at_root_path: index path = {}", index_file_path.display());
 
         let mut index_file = fs::File::open(index_file_path).unwrap();
         let mut contents = String::new();
@@ -112,8 +117,10 @@ impl Repo {
             let parts = line.split("=").collect::<Vec<_>>();
             assert!(parts.len() == 2);
 
-            let filepath_part = parts[0];
-            let hash_part = parts[1];
+            // Trim whitespace and strip surrounding quotes so callers can write
+            // either TOML-quoted keys/values or the simple `key = "hash"` form.
+            let filepath_part = parts[0].trim().trim_matches('"');
+            let hash_part = parts[1].trim().trim_matches('"');
 
             r.index.insert(
                 filepath_part.to_string(),
@@ -121,11 +128,13 @@ impl Repo {
             );
         }
 
+        vlog!("repo::at_root_path: loaded {} index entries", r.index.len());
+
         Ok(r)
     }
 
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
-        println!("repo::get_path_in_repo: p='{}'", p);
+        vlog!("repo::get_path_in_repo: p='{}'", p);
         // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
         let mut b = PathBuf::from(self.root_path.clone());
         b.push(utils::REPO_METADATA_DIR_NAME);
@@ -141,7 +150,7 @@ impl Repo {
     }
 
     pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
-        println!("repo::get_path_in_cwd: p='{}' cwd={}", p, utils::get_cwd());
+        vlog!("repo::get_path_in_cwd: p='{}' cwd={}", p, utils::get_cwd());
         PathBuf::from(utils::get_cwd()).join(p)
         // PathBuf::from(self.root_path.clone())
         //     .join(utils::get_cwd())
@@ -155,7 +164,7 @@ impl Repo {
     }
 
     pub fn initialize_at(root_path: String) -> RepoResult<Repo> {
-        println!("repo::initialize_at: root_path='{}'", root_path);
+        vlog!("repo::initialize_at: root_path='{}'", root_path);
         // Create the metadata directory tree under the provided root path so
         // `at_root_path(Some(root_path))` can locate it reliably (don't rely on CWD).
         let base = PathBuf::from(root_path.clone()).join(utils::REPO_METADATA_DIR_NAME);
@@ -180,7 +189,7 @@ impl Repo {
 
     fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
         let hash = self.resolve_ref_name(r)?.to_string();
-        println!("repo::get_object_path: resolved hash={}", hash);
+        vlog!("repo::get_object_path: resolved hash={}", hash);
         let top = &hash[0..2];
         let bottom = &hash[2..hash.len()];
 
@@ -188,7 +197,7 @@ impl Repo {
     }
 
     pub fn save_obj(&self, o: Object) -> RepoResult<Hash> {
-        println!("repo::save_obj: saving object");
+        vlog!("repo::save_obj: saving object");
         use rmp_serde::Serializer;
         use sha2::{Digest, Sha256};
         use std::io::Write as IoWrite;
@@ -247,8 +256,8 @@ impl Repo {
         tmp.persist(&path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        println!("repo::save_obj: persisted object at {:?}", path);
-        println!("repo::save_obj: object hash={}", hash.to_string());
+        vlog!("repo::save_obj: persisted object at {:?}", path);
+        vlog!("repo::save_obj: object hash={}", hash.to_string());
 
         // NOTE: `.raw` sidecars removed — fragment bytes are stored only inside the
         // serialized `Fragment` object on disk and will be deserialized when first read.
@@ -257,58 +266,58 @@ impl Repo {
 
     fn read_object(&self, r: Hash) -> RepoResult<Option<Vec<u8>>> {
         let path = self.get_object_path(ObjectReference::Hash(r))?;
-        println!("repo::read_object: path={:?}", path);
+        vlog!("repo::read_object: path={:?}", path);
         if !path.exists() {
-            println!(
+            vlog!(
                 "repo::read_object: object not found for hash={}",
                 r.to_string()
             );
             return Ok(None);
         }
         let content = fs::read(path)?;
-        println!("repo::read_object: read {} bytes", content.len());
+        vlog!("repo::read_object: read {} bytes", content.len());
         return Ok(Some(content.to_vec()));
     }
 
     pub fn get_object(&self, r: Hash) -> RepoResult<Option<Object>> {
-        println!("repo::get_object: hash={}", r.to_string());
+        vlog!("repo::get_object: hash={}", r.to_string());
         let content = self.read_object(r)?;
         match content {
             Some(content) => {
-                println!(
+                vlog!(
                     "repo::get_object: deserializing object ({} bytes)",
                     content.len()
                 );
                 Ok(Some(Object::from_msgpack(content)?))
             }
             None => {
-                println!("repo::get_object: object not found");
+                vlog!("repo::get_object: object not found");
                 Ok(None)
             }
         }
     }
 
     fn get_ref_path(&self, name: &str) -> PathBuf {
-        println!("repo::get_ref_path: name='{}'", name);
+        vlog!("repo::get_ref_path: name='{}'", name);
         return self.get_path_in_repo(format!("refs/{}", name).as_str());
     }
 
     pub fn set_ref(&self, name: &str, r: ObjectReference) -> RepoResult<()> {
         let path = self.get_ref_path(name);
         fs::write(path, r.to_string())?;
-        println!("repo::set_ref: {} -> {}", name, r.to_string());
+        vlog!("repo::set_ref: {} -> {}", name, r.to_string());
         return Ok(());
     }
 
     pub fn get_ref(&self, name: String) -> RepoResult<ObjectReference> {
         let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
         let val = String::from_utf8(fs::read(ref_path)?)?;
-        println!("repo::get_ref: name='{}' content='{}'", name, val.trim());
+        vlog!("repo::get_ref: name='{}' content='{}'", name, val.trim());
 
         // Treat an empty ref file as "no parent" (map to zero hash) to make the
         // first commit/HEAD behaviour safe.
         if val.trim().is_empty() {
-            println!("repo::get_ref: empty ref -> returning zero-hash");
+            vlog!("repo::get_ref: empty ref -> returning zero-hash");
             return Ok(ObjectReference::Hash(Hash::new()));
         }
 
@@ -318,14 +327,14 @@ impl Repo {
     pub fn resolve_ref_name(&self, ref_name: ObjectReference) -> RepoResult<Hash> {
         match ref_name {
             ObjectReference::Hash(h) => {
-                println!("repo::resolve_ref_name: given hash {}", h.to_string());
+                vlog!("repo::resolve_ref_name: given hash {}", h.to_string());
                 Ok(h)
             }
             ObjectReference::Ref(r) => {
-                println!("repo::resolve_ref_name: resolving ref '{}'", r);
+                vlog!("repo::resolve_ref_name: resolving ref '{}'", r);
                 let n = self.get_ref(r.clone())?;
                 let resolved = self.resolve_ref_name(n)?;
-                println!(
+                vlog!(
                     "repo::resolve_ref_name: ref '{}' -> {}",
                     r,
                     resolved.to_string()
@@ -369,6 +378,11 @@ impl Repo {
                     for chunk in body.chunks(MAX_FRAGMENT_SIZE) {
                         let frag_hash =
                             self.save_obj(Object::Fragment(Fragment(chunk.to_vec())))?;
+                        vlog!(
+                            "repo::stage_file: ADDED fragment chunk_size={} -> fragment_hash={}",
+                            chunk.len(),
+                            frag_hash.to_string()
+                        );
                         file_fragments.push(FileFragment::ADDED {
                             body: frag_hash,
                             len: chunk.len(),
@@ -376,9 +390,11 @@ impl Repo {
                     }
                 }
                 Ok(DiffFragment::UNCHANGED { len }) => {
+                    vlog!("repo::stage_file: UNCHANGED len={}", len);
                     file_fragments.push(FileFragment::UNCHANGED { len });
                 }
                 Ok(DiffFragment::DELETED { len }) => {
+                    vlog!("repo::stage_file: DELETED len={}", len);
                     file_fragments.push(FileFragment::DELETED { len });
                 }
                 Err(x) => panic!("{}", x),
@@ -393,7 +409,7 @@ impl Repo {
         let version_hash = self.save_obj(Object::FileVersion(version))?;
 
         self.index.insert(fp.to_string(), version_hash);
-        println!(
+        vlog!(
             "repo::stage_file: indexed '{}' -> {}",
             fp,
             version_hash.to_string()
@@ -403,7 +419,7 @@ impl Repo {
     }
 
     pub fn commit(&mut self, message: String) -> RepoResult<Hash> {
-        println!("repo::commit: message='{}'", message);
+        vlog!("repo::commit: message='{}'", message);
         let head_commit = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
 
         let commit = CommitStruct {
@@ -414,16 +430,18 @@ impl Repo {
             files: self.index.clone(),
         };
 
+        vlog!("repo::commit: creating commit with {} files", commit.files.len());
+
         let commit_hash = self.save_obj(Object::Commit(commit))?;
 
         self.set_ref("HEAD", ObjectReference::Hash(commit_hash))?;
-        println!("repo::commit: new HEAD = {}", commit_hash.to_string());
+        vlog!("repo::commit: new HEAD = {}", commit_hash.to_string());
 
         Ok(commit_hash)
     }
 
     pub fn open_file(&mut self, file_path: String, hash: Hash) -> RepoResult<Box<dyn ReadSeek>> {
-        println!(
+        vlog!(
             "repo::open_file: file_path='{}' hash={}",
             file_path,
             hash.to_string()
@@ -442,7 +460,7 @@ impl Repo {
             Some(x) => x,
             None => {
                 // File doesn't exist in this commit - return empty reader
-                println!(
+                vlog!(
                     "repo::open_file: file '{}' not in commit {}",
                     fp,
                     hash.to_string()
@@ -465,6 +483,7 @@ impl Repo {
             parent_reader.read_to_end(&mut data)?;
             data
         };
+        vlog!("repo::open_file: parent_data_len={} parent_hash={}", parent_data.len(), commit.parent.to_string());
 
         // Reconstruct this file by applying fragments
         let mut output = Vec::new();
@@ -504,15 +523,21 @@ impl Repo {
             }
         }
 
-        println!(
+        vlog!(
             "repo::open_file: reconstructed file with {} bytes",
             output.len()
+        );
+        vlog!(
+            "repo::open_file: reconstructed len={} fragments={}",
+            output.len(),
+            file_version.fragments.len()
         );
 
         Ok(Box::new(io::Cursor::new(output)))
     }
 
     pub fn save_index(&mut self) -> RepoResult<()> {
+        vlog!("repo::save_index: saving {} entries", self.index.len());
         let index_bytes = toml::to_string(&self.index)?;
         fs::write(self.get_path_in_repo("index"), index_bytes)?;
 
@@ -527,7 +552,7 @@ impl Repo {
 }
 
 fn get_path_in_metadata(path: &str) -> PathBuf {
-    println!("repo::get_path_in_metadata: path='{}'", path);
+    vlog!("repo::get_path_in_metadata: path='{}'", path);
     let mut p = PathBuf::new();
     p.push(REPO_METADATA_DIR_NAME);
     p.push(path);
