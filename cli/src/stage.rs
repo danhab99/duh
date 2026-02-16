@@ -12,10 +12,10 @@ pub struct StageCommand {
 }
 
 pub fn stage(repo: &mut Repo, cmd: &StageCommand) -> Result<(), Box<dyn Error>> {
-    println!("Staging file {}", cmd.file_path);
+    println!("{} {}", crate::colors::cyan("Staging file"), cmd.file_path);
     let h = repo.stage_file(cmd.file_path.clone())?;
 
-    println!("{}", h.to_string());
+    println!("{}", crate::colors::green(&h.to_string()));
 
     Ok(())
 }

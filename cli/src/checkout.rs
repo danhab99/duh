@@ -38,12 +38,18 @@ pub fn checkout(repo: &mut Repo, cmd: &CheckoutCommand) -> Result<(), Box<dyn Er
         Some(Object::Commit(c)) => {
             let fp = repo.get_path_in_cwd_str(&cmd.file_path);
             if c.files.get(fp.as_str()).is_none() {
-                println!("file '{}' not found in commit {}", cmd.file_path, target_hash.to_string());
+                println!("{} {}",
+                    crate::colors::red("file not found in commit:"),
+                    crate::colors::yellow(&cmd.file_path)
+                );
                 return Ok(());
             }
         }
         _ => {
-            println!("commit {} not found", target_hash.to_string());
+            println!("{} {}",
+                crate::colors::red("commit not found:"),
+                crate::colors::cyan(&target_hash.to_string())
+            );
             return Ok(());
         }
     }
@@ -56,6 +62,10 @@ pub fn checkout(repo: &mut Repo, cmd: &CheckoutCommand) -> Result<(), Box<dyn Er
     let out_path = repo.get_path_in_cwd_str(&cmd.file_path);
     fs::write(out_path, buf)?;
 
-    println!("checked out {} @ {}", cmd.file_path, target_hash.to_string());
+    println!("{} {} @ {}",
+        crate::colors::green("checked out"),
+        crate::colors::cyan(&cmd.file_path),
+        crate::colors::cyan(&target_hash.to_string())
+    );
     Ok(())
 }
