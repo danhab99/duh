@@ -27,6 +27,7 @@ pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>
     }
 
     println!("Committing");
-    repo.commit(cmd.message.clone())?;
+    let h = repo.commit(cmd.message.clone())?;
+    println!("Committed {} — index preserved (staged files remain). Run `duh status` to inspect.", h.to_string());
     Ok(())
 }

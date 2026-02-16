@@ -13,6 +13,7 @@ mod log;
 mod show;
 mod snapshot;
 mod stage;
+mod status;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -44,6 +45,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Log(c) => {
             log::log(&mut repo, c).expect("Unable to show log");
+        }
+        Commands::Status(c) => {
+            status::status(&mut repo, c).expect("Unable to show status");
         }
     };
 
