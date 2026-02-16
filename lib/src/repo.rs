@@ -8,7 +8,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs::{self, File},
-    io::{Read, Seek},
+    io::{Read, Seek, Write},
     path::PathBuf,
     time::SystemTime,
 };
@@ -117,7 +117,7 @@ impl Repo {
 
             r.index.insert(
                 filepath_part.to_string(),
-                Hash::from_string(hash_part.to_string()),
+                Hash::from_string(hash_part.to_string())?,
             );
         }
 
@@ -237,7 +237,7 @@ impl Repo {
         // finalize hash and build Hash value (hex-encoded sha256)
         let digest = hasher.finalize();
         let hex = hex::encode(digest);
-        let hash = Hash::from_string(hex);
+        let hash = Hash::from_string(hex)?;
 
         // Persist temp file to final object path
         let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
@@ -515,6 +515,13 @@ impl Repo {
     pub fn save_index(&mut self) -> RepoResult<()> {
         let index_bytes = toml::to_string(&self.index)?;
         fs::write(self.get_path_in_repo("index"), index_bytes)?;
+
+        let mut index_file = File::create(self.get_path_in_repo("index"))?;
+
+        for (key, value) in &self.index {
+            writeln!(index_file, "{} = \"{}\"", key, value.to_string())?;
+        }
+
         Ok(())
     }
 }
