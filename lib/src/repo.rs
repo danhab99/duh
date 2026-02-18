@@ -187,7 +187,7 @@ impl Repo {
         Ok(Repo::at_root_path(Some(root_path))?)
     }
 
-    fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
+    pub fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
         let hash = self.resolve_ref_name(r)?.to_string();
         vlog!("repo::get_object_path: resolved hash={}", hash);
         let top = &hash[0..2];
