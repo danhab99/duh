@@ -466,4 +466,127 @@ mod tests {
         // 100 + 0 + 75 + 25 = 200
         assert_eq!(total, 200);
     }
+
+    #[test]
+    fn test_seeking_forward_and_backward() {
+        // Create a mock old file with known content
+        // Content: "AAAAAAAAAA" (10 A's) + "BBBBBBBBBB" (10 B's) + "CCCCCCCCCC" (10 C's)
+        let old_data = b"AAAAAAAAAABBBBBBBBBBCCCCCCCCCC";
+        let old_reader = Cursor::new(old_data.to_vec());
+        
+        // Fragment sequence:
+        // 1. UNCHANGED: 10 bytes (the A's) -> output positions 0-9
+        // 2. DELETED: 10 bytes (the B's are deleted) -> no output
+        // 3. UNCHANGED: 10 bytes (the C's) -> output positions 10-19
+        let fragments = vec![
+            FileFragment::UNCHANGED { len: 10 },
+            FileFragment::DELETED { len: 10 },
+            FileFragment::UNCHANGED { len: 10 },
+        ];
+        
+        // Create a temporary repo for testing
+        use tempfile::TempDir;
+        
+        let temp_dir = TempDir::new().unwrap();
+        let repo_root = temp_dir.path().to_str().unwrap().to_string();
+        
+        // Initialize the repo properly
+        let repo = Repo::initialize_at(repo_root).unwrap();
+        
+        // Create the replay reader
+        let mut replay = LazyFileReplay::new(
+            &repo,
+            Box::new(old_reader),
+            fragments,
+        ).unwrap();
+        
+        // Expected output: "AAAAAAAAAA" + "CCCCCCCCCC" = 20 bytes total
+        assert_eq!(replay.total_size, 20);
+        
+        // Test 1: Read from start (should get A's)
+        let mut buf = vec![0u8; 5];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"AAAAA", "Initial read should get A's");
+        assert_eq!(replay.logical_position, 5);
+        
+        // Test 2: Seek forward to position 12 (in the C's section)
+        let pos = replay.seek(SeekFrom::Start(12)).unwrap();
+        assert_eq!(pos, 12, "Seek should return new position");
+        
+        // Read from position 12 (should get C's)
+        let mut buf = vec![0u8; 3];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CCC", "Read after forward seek should get C's");
+        assert_eq!(replay.logical_position, 15);
+        
+        // Test 3: Seek backward to position 2 (back to A's)
+        let pos = replay.seek(SeekFrom::Start(2)).unwrap();
+        assert_eq!(pos, 2, "Backward seek should return new position");
+        
+        // Read from position 2 (should get A's again)
+        let mut buf = vec![0u8; 4];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"AAAA", "Read after backward seek should get A's");
+        assert_eq!(replay.logical_position, 6);
+        
+        // Test 4: Seek to boundary between fragments (position 10, start of C's)
+        let pos = replay.seek(SeekFrom::Start(10)).unwrap();
+        assert_eq!(pos, 10, "Seek to fragment boundary");
+        
+        // Read should get C's
+        let mut buf = vec![0u8; 5];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CCCCC", "Read from fragment boundary should get C's");
+        
+        // Test 5: Seek using SeekFrom::Current (relative seeking)
+        replay.seek(SeekFrom::Start(10)).unwrap();
+        let pos = replay.seek(SeekFrom::Current(3)).unwrap();
+        assert_eq!(pos, 13, "Relative forward seek");
+        
+        let mut buf = vec![0u8; 2];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CC", "Read after relative seek");
+        
+        // Test 6: Seek backward using SeekFrom::Current
+        let pos = replay.seek(SeekFrom::Current(-5)).unwrap();
+        assert_eq!(pos, 10, "Relative backward seek");
+        
+        let mut buf = vec![0u8; 3];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CCC", "Read after relative backward seek");
+        
+        // Test 7: Seek from end
+        let pos = replay.seek(SeekFrom::End(-5)).unwrap();
+        assert_eq!(pos, 15, "Seek from end");
+        
+        let mut buf = vec![0u8; 5];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CCCCC", "Read after seek from end");
+        
+        // Test 8: Seek to end
+        let pos = replay.seek(SeekFrom::End(0)).unwrap();
+        assert_eq!(pos, 20, "Seek to EOF");
+        
+        let mut buf = vec![0u8; 5];
+        let n = replay.read(&mut buf).unwrap();
+        assert_eq!(n, 0, "Read at EOF should return 0");
+        
+        // Test 9: Multiple back-and-forth seeks
+        replay.seek(SeekFrom::Start(0)).unwrap();
+        let mut buf = vec![0u8; 2];
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"AA");
+        
+        replay.seek(SeekFrom::Start(18)).unwrap();
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CC");
+        
+        replay.seek(SeekFrom::Start(5)).unwrap();
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"AA");
+        
+        replay.seek(SeekFrom::Start(15)).unwrap();
+        replay.read(&mut buf).unwrap();
+        assert_eq!(&buf, b"CC");
+    }
 }
