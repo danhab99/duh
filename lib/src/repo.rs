@@ -2,6 +2,7 @@ use crate::{
     diff::DiffFragment,
     hash::Hash,
     objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference, Person},
+    replay::LazyFileReplay,
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
 };
 use crate::vlog;
@@ -474,66 +475,25 @@ impl Repo {
             _ => panic!("expected file version"),
         };
 
-        // Recursively reconstruct parent file if needed
-        let parent_data = if commit.parent.is_zero() {
-            Vec::new()
+        // Get parent file as a reader (may be lazy or empty)
+        let parent_reader: Box<dyn ReadSeek> = if commit.parent.is_zero() {
+            // No parent - use empty reader
+            Box::new(io::Cursor::new(Vec::<u8>::new()))
         } else {
-            let mut parent_reader = self.open_file(fp.clone(), commit.parent)?;
-            let mut data = Vec::new();
-            parent_reader.read_to_end(&mut data)?;
-            data
+            // Recursively open parent file (this will also use LazyFileReplay)
+            self.open_file(fp.clone(), commit.parent)?
         };
-        vlog!("repo::open_file: parent_data_len={} parent_hash={}", parent_data.len(), commit.parent.to_string());
-
-        // Reconstruct this file by applying fragments
-        let mut output = Vec::new();
-        let mut parent_offset = 0;
-
-        for ff in file_version.fragments.iter() {
-            match ff {
-                FileFragment::ADDED { body, len: _ } => {
-                    // Load the fragment data
-                    let obj_path = self.get_object_path(ObjectReference::Hash(body.clone()))?;
-                    let packed = fs::read(obj_path)?;
-                    let obj = Object::from_msgpack(packed)?;
-                    let frag_bytes = match obj {
-                        Object::Fragment(Fragment(b)) => b,
-                        _ => panic!("expected Fragment body"),
-                    };
-                    output.extend_from_slice(&frag_bytes);
-                }
-                FileFragment::UNCHANGED { len } => {
-                    let len_usize = *len as usize;
-                    let end = parent_offset + len_usize;
-                    if end > parent_data.len() {
-                        return Err(Box::new(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!(
-                                "UNCHANGED fragment exceeds parent size: offset={} len={} parent_len={}",
-                                parent_offset, len, parent_data.len()
-                            )
-                        )));
-                    }
-                    output.extend_from_slice(&parent_data[parent_offset..end]);
-                    parent_offset = end;
-                }
-                FileFragment::DELETED { len } => {
-                    parent_offset += *len as usize;
-                }
-            }
-        }
 
         vlog!(
-            "repo::open_file: reconstructed file with {} bytes",
-            output.len()
-        );
-        vlog!(
-            "repo::open_file: reconstructed len={} fragments={}",
-            output.len(),
-            file_version.fragments.len()
+            "repo::open_file: creating lazy replay with {} fragments, parent_hash={}",
+            file_version.fragments.len(),
+            commit.parent.to_string()
         );
 
-        Ok(Box::new(io::Cursor::new(output)))
+        // Use LazyFileReplay to lazily reconstruct the file
+        let replay = LazyFileReplay::new(self, parent_reader, file_version.fragments)?;
+
+        Ok(Box::new(replay))
     }
 
     pub fn save_index(&mut self) -> RepoResult<()> {

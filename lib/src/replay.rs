@@ -84,12 +84,12 @@ use std::io::{self, Read, Seek, SeekFrom};
 /// # Ok(())
 /// # }
 /// ```
-pub struct LazyFileReplay<'a> {
-    /// Reference to the repository (needed to load ADDED fragment data)
-    repo: &'a Repo,
+pub struct LazyFileReplay {
+    /// Pre-loaded data for ADDED fragments (indexed to match fragments vec)
+    added_fragment_data: Vec<Option<Vec<u8>>>,
     
     /// The old file to read UNCHANGED fragments from
-    old_reader: Box<dyn ReadSeek + 'a>,
+    old_reader: Box<dyn ReadSeek>,
     
     /// List of fragments describing the diff
     fragments: Vec<FileFragment>,
@@ -109,17 +109,32 @@ pub struct LazyFileReplay<'a> {
     /// Total logical size of the reconstructed file
     total_size: u64,
     
-    /// Cache for the current ADDED fragment data (to avoid reloading)
+    /// Cache for the current ADDED fragment data (to avoid cloning from vec)
     current_added_data: Option<Vec<u8>>,
 }
 
-impl<'a> LazyFileReplay<'a> {
+impl LazyFileReplay {
     /// Create a new lazy file replay reader
     pub fn new(
-        repo: &'a Repo,
-        old_reader: Box<dyn ReadSeek + 'a>,
+        repo: &Repo,
+        old_reader: Box<dyn ReadSeek>,
         fragments: Vec<FileFragment>,
     ) -> RepoResult<Self> {
+        // Pre-load all ADDED fragment data
+        let mut added_fragment_data = Vec::with_capacity(fragments.len());
+        
+        for frag in &fragments {
+            match frag {
+                FileFragment::ADDED { body, .. } => {
+                    let data = Self::load_fragment_data(repo, body)?;
+                    added_fragment_data.push(Some(data));
+                }
+                _ => {
+                    added_fragment_data.push(None);
+                }
+            }
+        }
+        
         // Calculate total size of the reconstructed file
         let total_size: u64 = fragments
             .iter()
@@ -131,7 +146,7 @@ impl<'a> LazyFileReplay<'a> {
             .sum();
 
         Ok(Self {
-            repo,
+            added_fragment_data,
             old_reader,
             fragments,
             logical_position: 0,
@@ -141,6 +156,21 @@ impl<'a> LazyFileReplay<'a> {
             total_size,
             current_added_data: None,
         })
+    }
+    
+    /// Helper to load fragment data from repo
+    fn load_fragment_data(repo: &Repo, body_hash: &crate::hash::Hash) -> RepoResult<Vec<u8>> {
+        use crate::objects::{Fragment, Object, ObjectReference};
+        use std::fs;
+
+        let obj_path = repo.get_object_path(ObjectReference::Hash(body_hash.clone()))?;
+        let packed = fs::read(obj_path)?;
+        let obj = Object::from_msgpack(packed)?;
+        
+        match obj {
+            Object::Fragment(Fragment(data)) => Ok(data),
+            _ => Err("Expected Fragment object".into()),
+        }
     }
 
     /// Get the fragment info for the current logical position
@@ -183,24 +213,9 @@ impl<'a> LazyFileReplay<'a> {
             None
         }
     }
-
-    /// Load the data for an ADDED fragment
-    fn load_added_fragment(&self, body_hash: &crate::hash::Hash) -> RepoResult<Vec<u8>> {
-        use crate::objects::{Fragment, Object, ObjectReference};
-        use std::fs;
-
-        let obj_path = self.repo.get_object_path(ObjectReference::Hash(body_hash.clone()))?;
-        let packed = fs::read(obj_path)?;
-        let obj = Object::from_msgpack(packed)?;
-        
-        match obj {
-            Object::Fragment(Fragment(data)) => Ok(data),
-            _ => Err("Expected Fragment object".into()),
-        }
-    }
 }
 
-impl<'a> Read for LazyFileReplay<'a> {
+impl Read for LazyFileReplay {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.logical_position >= self.total_size {
             return Ok(0); // EOF
@@ -212,11 +227,16 @@ impl<'a> Read for LazyFileReplay<'a> {
             let fragment = &self.fragments[self.current_fragment_index];
 
             match fragment {
-                FileFragment::ADDED { body, len } => {
+                FileFragment::ADDED { len, .. } => {
                     // Load fragment data if not cached
                     if self.current_added_data.is_none() {
-                        let data = self.load_added_fragment(body)
-                            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                        let data = self.added_fragment_data[self.current_fragment_index]
+                            .as_ref()
+                            .ok_or_else(|| io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "Fragment data not found at expected index"
+                            ))?
+                            .clone();
                         self.current_added_data = Some(data);
                     }
 
@@ -282,7 +302,7 @@ impl<'a> Read for LazyFileReplay<'a> {
     }
 }
 
-impl<'a> Seek for LazyFileReplay<'a> {
+impl Seek for LazyFileReplay {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         let target_pos = match pos {
             SeekFrom::Start(offset) => offset as i64,
