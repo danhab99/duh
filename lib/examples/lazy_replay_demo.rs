@@ -83,7 +83,10 @@ fn main() {
     
     println!("Seek to position 1500:");
     println!("  - Within Fragment 3 (UNCHANGED)");
-    println!("  - Reads from old file position 1750 (1500 + 250 offset)\n");
+    println!("  - Fragment 3 starts at logical position 1250");
+    println!("  - Offset within fragment: 1500 - 1250 = 250");
+    println!("  - Old file position at fragment start: 1500");
+    println!("  - Final old file position: 1500 + 250 = 1750\n");
     
     println!("Key Benefits:");
     println!("------------");
