@@ -73,6 +73,8 @@
             buildInputs = [ duh ];
           };
         };
+
+        version = cliToml.package.version;
       }
     );
 }
