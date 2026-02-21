@@ -65,6 +65,7 @@
               rustup
               gdb
               just
+              cargo-machete
             ];
 
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
