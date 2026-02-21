@@ -1,13 +1,17 @@
 use std::{collections::HashMap, error::Error};
 
 use clap::clap_derive::Args;
-use lib::{hash::Hash, objects::{Object, ObjectReference}, repo::Repo};
+use lib::{
+    hash::Hash,
+    objects::{Object, ObjectReference},
+    repo::Repo,
+};
 
 #[derive(Args)]
 #[command(about = "Show status of tracked files (compare working copy -> index / HEAD)")]
 pub struct StatusCommand {}
 
-pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<(), Box<dyn Error>> {
+pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
     let cwd = std::env::current_dir()?;
     let cwd_str = cwd.to_str().unwrap_or("").to_string();
 
@@ -65,24 +69,39 @@ pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<(), Box<dyn Error
         }
     }
 
+    let mut uncommitted_changes = false;
+
     if !changed.is_empty() {
         println!("{}", crate::colors::yellow("Modified files:"));
-        for p in &changed { println!("  {}", crate::colors::yellow(p)); }
+        for p in &changed {
+            println!("  {}", crate::colors::yellow(p));
+        }
+        uncommitted_changes = true;
     }
-
     if !missing.is_empty() {
         println!("{}", crate::colors::red("Deleted / missing files:"));
-        for p in &missing { println!("  {}", crate::colors::red(p)); }
+        for p in &missing {
+            println!("  {}", crate::colors::red(p));
+        }
+        uncommitted_changes = true;
     }
 
     if !unchanged.is_empty() {
         println!("{}", crate::colors::green("Staged / up-to-date files:"));
-        for p in &unchanged { println!("  {}", crate::colors::green(p)); }
+        for p in &unchanged {
+            println!("  {}", crate::colors::green(p));
+        }
+        uncommitted_changes = true;
     }
 
     if changed.is_empty() && missing.is_empty() && unchanged.is_empty() {
-        println!("{}", crate::colors::dim("No tracked files in index or HEAD. Use `duh stage <file>` to add files."));
+        println!(
+            "{}",
+            crate::colors::dim(
+                "No tracked files in index or HEAD. Use `duh stage <file>` to add files."
+            )
+        );
     }
 
-    Ok(())
+    Ok(uncommitted_changes)
 }

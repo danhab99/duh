@@ -7,6 +7,7 @@ use cli::{Cli, Commands};
 
 mod checkout;
 mod cli;
+mod colors;
 mod commit;
 mod init;
 mod log;
@@ -14,7 +15,7 @@ mod show;
 mod snapshot;
 mod stage;
 mod status;
-mod colors;
+mod switch;
 mod unstage;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -53,6 +54,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Status(c) => {
             status::status(&mut repo, c).expect("Unable to show status");
+        }
+        Commands::Switch(c) => {
+            switch::switch(&mut repo, c).expect("Unable to switch");
         }
     };
 

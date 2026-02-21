@@ -1,10 +1,10 @@
-use crate::vlog;
 use crate::{
     diff::DiffFragment,
     hash::Hash,
     objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference, Person},
     replay::LazyFileReplay,
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
+    vlog,
 };
 use std::{
     collections::HashMap,
@@ -145,6 +145,9 @@ impl Repo {
                 Hash::from_string(hash_part.to_string())?,
             );
         }
+
+        r.set_ref("main", ObjectReference::Hash(Hash::new()))?;
+        r.set_ref("HEAD", ObjectReference::Ref("main".into()))?;
 
         vlog!("repo::at_root_path: loaded {} index entries", r.index.len());
 
@@ -444,15 +447,21 @@ impl Repo {
 
         Ok(version_hash)
     }
-    
-    pub fn unstage_file(&mut self, file_path: String) -> RepoResult<()>{
+
+    pub fn unstage_file(&mut self, file_path: String) -> RepoResult<()> {
         self.index.remove(file_path.as_str());
         Ok(())
     }
 
     pub fn commit(&mut self, message: String) -> RepoResult<Hash> {
         vlog!("repo::commit: message='{}'", message);
-        let head_commit = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+
+        let head_ref_name = match self.get_ref("HEAD".into())? {
+            ObjectReference::Hash(_) => panic!("cannot commit on detatched head"),
+            ObjectReference::Ref(r) => r,
+        };
+
+        let head_commit = self.resolve_ref_name(ObjectReference::Ref(head_ref_name.clone()))?;
 
         let commit = CommitStruct {
             parent: head_commit,
@@ -463,14 +472,14 @@ impl Repo {
         };
 
         let files_count = commit.files.len();
-        vlog!(
-            "repo::commit: creating commit with {} files",
-            files_count
-        );
+        vlog!("repo::commit: creating commit with {} files", files_count);
 
         let commit_hash = self.save_obj(Object::Commit(commit))?;
 
-        self.set_ref("HEAD", ObjectReference::Hash(commit_hash.clone()))?;
+        self.set_ref(
+            head_ref_name.as_str(),
+            ObjectReference::Hash(commit_hash.clone()),
+        )?;
         vlog!("repo::commit: new HEAD = {}", commit_hash.to_string());
 
         // Remove the committed entries from the index (they were staged and are now part of history)
@@ -551,6 +560,21 @@ impl Repo {
         }
 
         Ok(())
+    }
+
+    pub fn list_files(&mut self, commit_ref: ObjectReference) -> RepoResult<Vec<String>> {
+        let commit_hash = self.resolve_ref_name(commit_ref)?;
+
+        let commit = match self.get_object(commit_hash)? {
+            Some(Object::Commit(commit)) => commit,
+            _ => panic!(""),
+        };
+
+        Ok(commit
+            .files
+            .keys()
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>())
     }
 }
 

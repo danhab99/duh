@@ -2,7 +2,8 @@ use clap::*;
 
 use crate::{
     checkout::CheckoutCommand, commit::CommitCommand, log::LogCommand, show::ShowCommand,
-    snapshot::SnapshotCommand, stage::{StageCommand}, status::StatusCommand, unstage::UnstageCommand
+    snapshot::SnapshotCommand, stage::StageCommand, status::StatusCommand, switch::SwitchCommand,
+    unstage::UnstageCommand,
 };
 
 /// `duh` — binary oriented version control
@@ -43,4 +44,7 @@ pub enum Commands {
 
     /// Show which tracked files have changed compared to the index
     Status(StatusCommand),
+
+    // Switch or create a different branch 
+    Switch(SwitchCommand),
 }

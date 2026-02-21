@@ -64,6 +64,7 @@
               pkgs.rust-analyzer
               rustup
               gdb
+              just
             ];
 
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
