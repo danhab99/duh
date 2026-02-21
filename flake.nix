@@ -27,11 +27,12 @@
         duh = pkgs.rustPlatform.buildRustPackage {
           pname = "duh";
           version = cliToml.package.version;
+          buildType = "release";
           
           # build from the workspace root and select the `cli/` package
           src = ./.;
           setSourceRoot = "sourceRoot=$(echo */cli)";
-          cargoLock = { lockFile = ./cli/Cargo.lock; };
+          cargoLock.lockFile = ./cli/Cargo.lock;
           cargoSha256 = cargoVendorHash;
 
           nativeBuildInputs = with pkgs; [
