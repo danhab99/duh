@@ -52,3 +52,8 @@ demo_script td:
 
 demo: (generate-test-files tmpdir)
     nix develop .#duh --command bash -c "just demo_script {{ tmpdir }}"
+
+v := `nix eval --raw .#version.x86_64-linux`
+
+version:
+    git tag {{v}}
