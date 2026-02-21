@@ -443,6 +443,11 @@ impl Repo {
 
         Ok(version_hash)
     }
+    
+    pub fn unstage_file(&mut self, file_path: String) -> RepoResult<()>{
+        self.index.remove(file_path.as_str());
+        Ok(())
+    }
 
     pub fn commit(&mut self, message: String) -> RepoResult<Hash> {
         vlog!("repo::commit: message='{}'", message);

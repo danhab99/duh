@@ -1,8 +1,11 @@
 use clap::*;
 
-use crate::{commit::CommitCommand, snapshot::SnapshotCommand, stage::StageCommand, show::ShowCommand, checkout::CheckoutCommand, log::LogCommand, status::StatusCommand};
+use crate::{
+    checkout::CheckoutCommand, commit::CommitCommand, log::LogCommand, show::ShowCommand,
+    snapshot::SnapshotCommand, stage::{StageCommand}, status::StatusCommand, unstage::UnstageCommand
+};
 
-/// `duh` — tiny duplicate-aware snapshot tool.
+/// `duh` — binary oriented version control
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 #[command(propagate_version = true)]
@@ -23,7 +26,10 @@ pub enum Commands {
     /// Stage a file (prepare fragments for later commit)
     Stage(StageCommand),
 
-    /// Stage and commit a file (shortcut)
+    /// Unstage a file (remove the file from being comitted)
+    Unstage(UnstageCommand),
+
+    /// Unstage and commit a file (shortcut)
     Commit(CommitCommand),
 
     /// Show the commit currently pointed to by HEAD
