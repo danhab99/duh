@@ -15,6 +15,7 @@ mod snapshot;
 mod stage;
 mod status;
 mod colors;
+mod unstage;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -34,6 +35,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Stage(c) => {
             stage::stage(&mut repo, c).expect("Unable to stage");
+        }
+        Commands::Unstage(c) => {
+            unstage::unstage(&mut repo, c).expect("Unable to unstage");
         }
         Commands::Commit(c) => {
             commit::commit(&mut repo, c).expect("Unable to commit");
