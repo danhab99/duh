@@ -4,10 +4,10 @@ c := `mktemp`
 d := `mktemp`
 
 generate-test-files outdir:
-    dd if=/dev/urandom count=1 bs=1M of={{ a }}
-    dd if=/dev/urandom count=2 bs=1M of={{ b }} 
-    dd if=/dev/urandom count=3 bs=1M of={{ c }} 
-    dd if=/dev/urandom count=4 bs=1M of={{ d }} 
+    dd if=/dev/urandom count=1 bs=50M of={{ a }}
+    dd if=/dev/urandom count=2 bs=50M of={{ b }} 
+    dd if=/dev/urandom count=3 bs=50M of={{ c }} 
+    dd if=/dev/urandom count=4 bs=50M of={{ d }} 
 
     rm -rf test-data
     mkdir test-data
