@@ -1,8 +1,6 @@
-use std::error::Error;
-use std::path::PathBuf;
+use std::{error::Error, fs};
 
 use clap::clap_derive::Args;
-use lib::objects::Object;
 use lib::repo::Repo;
 
 #[derive(Args)]
@@ -14,8 +12,13 @@ pub struct CommitCommand {
     pub file_path: Option<String>,
 
     /// Commit message
-    #[arg(short = 'm', long = "message", default_value = "Snapshot commit", help = "Message to store with the new commit")]
-    pub message: String,
+    #[arg(
+        short = 'm',
+        long = "message",
+        default_value = "Snapshot commit",
+        help = "Message to store with the new commit"
+    )]
+    pub message: Option<String>,
 }
 
 pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
@@ -23,11 +26,41 @@ pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>
         println!("{} {}", crate::colors::cyan("Staging file"), fp);
         repo.stage_file(fp.clone())?;
     } else {
-        println!("{}", crate::colors::dim("No file provided — committing staged files in index"));
+        println!(
+            "{}",
+            crate::colors::dim("No file provided — committing staged files in index")
+        );
     }
 
     println!("{}", crate::colors::cyan("Committing"));
-    let h = repo.commit(cmd.message.clone())?;
-    println!("{} {} — index cleared. Run `duh status` to inspect.", crate::colors::green(&h.to_string()), crate::colors::bold("Committed"));
+    let h = repo.commit(match cmd.message.clone() {
+        Some(ref x) if !x.is_empty() && x.len() > 0 => x.clone(),
+        _ => prompt_editor(),
+    })?;
+    println!(
+        "{} {} — index cleared. Run `duh status` to inspect.",
+        crate::colors::green(&h.to_string()),
+        crate::colors::bold("Committed")
+    );
     Ok(())
+}
+
+fn prompt_editor() -> String {
+    let editor_command = std::env::var("EDITOR").unwrap();
+
+    let message_dir = std::env::temp_dir().to_string_lossy().into_owned();
+    let message_path = format!("{}/message", message_dir);
+
+    let mut command = std::process::Command::new(editor_command);
+    command.arg(message_path.clone());
+
+    let exit_code = command.status().unwrap();
+
+    if !exit_code.success() {
+        panic!("exit code is not zero");
+    }
+
+    let msg = fs::read(message_path.clone()).unwrap();
+
+    String::from_utf8(msg).unwrap()
 }
