@@ -49,7 +49,9 @@ pub fn collect_divergence<R: Read + Seek>(
 
     // Phase 1: Build hash index from old, capped at max_bytes so the HashMap
     // never exceeds ~(max_bytes / window) entries regardless of file size.
-    let mut index: HashMap<blake3::Hash, usize> = HashMap::new();
+    // Keys are 64-bit truncations of the blake3 hash; the double-verify step
+    // in phase 2 catches the negligible collision rate.
+    let mut index: HashMap<u64, usize> = HashMap::new();
     let mut old_position: usize = 0;
     let mut old_bytes_indexed: usize = 0;
     
@@ -62,8 +64,10 @@ pub fn collect_divergence<R: Read + Seek>(
             break;
         }
         
-        let old_hash = blake3::hash(&old_chunk);
-        index.insert(old_hash, old_position);
+        let old_fp = u64::from_le_bytes(
+            blake3::hash(&old_chunk).as_bytes()[..8].try_into().unwrap()
+        );
+        index.insert(old_fp, old_position);
         
         old_position += old_chunk.len();
         old_bytes_indexed += old_chunk.len();
@@ -82,21 +86,23 @@ pub fn collect_divergence<R: Read + Seek>(
     let mut new_chunk_buffer: Vec<u8> = Vec::new();
     
     loop {
-        // Early-return if we've accumulated a full max_bytes chunk without
-        // finding a match.  old is reset to old_starting_pos so the next
-        // call can try the same old range against the next new window.
+        // Early-return once we have a full max_bytes chunk of new without a
+        // match.  Advance old by old_bytes_indexed so the caller emits a
+        // DELETED for those bytes and old does not stall at the same position.
         if new_chunk_buffer.len() >= max_bytes {
-            old.seek(io::SeekFrom::Start(old_starting_pos))?;
-            return Ok((0, new_chunk_buffer, 0));
+            old.seek(io::SeekFrom::Start(old_starting_pos + old_bytes_indexed as u64))?;
+            return Ok((old_bytes_indexed, new_chunk_buffer, 0));
         }
         let (new_chunk, new_eof) = read_chunk(new, window)?;
         if new_chunk.is_empty() {
             break;
         }
         
-        let new_hash = blake3::hash(&new_chunk);
+        let new_fp = u64::from_le_bytes(
+            blake3::hash(&new_chunk).as_bytes()[..8].try_into().unwrap()
+        );
         
-        if let Some(&old_match_pos) = index.get(&new_hash) {
+        if let Some(&old_match_pos) = index.get(&new_fp) {
             // Found potential match - verify with next 2 windows
             let old_verify_pos = old_starting_pos + old_match_pos as u64 + window as u64;
             let new_verify_pos = new_starting_pos + new_chunk_buffer.len() as u64 + window as u64;
