@@ -54,13 +54,15 @@ pub fn checkout(repo: &mut Repo, cmd: &CheckoutCommand) -> Result<(), Box<dyn Er
         }
     }
 
-    // Reconstruct and write the file to working directory
+    // Reconstruct and write the file to working directory without
+    // materializing the whole contents in memory.
     let mut reader = repo.open_file(cmd.file_path.clone(), target_hash)?;
-    let mut buf = Vec::new();
-    reader.read_to_end(&mut buf)?;
 
     let out_path = repo.get_path_in_cwd_str(&cmd.file_path);
-    fs::write(out_path, buf)?;
+    let mut out_file = fs::File::create(out_path)?;
+
+    // copy stream directly from the repo reader to the output file
+    std::io::copy(&mut reader, &mut out_file)?;
 
     println!("{} {} @ {}",
         crate::colors::green("checked out"),

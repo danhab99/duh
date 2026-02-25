@@ -75,6 +75,13 @@ impl Object {
         Ok(o)
     }
 
+    /// Deserialize from any `Read` source, avoiding a separate raw-bytes buffer.
+    pub fn from_msgpack_reader<R: std::io::Read>(reader: R) -> Result<Object, Box<dyn Error>> {
+        let mut d = Deserializer::new(reader);
+        let o = Object::deserialize(&mut d)?;
+        Ok(o)
+    }
+
     pub fn hash(&self) -> Result<(Vec<u8>, Hash), Box<dyn Error>> {
         let msgpack = self.to_msgpack();
         let hash = Hash::from_string(hash_bytes(&msgpack))?;
@@ -113,8 +120,9 @@ impl FromStr for ObjectReference {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.starts_with("ref:") {
-            Ok(ObjectReference::Ref(String::from(s)))
+        let s = s.trim();
+        if let Some(target) = s.strip_prefix("ref:") {
+            Ok(ObjectReference::Ref(target.trim().to_string()))
         } else {
             let h = Hash::from_str(s);
             Ok(ObjectReference::Hash(h))

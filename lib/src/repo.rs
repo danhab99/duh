@@ -146,9 +146,6 @@ impl Repo {
             );
         }
 
-        r.set_ref("main", ObjectReference::Hash(Hash::new()))?;
-        r.set_ref("HEAD", ObjectReference::Ref("main".into()))?;
-
         vlog!("repo::at_root_path: loaded {} index entries", r.index.len());
 
         Ok(r)
@@ -209,10 +206,11 @@ impl Repo {
         );
         fs::write(base.join("config"), default_config)?;
 
-        // Initialize HEAD and index (also create refs/HEAD so lookups succeed)
+        // Initialize HEAD and index with correct initial content.
         fs::write(base.join("index"), "")?;
-        fs::create_dir_all(base.join("refs"))?;
-        fs::write(base.join("refs").join("HEAD"), "")?;
+        // refs/main starts at the zero hash; HEAD points at main.
+        fs::write(base.join("refs").join("main"), Hash::new().to_string())?;
+        fs::write(base.join("refs").join("HEAD"), "ref:main")?;
 
         Ok(Repo::at_root_path(Some(root_path))?)
     }
@@ -386,16 +384,13 @@ impl Repo {
         let old: Box<dyn ReadSeek> = if head_commit_hash.is_zero() {
             Box::new(io::Cursor::new(Vec::new()))
         } else {
-            // Load the previous file version into memory for diffing
-            let mut reader = self.open_file(fp.clone(), head_commit_hash)?;
-            let mut old_data = Vec::new();
-            reader.read_to_end(&mut old_data)?;
-            Box::new(io::Cursor::new(old_data))
+            // Stream the previous file version directly – no full materialisation.
+            self.open_file(fp.clone(), head_commit_hash)?
         };
 
         new.seek(io::SeekFrom::Start(0))?;
 
-        let fragments = crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size);
+        let fragments = crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
 
         // Collect `FileFragment` entries directly in the FileVersion so we avoid
         // creating a separate FileDiffFragment object for every ADDED fragment.

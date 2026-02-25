@@ -41,16 +41,22 @@ pub fn collect_divergence<R: Read + Seek>(
     old: &mut R,
     new: &mut R,
     window: usize,
+    max_bytes: usize,
 ) -> Result<(usize, Vec<u8>, usize), Box<dyn std::error::Error>> {
     // Returns: (deleted_bytes, added_bytes, matched_bytes)
     let old_starting_pos = old.stream_position()?;
     let new_starting_pos = new.stream_position()?;
 
-    // Phase 1: Build complete hash index from old file
+    // Phase 1: Build hash index from old, capped at max_bytes so the HashMap
+    // never exceeds ~(max_bytes / window) entries regardless of file size.
     let mut index: HashMap<blake3::Hash, usize> = HashMap::new();
     let mut old_position: usize = 0;
+    let mut old_bytes_indexed: usize = 0;
     
     loop {
+        if old_bytes_indexed >= max_bytes {
+            break;
+        }
         let (old_chunk, old_eof) = read_chunk(old, window)?;
         if old_chunk.is_empty() {
             break;
@@ -60,6 +66,7 @@ pub fn collect_divergence<R: Read + Seek>(
         index.insert(old_hash, old_position);
         
         old_position += old_chunk.len();
+        old_bytes_indexed += old_chunk.len();
         
         if old_eof {
             break;
@@ -69,10 +76,19 @@ pub fn collect_divergence<R: Read + Seek>(
     // Reset old to starting position
     old.seek(io::SeekFrom::Start(old_starting_pos))?;
     
-    // Phase 2: Slide through new file looking for matches
+    // Phase 2: Slide through new file looking for matches.
+    // Cap new_chunk_buffer at max_bytes so no single divergent section
+    // materialises more than max_bytes of new-file content at once.
     let mut new_chunk_buffer: Vec<u8> = Vec::new();
     
     loop {
+        // Early-return if we've accumulated a full max_bytes chunk without
+        // finding a match.  old is reset to old_starting_pos so the next
+        // call can try the same old range against the next new window.
+        if new_chunk_buffer.len() >= max_bytes {
+            old.seek(io::SeekFrom::Start(old_starting_pos))?;
+            return Ok((0, new_chunk_buffer, 0));
+        }
         let (new_chunk, new_eof) = read_chunk(new, window)?;
         if new_chunk.is_empty() {
             break;
@@ -119,19 +135,19 @@ pub fn collect_divergence<R: Read + Seek>(
     if window > MIN_WINDOW {
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
-        return collect_divergence(old, new, window / 2);
+        return collect_divergence(old, new, window / 2, max_bytes);
     }
     
-    // No match at all - return everything as diverged
+    // No match at all – `new_chunk_buffer` already holds the complete new
+    // remainder from the scan above, so there is no need to seek back and
+    // call read_to_end again.  For the old side we only need the byte count
+    // (DELETED carries no body), which we get by seeking to EOF.
     old.seek(io::SeekFrom::Start(old_starting_pos))?;
-    new.seek(io::SeekFrom::Start(new_starting_pos))?;
-    
-    let mut remaining_old = Vec::new();
-    let mut remaining_new = Vec::new();
-    old.read_to_end(&mut remaining_old)?;
-    new.read_to_end(&mut remaining_new)?;
-    
-    Ok((remaining_old.len(), remaining_new, 0))
+    old.seek(io::SeekFrom::End(0))?;
+    let old_end = old.stream_position()?;
+    let old_remaining = old_end.saturating_sub(old_starting_pos) as usize;
+
+    Ok((old_remaining, new_chunk_buffer, 0))
 }
 
 fn collect_convergence<R: Read + Seek>(
@@ -196,17 +212,20 @@ pub struct DiffFragmentIter<R: Read + Seek> {
     old: R,
     new: R,
     window: usize,
+    /// Maximum body size for a single ADDED fragment emitted by this iterator.
+    max_fragment_size: usize,
     done: bool,
     pending: Option<DiffFragment>, // For consolidation
     queue: Vec<DiffFragment>,      // Queue for fragments from divergence
 }
 
 impl<R: Read + Seek> DiffFragmentIter<R> {
-    pub fn new(old: R, new: R, window: usize) -> Self {
+    pub fn new(old: R, new: R, window: usize, max_fragment_size: usize) -> Self {
         Self {
             old,
             new,
             window,
+            max_fragment_size,
             done: false,
             pending: None,
             queue: Vec::new(),
@@ -240,27 +259,35 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
         
         // If only one is EOF, handle remaining
         if new_eof {
+            // Only the byte count is needed for DELETED; avoid materialising old content.
+            let cur = match self.old.stream_position() {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e.into())),
+            };
+            let end = match self.old.seek(io::SeekFrom::End(0)) {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e.into())),
+            };
+            let remaining = end.saturating_sub(cur) as usize;
             self.done = true;
-            let mut buf = Vec::new();
-            if let Err(e) = self.old.read_to_end(&mut buf) {
-                return Some(Err(e.into()));
-            }
-            if buf.len() > 0 {
-                return Some(Ok(DiffFragment::DELETED { len: buf.len() }));
+            if remaining > 0 {
+                return Some(Ok(DiffFragment::DELETED { len: remaining }));
             }
             return None;
         }
         
         if old_eof {
-            self.done = true;
+            // Emit at most max_fragment_size bytes per ADDED fragment so the
+            // iterator never materialises the whole new file at once.
             let mut buf = Vec::new();
-            if let Err(e) = self.new.read_to_end(&mut buf) {
-                return Some(Err(e.into()));
+            match self.new.by_ref().take(self.max_fragment_size as u64).read_to_end(&mut buf) {
+                Ok(0) => {
+                    self.done = true;
+                    return None;
+                }
+                Ok(_) => return Some(Ok(DiffFragment::ADDED { body: buf })),
+                Err(e) => return Some(Err(e.into())),
             }
-            if buf.len() > 0 {
-                return Some(Ok(DiffFragment::ADDED { body: buf }));
-            }
-            return None;
         }
         
         // Try convergence first
@@ -273,7 +300,7 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
         }
         
         // Then divergence
-        match collect_divergence(&mut self.old, &mut self.new, self.window) {
+        match collect_divergence(&mut self.old, &mut self.new, self.window, self.max_fragment_size) {
             Ok((deleted, added, matched)) => {
                 // Queue all non-empty fragments
                 if deleted > 0 {
@@ -328,9 +355,13 @@ impl<R: Read + Seek> Iterator for DiffFragmentIter<R> {
                 *prev_len += len;
                 self.next()
             }
-            (Some(DiffFragment::ADDED { body: prev_body }), DiffFragment::ADDED { body }) => {
-                prev_body.extend(body);
-                self.next()
+            (Some(DiffFragment::ADDED { .. }), DiffFragment::ADDED { .. }) => {
+                // Do NOT consolidate ADDED fragments – bodies are already bounded
+                // by max_fragment_size; merging them would re-materialise an
+                // arbitrarily large amount of file content in RAM.
+                let result = self.pending.take();
+                self.pending = Some(next_frag);
+                result.map(Ok)
             }
             (None, _) => {
                 // No pending, store this one and get next to check for consolidation
@@ -351,8 +382,9 @@ pub fn build_diff_fragments<R: Read + Seek>(
     old: R,
     new: R,
     window: usize,
+    max_fragment_size: usize,
 ) -> DiffFragmentIter<R> {
-    DiffFragmentIter::new(old, new, window)
+    DiffFragmentIter::new(old, new, window, max_fragment_size)
 }
 
 /// Apply a sequence of `DiffFragment` values to `old`, writing the resulting

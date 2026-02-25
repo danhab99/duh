@@ -1,6 +1,7 @@
 use crate::objects::FileFragment;
 use crate::repo::{ReadSeek, Repo, RepoResult};
 use std::io::{self, Read, Seek, SeekFrom};
+use std::path::PathBuf;
 
 /// A reader that lazily replays file fragments to reconstruct a file.
 /// 
@@ -85,8 +86,9 @@ use std::io::{self, Read, Seek, SeekFrom};
 /// # }
 /// ```
 pub struct LazyFileReplay {
-    /// Pre-loaded data for ADDED fragments (indexed to match fragments vec)
-    added_fragment_data: Vec<Option<Vec<u8>>>,
+    /// On-disk paths for ADDED fragment objects, indexed parallel to `fragments`.
+    /// `None` for UNCHANGED / DELETED entries. Data is loaded on first access.
+    added_fragment_paths: Vec<Option<PathBuf>>,
     
     /// The old file to read UNCHANGED fragments from
     old_reader: Box<dyn ReadSeek>,
@@ -109,7 +111,8 @@ pub struct LazyFileReplay {
     /// Total logical size of the reconstructed file
     total_size: u64,
     
-    /// Cache for the current ADDED fragment data (to avoid cloning from vec)
+    /// Cache for the current ADDED fragment body. Populated on first read of
+    /// that fragment, cleared when the fragment is fully consumed or on seek.
     current_added_data: Option<Vec<u8>>,
 }
 
@@ -120,17 +123,21 @@ impl LazyFileReplay {
         old_reader: Box<dyn ReadSeek>,
         fragments: Vec<FileFragment>,
     ) -> RepoResult<Self> {
-        // Pre-load all ADDED fragment data
-        let mut added_fragment_data = Vec::with_capacity(fragments.len());
-        
+        use crate::objects::ObjectReference;
+
+        // Pre-compute on-disk paths for ADDED fragment objects.
+        // Data is NOT loaded here – it is read from disk on the first access
+        // of each fragment, one fragment at a time.
+        let mut added_fragment_paths = Vec::with_capacity(fragments.len());
+
         for frag in &fragments {
             match frag {
                 FileFragment::ADDED { body, .. } => {
-                    let data = Self::load_fragment_data(repo, body)?;
-                    added_fragment_data.push(Some(data));
+                    let path = repo.get_object_path(ObjectReference::Hash(*body))?;
+                    added_fragment_paths.push(Some(path));
                 }
                 _ => {
-                    added_fragment_data.push(None);
+                    added_fragment_paths.push(None);
                 }
             }
         }
@@ -146,7 +153,7 @@ impl LazyFileReplay {
             .sum();
 
         Ok(Self {
-            added_fragment_data,
+            added_fragment_paths,
             old_reader,
             fragments,
             logical_position: 0,
@@ -156,21 +163,6 @@ impl LazyFileReplay {
             total_size,
             current_added_data: None,
         })
-    }
-    
-    /// Helper to load fragment data from repo
-    fn load_fragment_data(repo: &Repo, body_hash: &crate::hash::Hash) -> RepoResult<Vec<u8>> {
-        use crate::objects::{Fragment, Object, ObjectReference};
-        use std::fs;
-
-        let obj_path = repo.get_object_path(ObjectReference::Hash(body_hash.clone()))?;
-        let packed = fs::read(obj_path)?;
-        let obj = Object::from_msgpack(packed)?;
-        
-        match obj {
-            Object::Fragment(Fragment(data)) => Ok(data),
-            _ => Err("Expected Fragment object".into()),
-        }
     }
 
     /// Get the fragment info for the current logical position
@@ -228,15 +220,29 @@ impl Read for LazyFileReplay {
 
             match fragment {
                 FileFragment::ADDED { len, .. } => {
-                    // Load fragment data if not cached
+                    // Load fragment data lazily on first access; cleared when
+                    // the fragment is fully consumed or when seeking.
                     if self.current_added_data.is_none() {
-                        let data = self.added_fragment_data[self.current_fragment_index]
+                        use crate::objects::{Fragment, Object};
+                        use std::fs::File;
+                        use std::io::BufReader;
+
+                        let path = self.added_fragment_paths[self.current_fragment_index]
                             .as_ref()
                             .ok_or_else(|| io::Error::new(
                                 io::ErrorKind::NotFound,
-                                "Fragment data not found at expected index"
-                            ))?
-                            .clone();
+                                "Fragment path not found at expected index",
+                            ))?;
+                        let file = File::open(path)?;
+                        let obj = Object::from_msgpack_reader(BufReader::new(file))
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                        let data = match obj {
+                            Object::Fragment(Fragment(d)) => d,
+                            _ => return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "expected Fragment object",
+                            )),
+                        };
                         self.current_added_data = Some(data);
                     }
 
