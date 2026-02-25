@@ -59,20 +59,21 @@
         devShells = {
           default = with pkgs; mkShell {
             buildInputs = [
-              pkg-config
-              rustToolchain
-              pkgs.rust-analyzer
-              rustup
+              cargo-machete
               gdb
               just
-              cargo-machete
+              pkg-config
+              pkgs.rust-analyzer
+              rustToolchain
+              rustup
+              time
             ];
 
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
 
           duh = pkgs.mkShell {
-            buildInputs = [ duh ];
+            buildInputs = [ duh pkgs.time ];
           };
         };
 

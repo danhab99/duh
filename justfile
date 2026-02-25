@@ -29,29 +29,10 @@ update-vendor-hash:
 tmpdir := `mktemp -d`
 
 demo_script td:
-    @echo TEST PATH {{ td }}
-
-    cd {{ td }} && duh init
-
-    cd {{ td }} && cat abd > file
-    cd {{ td }} && duh status
-    cd {{ td }} && duh stage file
-    cd {{ td }} && duh status
-    cd {{ td }} && duh commit -m "commit 1"
-
-    cd {{ td }} && duh show
-
-    cd {{ td }} && cat acd > file
-    cd {{ td }} && duh status
-    cd {{ td }} && duh stage file
-    cd {{ td }} && duh status
-    cd {{ td }} && duh commit -m "commit 2"
-
-    cd {{ td }} && duh show
-    cd {{ td }} && duh log
+    bash demo.sh {{ td }}
 
 demo: (generate-test-files tmpdir)
-    nix develop .#duh --command bash -c "just demo_script {{ tmpdir }}"
+    nix develop .#duh --command bash -c "bash demo.sh {{ tmpdir }}"
 
 v := `nix eval --raw .#version.x86_64-linux`
 
