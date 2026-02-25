@@ -37,4 +37,7 @@ demo: (generate-test-files tmpdir)
 v := `nix eval --raw .#version.x86_64-linux`
 
 version:
+    git add ./cli/Cargo.toml 
+    git commit -m "{{v}}"
     git tag {{v}}
+
