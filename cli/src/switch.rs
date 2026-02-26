@@ -62,7 +62,7 @@ pub fn switch(repo: &mut Repo, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>
                 file_path,
                 commit: Some(commit_hash.to_string()),
             },
-        );
+        )?;
     }
 
     Ok(())
