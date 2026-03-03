@@ -24,7 +24,7 @@ pub struct CommitCommand {
 pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
     if let Some(fp) = &cmd.file_path {
         println!("{} {}", crate::colors::cyan("Staging file"), fp);
-        repo.stage_file(fp.clone())?;
+        repo.stage_file(fp.clone(), None::<fn(_)>)?;
     } else {
         println!(
             "{}",
