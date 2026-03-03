@@ -16,7 +16,7 @@ fn enabled() -> bool {
     atty::is(Stream::Stdout)
 }
 
-fn wrap(code: &str, s: &str) -> String {
+pub fn wrap(code: &str, s: &str) -> String {
     if !enabled() {
         s.to_string()
     } else {
@@ -24,28 +24,34 @@ fn wrap(code: &str, s: &str) -> String {
     }
 }
 
+pub const BOLD: &str = "1";
 pub fn bold(s: &str) -> String {
-    wrap("1", s)
+    wrap(BOLD, s)
 }
 
+pub const GREEN: &str = "32";
 pub fn green(s: &str) -> String {
-    wrap("32", s)
+    wrap(GREEN, s)
 }
 
+pub const RED: &str = "31";
 pub fn red(s: &str) -> String {
-    wrap("31", s)
+    wrap(RED, s)
 }
 
+pub const YELLOW: &str = "33";
 pub fn yellow(s: &str) -> String {
-    wrap("33", s)
+    wrap(YELLOW, s)
 }
 
+pub const CYAN: &str = "36";
 pub fn cyan(s: &str) -> String {
-    wrap("36", s)
+    wrap(CYAN, s)
 }
 
+pub const DIM: &str = "2";
 pub fn dim(s: &str) -> String {
-    wrap("2", s)
+    wrap(DIM, s)
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ pub struct SnapshotCommand {
 
 pub fn snapshot(repo: &mut Repo, cmd: &SnapshotCommand) -> Result<(), Box<dyn Error>> {
     println!("{}", crate::colors::cyan("Staging file"));
-    repo.stage_file(cmd.file_path.clone())?;
+    repo.stage_file(cmd.file_path.clone(), None::<fn(_)>)?;
     println!("{}", crate::colors::cyan("Committing file"));
     repo.commit(cmd.message.clone())?;
     Ok(())
