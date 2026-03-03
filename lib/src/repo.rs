@@ -372,31 +372,47 @@ impl Repo {
         }
     }
 
-    pub fn stage_file(&mut self, file_path: String) -> RepoResult<Hash> {
+    pub fn stage_file<F>(&mut self, file_path: String, mut event: Option<F>) -> RepoResult<Hash> where F: FnMut(DiffFragment) {
         let fp = self.get_path_in_cwd_str(&file_path);
 
         let mut new = File::open(fp.clone())?;
 
+        vlog!("repo::stage_file: computing hash for entire file");
         let content_hash = Hash::digest_file_stream(&mut new)?;
+        vlog!(
+            "repo::stage_file: entire file hash {}",
+            content_hash.to_string()
+        );
 
         let head_commit_hash = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
 
         let old: Box<dyn ReadSeek> = if head_commit_hash.is_zero() {
+            vlog!("repo::stage_file: no parent hash, using empty cursor");
             Box::new(io::Cursor::new(Vec::new()))
         } else {
+            vlog!(
+                "repo::stage_file: opening parent version {}",
+                head_commit_hash.to_string()
+            );
             // Stream the previous file version directly – no full materialisation.
             self.open_file(fp.clone(), head_commit_hash)?
         };
 
         new.seek(io::SeekFrom::Start(0))?;
 
-        let fragments = crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
+        vlog!("repo::stage_file: building diff fragments");
+        let fragments =
+            crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
 
         // Collect `FileFragment` entries directly in the FileVersion so we avoid
         // creating a separate FileDiffFragment object for every ADDED fragment.
         let mut file_fragments: Vec<FileFragment> = Vec::new();
 
         for fragment_res in fragments {
+            if let Ok(ref frag) = fragment_res && let Some(ref mut f) = event {
+                f(frag.clone());
+            }
+
             match fragment_res {
                 Ok(DiffFragment::ADDED { body }) => {
                     // split large ADDED bodies into FRAGMENT-sized chunks
@@ -545,8 +561,6 @@ impl Repo {
 
     pub fn save_index(&mut self) -> RepoResult<()> {
         vlog!("repo::save_index: saving {} entries", self.index.len());
-        let index_bytes = toml::to_string(&self.index)?;
-        fs::write(self.get_path_in_repo("index"), index_bytes)?;
 
         let mut index_file = File::create(self.get_path_in_repo("index"))?;
 

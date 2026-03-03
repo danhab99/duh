@@ -67,7 +67,10 @@ pub fn collect_divergence<R: Read + Seek>(
         let old_fp = u64::from_le_bytes(
             blake3::hash(&old_chunk).as_bytes()[..8].try_into().unwrap()
         );
-        index.insert(old_fp, old_position);
+        // Keep only the first occurrence so repeated-content files (e.g. all
+        // the same byte) always match at the earliest possible old position,
+        // keeping the streams aligned after a match is confirmed.
+        index.entry(old_fp).or_insert(old_position);
         
         old_position += old_chunk.len();
         old_bytes_indexed += old_chunk.len();
