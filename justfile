@@ -1,19 +1,12 @@
-a := `mktemp`
-b := `mktemp`
-c := `mktemp`
-d := `mktemp`
+build:
+    cd cli && cargo build
 
-generate-test-files outdir:
-    dd if=/dev/urandom count=1 bs=50M of={{ a }}
-    dd if=/dev/urandom count=2 bs=50M of={{ b }} 
-    dd if=/dev/urandom count=3 bs=50M of={{ c }} 
-    dd if=/dev/urandom count=4 bs=50M of={{ d }} 
-
-    rm -rf test-data
-    mkdir test-data
-
-    cat {{ a }} {{ b }} {{ d }} > {{ outdir }}/abd
-    cat {{ a }} {{ c }} {{ d }} > {{ outdir }}/acd
+# Creates 4 large single-character files in outdir: a.txt b.txt c.txt d.txt
+generate-test-files outdir size="200000":
+    python3 -c "import sys; sys.stdout.buffer.write(b'a' * {{size}})" > {{ outdir }}/a.txt
+    python3 -c "import sys; sys.stdout.buffer.write(b'b' * {{size}})" > {{ outdir }}/b.txt
+    python3 -c "import sys; sys.stdout.buffer.write(b'c' * {{size}})" > {{ outdir }}/c.txt
+    python3 -c "import sys; sys.stdout.buffer.write(b'd' * {{size}})" > {{ outdir }}/d.txt
 
 update-vendor-hash:
     #!/usr/bin/env bash
@@ -31,7 +24,7 @@ tmpdir := `mktemp -d`
 demo_script td:
     bash demo.sh {{ td }}
 
-demo: (generate-test-files tmpdir)
+demo:
     nix develop .#duh --command bash -c "bash demo.sh {{ tmpdir }}"
 
 v := `nix eval --raw .#version.x86_64-linux`
