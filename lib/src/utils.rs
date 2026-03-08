@@ -50,7 +50,9 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
         let mut p = path.clone();
 
         if p.eq(&PathBuf::from("/")) {
-            return Err(Box::new(NoRepo { details: "mm".to_string() }));
+            return Err(Box::new(NoRepo {
+                details: String::from(p.to_str().unwrap()),
+            }));
         }
 
         p.push(target);
@@ -65,7 +67,11 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
         }
     }
 
-    Ok(format!("{}/{}", String::from(path.to_str().unwrap()), target))
+    Ok(format!(
+        "{}/{}",
+        String::from(path.to_str().unwrap()),
+        target
+    ))
 }
 
 pub fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
