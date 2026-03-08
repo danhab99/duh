@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     checkout::CheckoutCommand, commit::CommitCommand, log::LogCommand, show::ShowCommand,
-    snapshot::SnapshotCommand, stage::StageCommand, status::StatusCommand, switch::SwitchCommand,
+    stage::StageCommand, status::StatusCommand, switch::SwitchCommand,
     unstage::UnstageCommand,
 };
 
@@ -20,9 +20,6 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a new repository (create `.duh/` metadata)
     Init,
-
-    /// Snapshot a file and immediately commit it
-    Snapshot(SnapshotCommand),
 
     /// Stage a file (prepare fragments for later commit)
     Stage(StageCommand),

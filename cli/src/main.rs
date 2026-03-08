@@ -12,7 +12,6 @@ mod commit;
 mod init;
 mod log;
 mod show;
-mod snapshot;
 mod stage;
 mod status;
 mod switch;
@@ -31,9 +30,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match &cli.command {
         Commands::Init => unreachable!(),
-        Commands::Snapshot(c) => {
-            snapshot::snapshot(&mut repo, c).expect("Unable to snapshot");
-        }
         Commands::Stage(c) => {
             stage::stage(&mut repo, c).expect("Unable to stage");
         }
