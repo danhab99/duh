@@ -32,7 +32,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, blake3::Hash) -> Option
     mut action: F,
 ) -> Result<(), Box<dyn std::error::Error>> {
     vlog!(
-        "diff::iterate_cdc_rewind: starting iteration with window={}",
+        "dedup::iterate_cdc_rewind: starting iteration with window={}",
         window
     );
     let old_starting_pos = old.stream_position()?;
@@ -55,7 +55,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, blake3::Hash) -> Option
             chunks_found += 1;
             let strong_hash = blake3::hash(&strong_buf);
             vlog!(
-                "diff::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}",
+                "dedup::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}",
                 offset + boundary,
                 strong_buf.len()
             );
@@ -66,7 +66,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, blake3::Hash) -> Option
                 },
                 strong_hash,
             ) {
-                vlog!("diff::iterate_cdc_rewind: action returned None, stopping iteration");
+                vlog!("dedup::iterate_cdc_rewind: action returned None, stopping iteration");
                 break;
             };
             strong_buf.clear();
@@ -76,14 +76,14 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, blake3::Hash) -> Option
         offset += old_chunk.len();
 
         if old_eof {
-            vlog!("diff::iterate_cdc_rewind: reached EOF");
+            vlog!("dedup::iterate_cdc_rewind: reached EOF");
             break;
         }
     }
 
     old.seek(io::SeekFrom::Start(old_starting_pos))?;
     vlog!(
-        "diff::iterate_cdc_rewind: completed, found {} chunks",
+        "dedup::iterate_cdc_rewind: completed, found {} chunks",
         chunks_found
     );
 
@@ -110,7 +110,7 @@ pub fn build_cdc_rewind<R: Read + Seek>(
     old: &mut R,
     window: usize,
 ) -> Result<HashMap<Hash, Position>, Box<dyn std::error::Error>> {
-    vlog!("diff::build_cdc_rewind: starting with window={}", window);
+    vlog!("dedup::build_cdc_rewind: starting with window={}", window);
 
     let mut map = HashMap::<Hash, Position>::new();
 
@@ -122,24 +122,18 @@ pub fn build_cdc_rewind<R: Read + Seek>(
             None => true,
         } {
             vlog!(
-                "diff::build_cdc_rewind: found chunk at position={} hash={}",
+                "dedup::build_cdc_rewind: found chunk at position={} hash={}",
                 position,
                 hash.to_hex(),
             );
             map.insert(hash, position);
-        } else {
-            vlog!(
-                "diff::build_cdc_rewind: SKIPPING position={} hash={}",
-                position,
-                hash.to_hex(),
-            );
         }
 
         Some(())
     })?;
 
     vlog!(
-        "diff::build_cdc_rewind: completed with {} chunks",
+        "dedup::build_cdc_rewind: completed with {} chunks",
         map.len()
     );
 
@@ -152,7 +146,7 @@ pub fn build_cdc_rewind<R: Read + Seek>(
     Ok(map)
 }
 
-const WINDOW: usize = 64;
+const WINDOW: usize = 1024;
 
 // 1. Define a struct to hold the iterator's state
 pub struct DedupeFragIterator<R: Read + Seek> {
@@ -184,6 +178,13 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
                 added.push_back(*value);
             }
         }
+
+        vlog!(
+            "dedup::build: all positions categorized deleted={} unchanged={} added={}",
+            deleted.len(),
+            unchanged.len(),
+            added.len(),
+        );
 
         return Ok(Self {
             deleted,
@@ -231,11 +232,13 @@ impl<R: Read + Seek> Iterator for DedupeFragIterator<R> {
             Some((selected, _)) => Some(match selected {
                 SelectedSet::Deleted => {
                     let d = self.deleted.pop_front().unwrap();
+                    vlog!("dedup::next: yielding deleted {}", d.length);
                     DiffFragment::DELETED { len: d.length }
                 }
 
                 SelectedSet::Unchanged => {
                     let d = self.unchanged.pop_front().unwrap();
+                    vlog!("dedup::next: yielding unchanged {}", d.length);
                     DiffFragment::UNCHANGED { len: d.length }
                 }
                 SelectedSet::Added => {
@@ -243,6 +246,7 @@ impl<R: Read + Seek> Iterator for DedupeFragIterator<R> {
                     self.new.seek(io::SeekFrom::Start(d.start as u64)).unwrap();
                     let (body, _) = read_chunk(&mut self.new, d.length).unwrap();
 
+                    vlog!("dedup::next: yielding added {}", d.length);
                     DiffFragment::ADDED { body }
                 }
             }),
