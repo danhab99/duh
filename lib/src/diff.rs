@@ -1,6 +1,11 @@
-use ahash::{HashMap, HashMapExt};
+use std::collections::HashMap;
 use std::io::{Read, Seek};
-use std::{fmt, io};
+use std::ops::Index;
+use std::{fmt, io, process};
+
+use blake3::Hash;
+
+use crate::vlog;
 
 /// Minimum window size for matching - prevents spurious matches on short byte sequences
 const MIN_WINDOW: usize = 64;
@@ -37,126 +42,181 @@ fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>,
     }
 }
 
+const HASH_MOD: u64 = 1024;
+
+type Position = usize;
+
+fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, &[u8], blake3::Hash) -> Option<()>>(
+    old: &mut R,
+    window: usize,
+    mut action: F,
+) -> Result<(), Box<dyn std::error::Error>> {
+    vlog!(
+        "diff::iterate_cdc_rewind: starting iteration with window={}",
+        window
+    );
+    let old_starting_pos = old.stream_position()?;
+
+    let mut hasher = gearhash::Hasher::default();
+    let mut offset = 0usize;
+    let mut chunks_found = 0;
+
+    let mut strong_buf = Vec::<u8>::new();
+
+    loop {
+        let (old_chunk, old_eof) = read_chunk(old, window)?;
+        if old_chunk.is_empty() {
+            break;
+        }
+        strong_buf.append(&mut old_chunk.clone());
+
+        // loop through all matches, and push the corresponding chunks
+        if let Some(boundary) = hasher.next_match(&old_chunk, HASH_MOD) {
+            chunks_found += 1;
+            let strong_hash = blake3::hash(&strong_buf);
+            vlog!(
+                "diff::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}",
+                offset + boundary,
+                strong_buf.len()
+            );
+            if let None = action(offset + boundary, strong_buf.as_slice(), strong_hash) {
+                vlog!("diff::iterate_cdc_rewind: action returned None, stopping iteration");
+                break;
+            };
+            strong_buf.clear();
+            hasher = gearhash::Hasher::default();
+        }
+
+        offset += old_chunk.len();
+
+        if old_eof {
+            vlog!("diff::iterate_cdc_rewind: reached EOF");
+            break;
+        }
+    }
+
+    old.seek(io::SeekFrom::Start(old_starting_pos))?;
+    vlog!(
+        "diff::iterate_cdc_rewind: completed, found {} chunks",
+        chunks_found
+    );
+
+    Ok(())
+}
+
+pub fn build_cdc_rewind<R: Read + Seek>(
+    old: &mut R,
+    window: usize,
+) -> Result<HashMap<Hash, (Position, Vec<u8>)>, Box<dyn std::error::Error>> {
+    vlog!("diff::build_cdc_rewind: starting with window={}", window);
+
+    let mut map = HashMap::<Hash, (Position, Vec<u8>)>::new();
+
+    iterate_cdc_rewind(old, window, |position, body, hash| {
+        if match map.get(&hash) {
+            Some((got_position, _)) => *got_position > position,
+            None => true,
+        } {
+            vlog!(
+                "diff::build_cdc_rewind: found chunk at position={}, len={} hash={}",
+                position,
+                body.len(),
+                hash.to_hex(),
+            );
+            map.insert(hash, (position, Vec::from(body)));
+        } else {
+            vlog!(
+                "diff::build_cdc_rewind: SKIPPING position={}, len={} hash={}",
+                position,
+                body.len(),
+                hash.to_hex(),
+            );
+        }
+
+        Some(())
+    })?;
+
+    vlog!(
+        "diff::build_cdc_rewind: completed with {} chunks",
+        map.len()
+    );
+
+    vlog!("===== OLD CDC INDEX =====");
+    for (hash, (position, body)) in map.iter() {
+        vlog!(
+            "  position={} hash={} body={}",
+            position,
+            hash.to_hex(),
+            String::from_utf8(body.clone())?
+                .chars()
+                .take(10)
+                .collect::<String>()
+        );
+    }
+    vlog!("=========================");
+
+    Ok(map)
+}
+
 pub fn collect_divergence<R: Read + Seek>(
     old: &mut R,
     new: &mut R,
     window: usize,
     max_bytes: usize,
-) -> Result<(usize, Vec<u8>, usize), Box<dyn std::error::Error>> {
-    // Returns: (deleted_bytes, added_bytes, matched_bytes)
+) -> Result<(usize, Vec<u8>), Box<dyn std::error::Error>> {
+    vlog!(
+        "diff::collect_divergence: starting with window={}, max_bytes={}",
+        window,
+        max_bytes
+    );
+    // Returns: (deleted_bytes, added_bytes)
     let old_starting_pos = old.stream_position()?;
-    let new_starting_pos = new.stream_position()?;
 
-    // Phase 1: Build hash index from old, capped at max_bytes so the HashMap
-    // never exceeds ~(max_bytes / window) entries regardless of file size.
-    // Keys are 64-bit truncations of the blake3 hash; the double-verify step
-    // in phase 2 catches the negligible collision rate.
-    let mut index: HashMap<u64, usize> = HashMap::new();
-    let mut old_position: usize = 0;
-    let mut old_bytes_indexed: usize = 0;
-    
-    loop {
-        if old_bytes_indexed >= max_bytes {
-            break;
-        }
-        let (old_chunk, old_eof) = read_chunk(old, window)?;
-        if old_chunk.is_empty() {
-            break;
-        }
-        
-        let old_fp = u64::from_le_bytes(
-            blake3::hash(&old_chunk).as_bytes()[..8].try_into().unwrap()
+    let old_cdc_index = build_cdc_rewind(old, window)?;
+
+    let mut converging_old_position = 0usize;
+    let mut converging_new_position = 0usize;
+
+    let mut added_bytes = Vec::<u8>::new();
+
+    iterate_cdc_rewind(new, window, |new_position, body, hash| {
+        let mut b = Vec::from(body);
+        added_bytes.append(&mut b);
+
+        vlog!(
+            "diff::collect_divergence: searching for convergence new_pos={} new_hash={}",
+            new_position,
+            hash.to_string()
         );
-        // Keep only the first occurrence so repeated-content files (e.g. all
-        // the same byte) always match at the earliest possible old position,
-        // keeping the streams aligned after a match is confirmed.
-        index.entry(old_fp).or_insert(old_position);
-        
-        old_position += old_chunk.len();
-        old_bytes_indexed += old_chunk.len();
-        
-        if old_eof {
-            break;
-        }
-    }
-    
-    // Reset old to starting position
-    old.seek(io::SeekFrom::Start(old_starting_pos))?;
-    
-    // Phase 2: Slide through new file looking for matches.
-    // Cap new_chunk_buffer at max_bytes so no single divergent section
-    // materialises more than max_bytes of new-file content at once.
-    let mut new_chunk_buffer: Vec<u8> = Vec::new();
-    
-    loop {
-        // Early-return once we have a full max_bytes chunk of new without a
-        // match.  Advance old by old_bytes_indexed so the caller emits a
-        // DELETED for those bytes and old does not stall at the same position.
-        if new_chunk_buffer.len() >= max_bytes {
-            old.seek(io::SeekFrom::Start(old_starting_pos + old_bytes_indexed as u64))?;
-            return Ok((old_bytes_indexed, new_chunk_buffer, 0));
-        }
-        let (new_chunk, new_eof) = read_chunk(new, window)?;
-        if new_chunk.is_empty() {
-            break;
-        }
-        
-        let new_fp = u64::from_le_bytes(
-            blake3::hash(&new_chunk).as_bytes()[..8].try_into().unwrap()
-        );
-        
-        if let Some(&old_match_pos) = index.get(&new_fp) {
-            // Found potential match - verify with next 2 windows
-            let old_verify_pos = old_starting_pos + old_match_pos as u64 + window as u64;
-            let new_verify_pos = new_starting_pos + new_chunk_buffer.len() as u64 + window as u64;
-            
-            old.seek(io::SeekFrom::Start(old_verify_pos))?;
-            new.seek(io::SeekFrom::Start(new_verify_pos))?;
-            
-            let (old_verify1, _) = read_chunk(old, window)?;
-            let (new_verify1, _) = read_chunk(new, window)?;
-            let (old_verify2, _) = read_chunk(old, window)?;
-            let (new_verify2, _) = read_chunk(new, window)?;
-            
-            if old_verify1 == new_verify1 && old_verify2 == new_verify2 {
-                // True match confirmed
-                let deleted = old_match_pos;
-                
-                // Position streams after the matched window
-                old.seek(io::SeekFrom::Start(old_starting_pos + old_match_pos as u64 + window as u64))?;
-                new.seek(io::SeekFrom::Start(new_verify_pos))?;
-                
-                return Ok((deleted, new_chunk_buffer, window));
+
+        match old_cdc_index.get(&hash) {
+            Some((old_position, _)) => {
+                converging_old_position = *old_position;
+                converging_new_position = new_position;
+                vlog!(
+                    "diff::collect_divergence: found convergence at old_pos={}, new_pos={}",
+                    converging_old_position,
+                    converging_new_position
+                );
+
+                if added_bytes.len() < max_bytes {
+                    Some(())
+                } else {
+                    None
+                }
             }
-            
-            // Spurious match - restore new position and continue
-            new.seek(io::SeekFrom::Start(new_starting_pos + new_chunk_buffer.len() as u64 + window as u64))?;
+            _ => None,
         }
-        
-        new_chunk_buffer.extend_from_slice(&new_chunk);
-        
-        if new_eof {
-            break;
-        }
-    }
+    })?;
 
-    // No convergence found, try with smaller window
-    if window > MIN_WINDOW {
-        old.seek(io::SeekFrom::Start(old_starting_pos))?;
-        new.seek(io::SeekFrom::Start(new_starting_pos))?;
-        return collect_divergence(old, new, window / 2, max_bytes);
-    }
-    
-    // No match at all – `new_chunk_buffer` already holds the complete new
-    // remainder from the scan above, so there is no need to seek back and
-    // call read_to_end again.  For the old side we only need the byte count
-    // (DELETED carries no body), which we get by seeking to EOF.
-    old.seek(io::SeekFrom::Start(old_starting_pos))?;
-    old.seek(io::SeekFrom::End(0))?;
-    let old_end = old.stream_position()?;
-    let old_remaining = old_end.saturating_sub(old_starting_pos) as usize;
+    let deleted_bytes = converging_old_position - (old_starting_pos as usize);
+    vlog!(
+        "diff::collect_divergence: completed with deleted={}, added={}",
+        deleted_bytes,
+        added_bytes.len()
+    );
 
-    Ok((old_remaining, new_chunk_buffer, 0))
+    return Ok((deleted_bytes, added_bytes));
 }
 
 fn collect_convergence<R: Read + Seek>(
@@ -165,9 +225,14 @@ fn collect_convergence<R: Read + Seek>(
     window: usize,
 ) -> Result<usize, Box<dyn std::error::Error>> {
     if window < 1 {
+        vlog!(
+            "diff::collect_convergence: error - window too small: {}",
+            window
+        );
         return Err("window is too small".into());
     }
 
+    vlog!("diff::collect_convergence: starting with window={}", window);
     let old_starting_pos = old.stream_position()?;
     let new_starting_pos = new.stream_position()?;
 
@@ -184,6 +249,10 @@ fn collect_convergence<R: Read + Seek>(
 
         // Direct byte comparison
         if old_buf != new_buf {
+            vlog!(
+                "diff::collect_convergence: divergence found at unchanged_len={}",
+                unchanged_len
+            );
             // Found divergence, rewind to before this chunk
             old.seek(io::SeekFrom::Start(old_starting_pos + unchanged_len as u64))?;
             new.seek(io::SeekFrom::Start(new_starting_pos + unchanged_len as u64))?;
@@ -193,17 +262,26 @@ fn collect_convergence<R: Read + Seek>(
         unchanged_len += old_buf.len();
 
         if hit_eof {
+            vlog!(
+                "diff::collect_convergence: reached EOF with unchanged_len={}",
+                unchanged_len
+            );
             return Ok(unchanged_len);
         }
     }
 
     if unchanged_len == 0 {
+        vlog!("diff::collect_convergence: immediate divergence detected");
         // Files diverge immediately at this position - that's fine, return 0
         old.seek(io::SeekFrom::Start(old_starting_pos))?;
         new.seek(io::SeekFrom::Start(new_starting_pos))?;
         return Ok(0);
     }
 
+    vlog!(
+        "diff::collect_convergence: completed with unchanged_len={}",
+        unchanged_len
+    );
     Ok(unchanged_len)
 }
 
@@ -230,6 +308,11 @@ pub struct DiffFragmentIter<R: Read + Seek> {
 
 impl<R: Read + Seek> DiffFragmentIter<R> {
     pub fn new(old: R, new: R, window: usize, max_fragment_size: usize) -> Self {
+        vlog!(
+            "diff::DiffFragmentIter::new: window={}, max_fragment_size={}",
+            window,
+            max_fragment_size
+        );
         Self {
             old,
             new,
@@ -240,17 +323,19 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
             queue: Vec::new(),
         }
     }
-    
+
     fn next_raw(&mut self) -> Option<Result<DiffFragment, Box<dyn std::error::Error>>> {
         // First drain the queue
         if !self.queue.is_empty() {
+            vlog!("diff::DiffFragmentIter::next_raw: returning queued fragment");
             return Some(Ok(self.queue.remove(0)));
         }
-        
+
         if self.done {
+            vlog!("diff::DiffFragmentIter::next_raw: iteration complete");
             return None;
         }
-        
+
         // Check EOF on both
         let old_eof = match test_eof(&mut self.old) {
             Ok(eof) => eof,
@@ -260,14 +345,16 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
             Ok(eof) => eof,
             Err(e) => return Some(Err(e)),
         };
-        
+
         if old_eof && new_eof {
+            vlog!("diff::DiffFragmentIter::next_raw: both files reached EOF");
             self.done = true;
             return None;
         }
-        
+
         // If only one is EOF, handle remaining
         if new_eof {
+            vlog!("diff::DiffFragmentIter::next_raw: new file EOF, processing remaining old file");
             // Only the byte count is needed for DELETED; avoid materialising old content.
             let cur = match self.old.stream_position() {
                 Ok(p) => p,
@@ -280,37 +367,68 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
             let remaining = end.saturating_sub(cur) as usize;
             self.done = true;
             if remaining > 0 {
+                vlog!(
+                    "diff::DiffFragmentIter::next_raw: emitting DELETED fragment len={}",
+                    remaining
+                );
                 return Some(Ok(DiffFragment::DELETED { len: remaining }));
             }
             return None;
         }
-        
+
         if old_eof {
+            vlog!("diff::DiffFragmentIter::next_raw: old file EOF, processing remaining new file");
             // Emit at most max_fragment_size bytes per ADDED fragment so the
             // iterator never materialises the whole new file at once.
             let mut buf = Vec::new();
-            match self.new.by_ref().take(self.max_fragment_size as u64).read_to_end(&mut buf) {
+            match self
+                .new
+                .by_ref()
+                .take(self.max_fragment_size as u64)
+                .read_to_end(&mut buf)
+            {
                 Ok(0) => {
+                    vlog!("diff::DiffFragmentIter::next_raw: no more data in new file");
                     self.done = true;
                     return None;
                 }
-                Ok(_) => return Some(Ok(DiffFragment::ADDED { body: buf })),
+                Ok(_) => {
+                    vlog!(
+                        "diff::DiffFragmentIter::next_raw: emitting ADDED fragment len={}",
+                        buf.len()
+                    );
+                    return Some(Ok(DiffFragment::ADDED { body: buf }));
+                }
                 Err(e) => return Some(Err(e.into())),
             }
         }
-        
+
         // Try convergence first
         match collect_convergence(&mut self.old, &mut self.new, self.window) {
             Ok(converged) if converged > 0 => {
+                vlog!(
+                    "diff::DiffFragmentIter::next_raw: found convergence len={}",
+                    converged
+                );
                 return Some(Ok(DiffFragment::UNCHANGED { len: converged }));
             }
             Err(e) => return Some(Err(e)),
             _ => {}
         }
-        
+
         // Then divergence
-        match collect_divergence(&mut self.old, &mut self.new, self.window, self.max_fragment_size) {
-            Ok((deleted, added, matched)) => {
+        match collect_divergence(
+            &mut self.old,
+            &mut self.new,
+            self.window,
+            self.max_fragment_size,
+        ) {
+            Ok((deleted, added)) => {
+                vlog!(
+                    "diff::DiffFragmentIter::next_raw: found divergence deleted={}, added={}",
+                    deleted,
+                    added.len()
+                );
                 // Queue all non-empty fragments
                 if deleted > 0 {
                     self.queue.push(DiffFragment::DELETED { len: deleted });
@@ -318,16 +436,15 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
                 if added.len() > 0 {
                     self.queue.push(DiffFragment::ADDED { body: added });
                 }
-                if matched > 0 {
-                    self.queue.push(DiffFragment::UNCHANGED { len: matched });
-                }
-                
+
                 // Return first from queue
                 if !self.queue.is_empty() {
+                    vlog!("diff::DiffFragmentIter::next_raw: returning first queued divergence fragment");
                     return Some(Ok(self.queue.remove(0)));
                 }
-                
+
                 // Nothing happened, try again
+                vlog!("diff::DiffFragmentIter::next_raw: no fragments generated, retrying");
                 self.next_raw()
             }
             Err(e) => Some(Err(e)),
@@ -337,7 +454,7 @@ impl<R: Read + Seek> DiffFragmentIter<R> {
 
 impl<R: Read + Seek> Iterator for DiffFragmentIter<R> {
     type Item = Result<DiffFragment, Box<dyn std::error::Error>>;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         // Get next raw fragment
         let next_frag = match self.next_raw() {
@@ -345,7 +462,10 @@ impl<R: Read + Seek> Iterator for DiffFragmentIter<R> {
             other => {
                 // If we have a pending fragment, return it first
                 if let Some(p) = self.pending.take() {
-                    // Put other back somehow? Actually if it's None or Err, 
+                    vlog!(
+                        "diff::DiffFragmentIter::next: returning pending fragment before error/end"
+                    );
+                    // Put other back somehow? Actually if it's None or Err,
                     // we should return pending then handle other on next call
                     // This is tricky - for now just return pending
                     return Some(Ok(p));
@@ -353,18 +473,29 @@ impl<R: Read + Seek> Iterator for DiffFragmentIter<R> {
                 return other;
             }
         };
-        
+
         // Try to consolidate with pending
         match (&mut self.pending, &next_frag) {
             (Some(DiffFragment::UNCHANGED { len: prev_len }), DiffFragment::UNCHANGED { len }) => {
+                vlog!(
+                    "diff::DiffFragmentIter::next: consolidating UNCHANGED fragments: {} + {}",
+                    *prev_len,
+                    len
+                );
                 *prev_len += len;
                 self.next() // Recurse to get more or return pending
             }
             (Some(DiffFragment::DELETED { len: prev_len }), DiffFragment::DELETED { len }) => {
+                vlog!(
+                    "diff::DiffFragmentIter::next: consolidating DELETED fragments: {} + {}",
+                    *prev_len,
+                    len
+                );
                 *prev_len += len;
                 self.next()
             }
             (Some(DiffFragment::ADDED { .. }), DiffFragment::ADDED { .. }) => {
+                vlog!("diff::DiffFragmentIter::next: NOT consolidating ADDED fragments (bounded by max_fragment_size)");
                 // Do NOT consolidate ADDED fragments – bodies are already bounded
                 // by max_fragment_size; merging them would re-materialise an
                 // arbitrarily large amount of file content in RAM.
@@ -373,11 +504,13 @@ impl<R: Read + Seek> Iterator for DiffFragmentIter<R> {
                 result.map(Ok)
             }
             (None, _) => {
+                vlog!("diff::DiffFragmentIter::next: storing first fragment as pending");
                 // No pending, store this one and get next to check for consolidation
                 self.pending = Some(next_frag);
                 self.next()
             }
             (Some(_), _) => {
+                vlog!("diff::DiffFragmentIter::next: different fragment types, returning pending");
                 // Different types - return pending, store new
                 let result = self.pending.take();
                 self.pending = Some(next_frag);
@@ -393,6 +526,11 @@ pub fn build_diff_fragments<R: Read + Seek>(
     window: usize,
     max_fragment_size: usize,
 ) -> DiffFragmentIter<R> {
+    vlog!(
+        "diff::build_diff_fragments: creating iterator with window={}, max_fragment_size={}",
+        window,
+        max_fragment_size
+    );
     DiffFragmentIter::new(old, new, window, max_fragment_size)
 }
 
@@ -411,9 +549,16 @@ pub fn apply_fragments<R: Read, W: io::Write, I: Iterator<Item = DiffFragment>>(
     fragments: I,
     out: &mut W,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    vlog!("diff::apply_fragments: starting fragment application");
+    let mut fragment_count = 0;
     for frag in fragments {
+        fragment_count += 1;
         match frag {
             DiffFragment::UNCHANGED { len } => {
+                vlog!(
+                    "diff::apply_fragments: applying UNCHANGED fragment len={}",
+                    len
+                );
                 let mut remaining = len;
                 let mut buf = [0u8; 8 * 1024];
                 while remaining > 0 {
@@ -427,6 +572,10 @@ pub fn apply_fragments<R: Read, W: io::Write, I: Iterator<Item = DiffFragment>>(
                 }
             }
             DiffFragment::DELETED { len } => {
+                vlog!(
+                    "diff::apply_fragments: applying DELETED fragment len={}",
+                    len
+                );
                 // Consume (and discard) `len` bytes from `old`.
                 let mut remaining = len;
                 let mut buf = [0u8; 8 * 1024];
@@ -440,10 +589,18 @@ pub fn apply_fragments<R: Read, W: io::Write, I: Iterator<Item = DiffFragment>>(
                 }
             }
             DiffFragment::ADDED { body } => {
+                vlog!(
+                    "diff::apply_fragments: applying ADDED fragment len={}",
+                    body.len()
+                );
                 out.write_all(&body)?;
             }
         }
     }
+    vlog!(
+        "diff::apply_fragments: completed applying {} fragments",
+        fragment_count
+    );
 
     Ok(())
 }
@@ -461,9 +618,16 @@ pub fn apply_fragments_result_iter<
     fragments: I,
     out: &mut W,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    vlog!("diff::apply_fragments_result_iter: starting fragment application from result iterator");
+    let mut fragment_count = 0;
     for frag_res in fragments {
+        fragment_count += 1;
         let frag = frag_res?;
         apply_fragments(old, std::iter::once(frag), out)?;
     }
+    vlog!(
+        "diff::apply_fragments_result_iter: completed applying {} fragments",
+        fragment_count
+    );
     Ok(())
 }

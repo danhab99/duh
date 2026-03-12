@@ -5,3 +5,4 @@ pub mod error;
 pub mod objects;
 pub mod repo;
 pub mod replay;
+pub mod dedup;
