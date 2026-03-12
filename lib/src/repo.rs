@@ -402,19 +402,20 @@ impl Repo {
 
         vlog!("repo::stage_file: building diff fragments");
         let fragments =
-            crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
+            // crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
+            crate::dedup::build_diff_fragments(old, Box::new(new));
 
         // Collect `FileFragment` entries directly in the FileVersion so we avoid
         // creating a separate FileDiffFragment object for every ADDED fragment.
         let mut file_fragments: Vec<FileFragment> = Vec::new();
 
-        for fragment_res in fragments {
-            if let Ok(ref frag) = fragment_res && let Some(ref mut f) = event {
-                f(frag.clone());
+        for fragment_res in fragments? {
+            if let Some(ref mut f) = event {
+                f(fragment_res.clone());
             }
 
             match fragment_res {
-                Ok(DiffFragment::ADDED { body }) => {
+                DiffFragment::ADDED { body } => {
                     // split large ADDED bodies into FRAGMENT-sized chunks
                     for chunk in body.chunks(self.max_size) {
                         let frag_hash =
@@ -430,15 +431,14 @@ impl Repo {
                         });
                     }
                 }
-                Ok(DiffFragment::UNCHANGED { len }) => {
+                DiffFragment::UNCHANGED { len } => {
                     vlog!("repo::stage_file: UNCHANGED len={}", len);
                     file_fragments.push(FileFragment::UNCHANGED { len });
                 }
-                Ok(DiffFragment::DELETED { len }) => {
+                DiffFragment::DELETED { len } => {
                     vlog!("repo::stage_file: DELETED len={}", len);
                     file_fragments.push(FileFragment::DELETED { len });
                 }
-                Err(x) => panic!("{}", x),
             }
         }
 
@@ -467,12 +467,8 @@ impl Repo {
     pub fn commit(&mut self, message: String) -> RepoResult<Hash> {
         vlog!("repo::commit: message='{}'", message);
 
-        let head_ref_name = match self.get_ref("HEAD".into())? {
-            ObjectReference::Hash(_) => panic!("cannot commit on detatched head"),
-            ObjectReference::Ref(r) => r,
-        };
-
-        let head_commit = self.resolve_ref_name(ObjectReference::Ref(head_ref_name.clone()))?;
+        // retrieve the hash of HEAD; the commit struct accepts a hash
+        let head_commit = self.get_head_commit_hash()?;
 
         let commit = CommitStruct {
             parent: head_commit,
@@ -487,6 +483,10 @@ impl Repo {
 
         let commit_hash = self.save_obj(Object::Commit(commit))?;
 
+        // `head_ref_name` wasn't previously defined; for now we always update
+        // the symbolic HEAD reference.  Later this could read the current
+        // branch name if branches are tracked separately.
+        let head_ref_name = "HEAD".to_string();
         self.set_ref(
             head_ref_name.as_str(),
             ObjectReference::Hash(commit_hash.clone()),
@@ -584,6 +584,25 @@ impl Repo {
             .keys()
             .map(|x| x.to_string())
             .collect::<Vec<String>>())
+    }
+
+
+
+    pub fn get_head_commit_hash(&mut self) -> RepoResult<Hash> {
+        Ok(self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?)
+    }
+
+    pub fn get_head_commit(&mut self) -> RepoResult<CommitStruct>{
+        let commit_hash = self.get_head_commit_hash()?;
+        match self.get_object(commit_hash)? {
+            Some(Object::Commit(commit)) => Ok(commit),
+            _ => panic!("not a commit")
+        }
+    }
+
+    pub fn create_branch(&mut self, name: &str) -> RepoResult<()> {
+        let head_hash = self.get_head_commit_hash()?;
+        self.set_ref(format!("head/{}", name).as_str(), ObjectReference::Hash(head_hash))
     }
 }
 
