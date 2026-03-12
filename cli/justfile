@@ -1,22 +1,27 @@
-build:
+import '../justfile'
+
+
+generate-large-random-files:
+    mkdir -p notes
+    head -c 100M </dev/urandom >notes/a.txt
+    head -c 100M </dev/urandom >notes/b.txt
+    head -c 100M </dev/urandom >notes/c.txt
+    head -c 100M </dev/urandom >notes/d.txt
+
+debug: 
     cargo build
 
-debug: build
-    rust-gdb --args target/debug/cli snapshot --message "initial commit" test-data/abd
+    -rm -rf notes
+    mkdir -p notes
+    cd notes && cargo run -- init
 
-init: build
-    rm -rf .duh
-    cargo run -- init
+    just generate-large-random-files
 
-run: build init
-    cargo run -- snapshot --message "initial commit" test-data/abd
+    cd notes && cat a.txt b.txt d.txt > file
 
-    @echo ===========================
-    @echo Object Count $(ls .duh/objects | wc -l)
-    @echo ===========================
+    cd notes && cargo run -- stage file
+    cd notes && cargo run -- commit -m "initial commit"
 
-    cargo run -- snapshot --message "change" test-data/acd
+    cd notes && cat a.txt b.txt c.txt d.txt > file
 
-    @echo ===========================
-    @echo Object Count $(ls .duh/objects | wc -l)
-    @echo ===========================
+    cd notes && DUH_VERBOSE=1 rust-gdb --args ../target/debug/duh stage file
