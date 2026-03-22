@@ -24,11 +24,10 @@ fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>,
     }
 }
 
-const HASH_MOD: u64 = 1024;
-
 fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, blake3::Hash) -> Option<()>>(
     old: &mut R,
     window: usize,
+    hash_mod: u64,
     mut action: F,
 ) -> Result<(), Box<dyn std::error::Error>> {
     vlog!(
@@ -51,7 +50,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, blake3::Hash) -> Option
         strong_buf.append(&mut old_chunk.clone());
 
         // loop through all matches, and push the corresponding chunks
-        if let Some(boundary) = hasher.next_match(&old_chunk, HASH_MOD) {
+        if let Some(boundary) = hasher.next_match(&old_chunk, hash_mod) {
             chunks_found += 1;
             let strong_hash = blake3::hash(&strong_buf);
             vlog!(
@@ -109,12 +108,13 @@ impl Display for Position {
 pub fn build_cdc_rewind<R: Read + Seek>(
     old: &mut R,
     window: usize,
+    hash_mod: u64,
 ) -> Result<HashMap<Hash, Position>, Box<dyn std::error::Error>> {
     vlog!("dedup::build_cdc_rewind: starting with window={}", window);
 
     let mut map = HashMap::<Hash, Position>::new();
 
-    iterate_cdc_rewind(old, window, |position, hash| {
+    iterate_cdc_rewind(old, window, hash_mod, |position, hash| {
         if match map.get(&hash) {
             Some(existing_position) => {
                 (existing_position.start + existing_position.length) > position.start
@@ -157,9 +157,14 @@ pub struct DedupeFragIterator<R: Read + Seek> {
 }
 
 impl<R: Read + Seek> DedupeFragIterator<R> {
-    pub fn build(mut old: R, mut new: R) -> Result<Self, Box<dyn Error>> {
-        let old_cdc = &build_cdc_rewind(&mut old, WINDOW)?;
-        let new_cdc = &build_cdc_rewind(&mut new, WINDOW)?;
+    pub fn build(
+        mut old: R,
+        mut new: R,
+        window: usize,
+        has_mod: u64,
+    ) -> Result<Self, Box<dyn Error>> {
+        let old_cdc = &build_cdc_rewind(&mut old, window, hash_mod)?;
+        let new_cdc = &build_cdc_rewind(&mut new, window, hash_modW)?;
 
         let mut deleted = VecDeque::<Position>::new();
         let mut unchanged = VecDeque::<Position>::new();
@@ -258,6 +263,8 @@ impl<R: Read + Seek> Iterator for DedupeFragIterator<R> {
 pub fn build_diff_fragments<R: Read + Seek>(
     old: R,
     new: R,
+    window: usize,
+    hash_mod: u64,
 ) -> Result<DedupeFragIterator<R>, Box<dyn Error>> {
-    Ok(DedupeFragIterator::<R>::build(old, new)?)
+    Ok(DedupeFragIterator::<R>::build(old, new, window, hash_mod)?)
 }

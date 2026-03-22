@@ -372,7 +372,10 @@ impl Repo {
         }
     }
 
-    pub fn stage_file<F>(&mut self, file_path: String, mut event: Option<F>) -> RepoResult<Hash> where F: FnMut(DiffFragment) {
+    pub fn stage_file<F>(&mut self, file_path: String, mut event: Option<F>) -> RepoResult<Hash>
+    where
+        F: FnMut(DiffFragment),
+    {
         let fp = self.get_path_in_cwd_str(&file_path);
 
         let mut new = File::open(fp.clone())?;
@@ -403,7 +406,7 @@ impl Repo {
         vlog!("repo::stage_file: building diff fragments");
         let fragments =
             // crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
-            crate::dedup::build_diff_fragments(old, Box::new(new));
+            crate::dedup::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size as u64);
 
         // Collect `FileFragment` entries directly in the FileVersion so we avoid
         // creating a separate FileDiffFragment object for every ADDED fragment.
@@ -586,23 +589,24 @@ impl Repo {
             .collect::<Vec<String>>())
     }
 
-
-
     pub fn get_head_commit_hash(&mut self) -> RepoResult<Hash> {
         Ok(self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?)
     }
 
-    pub fn get_head_commit(&mut self) -> RepoResult<CommitStruct>{
+    pub fn get_head_commit(&mut self) -> RepoResult<CommitStruct> {
         let commit_hash = self.get_head_commit_hash()?;
         match self.get_object(commit_hash)? {
             Some(Object::Commit(commit)) => Ok(commit),
-            _ => panic!("not a commit")
+            _ => panic!("not a commit"),
         }
     }
 
     pub fn create_branch(&mut self, name: &str) -> RepoResult<()> {
         let head_hash = self.get_head_commit_hash()?;
-        self.set_ref(format!("head/{}", name).as_str(), ObjectReference::Hash(head_hash))
+        self.set_ref(
+            format!("head/{}", name).as_str(),
+            ObjectReference::Hash(head_hash),
+        )
     }
 }
 
