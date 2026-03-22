@@ -146,8 +146,6 @@ pub fn build_cdc_rewind<R: Read + Seek>(
     Ok(map)
 }
 
-const WINDOW: usize = 1024;
-
 // 1. Define a struct to hold the iterator's state
 pub struct DedupeFragIterator<R: Read + Seek> {
     deleted: VecDeque<Position>,
@@ -161,10 +159,10 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
         mut old: R,
         mut new: R,
         window: usize,
-        has_mod: u64,
+        hash_mod: u64,
     ) -> Result<Self, Box<dyn Error>> {
         let old_cdc = &build_cdc_rewind(&mut old, window, hash_mod)?;
-        let new_cdc = &build_cdc_rewind(&mut new, window, hash_modW)?;
+        let new_cdc = &build_cdc_rewind(&mut new, window, hash_mod)?;
 
         let mut deleted = VecDeque::<Position>::new();
         let mut unchanged = VecDeque::<Position>::new();
