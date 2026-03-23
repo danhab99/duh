@@ -7,7 +7,7 @@ use std::{error::Error, fmt};
 
 use crate::utils::hash_string;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Hash([u8; 64]);
 
 impl<'de> Deserialize<'de> for Hash {
@@ -134,5 +134,9 @@ impl Hash {
 
     pub fn is_zero(self) -> bool {
         self.0.iter().all(|x| *x == 0)
+    }
+
+    pub fn to_hex(&self) -> String {
+        String::from_utf8_lossy(&self.0).to_string()
     }
 }

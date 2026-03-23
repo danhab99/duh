@@ -3,7 +3,7 @@ use std::io::{Read, Seek};
 use std::ops::Index;
 use std::{fmt, io, process};
 
-use blake3::Hash;
+use crate::hash::Hash;
 
 use crate::vlog;
 
@@ -46,7 +46,7 @@ const HASH_MOD: u64 = 1024;
 
 type Position = usize;
 
-fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, &[u8], blake3::Hash) -> Option<()>>(
+fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, &[u8], Hash) -> Option<()>>(
     old: &mut R,
     window: usize,
     mut action: F,
@@ -60,6 +60,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, &[u8], blake3::Hash) ->
     let mut hasher = gearhash::Hasher::default();
     let mut offset = 0usize;
     let mut chunks_found = 0;
+    let mut chunk_start = 0usize;
 
     let mut strong_buf = Vec::<u8>::new();
 
@@ -68,23 +69,25 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, &[u8], blake3::Hash) ->
         if old_chunk.is_empty() {
             break;
         }
-        strong_buf.append(&mut old_chunk.clone());
+        strong_buf.extend_from_slice(&old_chunk);
 
         // loop through all matches, and push the corresponding chunks
         if let Some(boundary) = hasher.next_match(&old_chunk, HASH_MOD) {
             chunks_found += 1;
-            let strong_hash = blake3::hash(&strong_buf);
+            let strong_hash = Hash::digest_slice(&strong_buf)?;
             vlog!(
-                "diff::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}",
+                "diff::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}, chunk_start={}",
                 offset + boundary,
-                strong_buf.len()
+                strong_buf.len(),
+                chunk_start
             );
-            if let None = action(offset + boundary, strong_buf.as_slice(), strong_hash) {
+            if let None = action(chunk_start, strong_buf.as_slice(), strong_hash) {
                 vlog!("diff::iterate_cdc_rewind: action returned None, stopping iteration");
                 break;
             };
             strong_buf.clear();
             hasher = gearhash::Hasher::default();
+            chunk_start = offset + boundary;
         }
 
         offset += old_chunk.len();
@@ -93,6 +96,18 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, &[u8], blake3::Hash) ->
             vlog!("diff::iterate_cdc_rewind: reached EOF");
             break;
         }
+    }
+
+    // Handle final chunk if there's remaining data
+    if !strong_buf.is_empty() {
+        chunks_found += 1;
+        let strong_hash = Hash::digest_slice(&strong_buf)?;
+        vlog!(
+            "diff::iterate_cdc_rewind: processing final chunk at chunk_start={}, chunk_len={}",
+            chunk_start,
+            strong_buf.len()
+        );
+        action(chunk_start, strong_buf.as_slice(), strong_hash);
     }
 
     old.seek(io::SeekFrom::Start(old_starting_pos))?;
