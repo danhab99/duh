@@ -218,10 +218,12 @@ impl Repo {
     pub fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
         let hash = self.resolve_ref_name(r)?.to_string();
         vlog!("repo::get_object_path: resolved hash={}", hash);
-        let top = &hash[0..2];
-        let bottom = &hash[2..hash.len()];
+        let top = &hash[0..3];
+        let top1 = &hash[3..6];
+        let top2 = &hash[6..9];
+        let bottom = &hash[9..hash.len()];
 
-        Ok(self.get_path_in_repo(format!("objects/{}/{}", top, bottom).as_str()))
+        Ok(self.get_path_in_repo(format!("objects/{}/{}/{}/{}", top, top1, top2, bottom).as_str()))
     }
 
     pub fn save_obj(&self, o: Object) -> RepoResult<Hash> {
