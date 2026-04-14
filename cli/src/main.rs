@@ -16,6 +16,7 @@ mod stage;
 mod status;
 mod switch;
 mod unstage;
+mod branch;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -53,6 +54,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Switch(c) => {
             switch::switch(&mut repo, c).expect("Unable to switch");
+        }
+        Commands::Branch(c) => {
+            branch::branch(&mut repo, c).expect("Unable to branch");
         }
     };
 

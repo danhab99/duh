@@ -12,6 +12,7 @@ use std::{
     fs::{self, File},
     io::{Read, Seek, Write},
     path::PathBuf,
+    str::FromStr,
     time::SystemTime,
 };
 
@@ -327,7 +328,7 @@ impl Repo {
         }
     }
 
-    fn get_ref_path(&self, name: &str) -> PathBuf {
+    pub fn get_ref_path(&self, name: &str) -> PathBuf {
         vlog!("repo::get_ref_path: name='{}'", name);
         return self.get_path_in_repo(format!("refs/{}", name).as_str());
     }
@@ -609,6 +610,25 @@ impl Repo {
             format!("head/{}", name).as_str(),
             ObjectReference::Hash(head_hash),
         )
+    }
+
+    pub fn list_refs(&mut self, path: &str) -> RepoResult<Vec<ObjectReference>> {
+        let refs_path = self.get_ref_path(path);
+
+        let refs_names = refs_path
+            .read_dir()?
+            .map(|x| x.unwrap())
+            .filter(|x| x.file_type().unwrap().is_file())
+            .map(|x| ObjectReference::from_str(x.file_name().to_str().unwrap()).unwrap())
+            .collect::<Vec<_>>();
+
+        Ok(refs_names)
+    }
+
+    pub fn delete_ref(&mut self, path: &str) -> RepoResult<()> {
+        let ref_path = self.get_ref_path(path);
+        std::fs::remove_file(ref_path)?;
+        Ok(())
     }
 }
 
