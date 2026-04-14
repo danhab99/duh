@@ -44,34 +44,46 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash) -> Option<()>>(
 
     loop {
         let (old_chunk, old_eof) = read_chunk(old, window)?;
-        if old_chunk.is_empty() {
+        if old_chunk.is_empty() || old_eof {
             break;
         }
-        strong_buf.extend_from_slice(&old_chunk);
 
-        // loop through all matches, and push the corresponding chunks
-        if let Some(boundary) = hasher.next_match(&old_chunk, hash_mod) {
-            chunks_found += 1;
-            let strong_hash = Hash::digest_slice(&strong_buf)?;
-            vlog!(
-                "dedup::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}, chunk_start={}",
-                offset + boundary,
-                strong_buf.len(),
-                chunk_start
-            );
-            if let None = action(
-                Position {
-                    start: chunk_start,
-                    length: strong_buf.len(),
-                },
-                strong_hash,
-            ) {
-                vlog!("dedup::iterate_cdc_rewind: action returned None, stopping iteration");
+        let mut chunk_offset = 0usize;
+        while chunk_offset < old_chunk.len() {
+            let slice = &old_chunk[chunk_offset..];
+
+            if let Some(boundary) = hasher.next_match(slice, hash_mod) {
+                let boundary_pos = chunk_offset + boundary;
+                strong_buf.extend_from_slice(&old_chunk[chunk_offset..boundary_pos]);
+                chunks_found += 1;
+                let strong_hash = Hash::digest_slice(&strong_buf)?;
+                vlog!(
+                    "dedup::iterate_cdc_rewind: found chunk boundary at offset={}, chunk_len={}, chunk_start={}",
+                    offset + boundary_pos,
+                    strong_buf.len(),
+                    chunk_start
+                );
+                if action(
+                    Position {
+                        start: chunk_start,
+                        length: strong_buf.len(),
+                    },
+                    strong_hash,
+                )
+                .is_none()
+                {
+                    vlog!("dedup::iterate_cdc_rewind: action returned None, stopping iteration");
+                    return Ok(());
+                }
+
+                strong_buf.clear();
+                hasher = gearhash::Hasher::default();
+                chunk_start = offset + boundary_pos;
+                chunk_offset = boundary_pos;
+            } else {
+                strong_buf.extend_from_slice(slice);
                 break;
-            };
-            strong_buf.clear();
-            hasher = gearhash::Hasher::default();
-            chunk_start = offset + boundary;
+            }
         }
 
         offset += old_chunk.len();
@@ -125,12 +137,33 @@ impl Display for Position {
     }
 }
 
+fn normalize_hash_mod(hash_mod: u64) -> u64 {
+    if hash_mod == 0 {
+        return 0;
+    }
+
+    // Gearhash expects a mask of the form 2^n - 1. If callers pass a byte
+    // length instead, convert it to the nearest lower power-of-two mask.
+    if hash_mod & (hash_mod + 1) == 0 {
+        return hash_mod;
+    }
+
+    let next_pow2 = hash_mod.next_power_of_two();
+    if next_pow2 <= 1 {
+        return 0;
+    }
+
+    (next_pow2 >> 1).saturating_sub(1)
+}
+
 pub fn build_cdc_rewind<R: Read + Seek>(
     old: &mut R,
     window: usize,
     hash_mod: u64,
 ) -> Result<HashMap<Hash, Position>, Box<dyn std::error::Error>> {
     vlog!("dedup::build_cdc_rewind: starting with window={}", window);
+    let hash_mod = normalize_hash_mod(hash_mod);
+    vlog!("dedup::build_cdc_rewind: normalized hash_mod mask={}", hash_mod);
 
     let mut map = HashMap::<Hash, Position>::new();
 

@@ -454,7 +454,7 @@ impl Repo {
 
         let version_hash = self.save_obj(Object::FileVersion(version))?;
 
-        self.index.insert(fp.to_string(), version_hash);
+        self.index.insert(fp.clone(), version_hash);
         vlog!(
             "repo::stage_file: indexed '{}' -> {}",
             fp,
