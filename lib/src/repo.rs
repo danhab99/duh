@@ -37,11 +37,19 @@ pub struct Repo {
 pub type RepoError = Box<dyn Error>;
 pub type RepoResult<T> = Result<T, RepoError>;
 
-pub const DEFAULT_BLOCK_SIZE: usize = 32;
+pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 
 /// Maximum size (bytes) for a single stored ADDED fragment. Larger ADDED
 /// bodies are split into multiple Fragment objects at stage time.
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+
+/// Per-file summary of staged changes, broken down by fragment type in bytes.
+pub struct FileStagedSummary {
+    pub path: String,
+    pub added_bytes: usize,
+    pub deleted_bytes: usize,
+    pub unchanged_bytes: usize,
+}
 
 impl Repo {
     pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
@@ -508,6 +516,32 @@ impl Repo {
         }
 
         Ok(commit_hash)
+    }
+
+    /// Return byte-level change statistics for every file currently in the index.
+    pub fn staged_summary(&self) -> RepoResult<Vec<FileStagedSummary>> {
+        let mut result = Vec::new();
+        for (path, &version_hash) in &self.index {
+            let mut added = 0usize;
+            let mut deleted = 0usize;
+            let mut unchanged = 0usize;
+            if let Some(Object::FileVersion(fv)) = self.get_object(version_hash)? {
+                for frag in &fv.fragments {
+                    match frag {
+                        FileFragment::ADDED { len, .. } => added += len,
+                        FileFragment::DELETED { len } => deleted += len,
+                        FileFragment::UNCHANGED { len } => unchanged += len,
+                    }
+                }
+            }
+            result.push(FileStagedSummary {
+                path: path.clone(),
+                added_bytes: added,
+                deleted_bytes: deleted,
+                unchanged_bytes: unchanged,
+            });
+        }
+        Ok(result)
     }
 
     pub fn open_file(&mut self, file_path: String, hash: Hash) -> RepoResult<Box<dyn ReadSeek>> {
