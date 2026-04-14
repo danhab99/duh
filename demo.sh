@@ -73,12 +73,12 @@ echo "# Hash verification log: commit_message|sha256_hash" > "$HASH_LOG"
 # Create 4 large files, each filled with a single repeated character.
 # 200 000 bytes each so the progress bar has room to show proportions clearly.
 # ---------------------------------------------------------------------------
-SIZE=10000000
-python3 -c "import sys; sys.stdout.buffer.write(b'a' * $SIZE)" > a.txt
-python3 -c "import sys; sys.stdout.buffer.write(b'b' * $SIZE)" > b.txt
-python3 -c "import sys; sys.stdout.buffer.write(b'c' * $SIZE)" > c.txt
-python3 -c "import sys; sys.stdout.buffer.write(b'd' * $SIZE)" > d.txt
-echo "Created: a.txt b.txt c.txt d.txt  (${SIZE} bytes each)"
+SIZE=1000000
+python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > a.txt
+python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > b.txt
+python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > c.txt
+python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > d.txt
+echo "Created: a.txt b.txt c.txt d.txt (${SIZE} bytes each)"
 
 duh init
 
@@ -224,7 +224,6 @@ python3 -c "import sys; sys.stdout.buffer.write(b'a' * $HALF + b'd' * $HALF)" > 
 run stage project
 run commit -m "setup: a-prefix + d-block"
 store_hash "setup: a-prefix + d-block"
-store_hash "setup: a-prefix + d-block"
 
 echo ""
 echo "--------------------------------------------------------------------"
@@ -235,7 +234,6 @@ echo "--------------------------------------------------------------------"
 python3 -c "import sys; sys.stdout.buffer.write(b'd' * $HALF + b'c' * $QUARTER)" > project
 run stage project
 run commit -m "deleted+unchanged+added: drop a-prefix, keep d's, add c-suffix"
-store_hash "deleted+unchanged+added: drop a-prefix, keep d's, add c-suffix"
 store_hash "deleted+unchanged+added: drop a-prefix, keep d's, add c-suffix"
 
 # ---- 8. UNCHANGED + DELETED + ADDED + UNCHANGED -------------------------
