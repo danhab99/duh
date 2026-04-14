@@ -1,4 +1,5 @@
 use crate::{hash::Hash, utils::hash_bytes};
+use core::fmt;
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, error::Error, str::FromStr};
@@ -102,19 +103,20 @@ impl Object {
     }
 }
 
+#[derive(PartialEq, Clone)]
 pub enum ObjectReference {
     Hash(Hash),
     Ref(String),
 }
 
-impl ToString for ObjectReference {
-    fn to_string(&self) -> String {
-        match self {
-            ObjectReference::Hash(h) => h.to_string(),
-            ObjectReference::Ref(r) => format!("ref:{}", r),
-        }
-    }
-}
+// impl ToString for ObjectReference {
+//     fn to_string(&self) -> String {
+//         match self {
+//             ObjectReference::Hash(h) => h.to_string(),
+//             ObjectReference::Ref(r) => format!("ref:{}", r),
+//         }
+//     }
+// }
 
 impl FromStr for ObjectReference {
     type Err = ();
@@ -133,5 +135,15 @@ impl FromStr for ObjectReference {
 impl From<String> for ObjectReference {
     fn from(value: String) -> Self {
         return ObjectReference::from_str(&value.as_str()).unwrap();
+    }
+}
+
+impl fmt::Display for ObjectReference {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hash(hash) => write!(out, "{}", hash.to_hex())?,
+            Self::Ref(name) => write!(out, "{}", name)?,
+        };
+        Ok(())
     }
 }
