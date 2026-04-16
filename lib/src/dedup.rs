@@ -4,8 +4,8 @@ use std::fmt::Display;
 use std::io;
 use std::io::{Read, Seek};
 
-use crate::hash::Hash;
 use crate::diff::DiffFragment;
+use crate::hash::Hash;
 use crate::vlog;
 
 fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>, bool)> {
@@ -163,7 +163,10 @@ pub fn build_cdc_rewind<R: Read + Seek>(
 ) -> Result<HashMap<Hash, Position>, Box<dyn std::error::Error>> {
     vlog!("dedup::build_cdc_rewind: starting with window={}", window);
     let hash_mod = normalize_hash_mod(hash_mod);
-    vlog!("dedup::build_cdc_rewind: normalized hash_mod mask={}", hash_mod);
+    vlog!(
+        "dedup::build_cdc_rewind: normalized hash_mod mask={}",
+        hash_mod
+    );
 
     let mut map = HashMap::<Hash, Position>::new();
 
@@ -199,6 +202,28 @@ pub fn build_cdc_rewind<R: Read + Seek>(
     Ok(map)
 }
 
+/// Progress events emitted during the two CDC indexing phases.
+pub enum DedupProgress {
+    /// A chunk boundary was found while scanning the old (baseline) stream.
+    OldChunk {
+        /// Sequential discovery index (0-based).
+        index: usize,
+        /// Byte length of this chunk.
+        len: usize,
+    },
+    /// A chunk boundary was found while scanning the new stream.
+    NewChunk {
+        /// Sequential discovery index in the new stream (0-based).
+        index: usize,
+        /// Byte length of this chunk.
+        len: usize,
+        /// If this chunk also appears in the old stream, the sequential
+        /// discovery index of that matching old chunk.  `None` means the
+        /// chunk is brand-new (an addition).
+        old_index: Option<usize>,
+    },
+}
+
 // 1. Define a struct to hold the iterator's state
 pub struct DedupeFragIterator<R: Read + Seek> {
     deleted: VecDeque<Position>,
@@ -208,29 +233,79 @@ pub struct DedupeFragIterator<R: Read + Seek> {
 }
 
 impl<R: Read + Seek> DedupeFragIterator<R> {
-    pub fn build(
+    pub fn build<P: FnMut(DedupProgress)>(
         mut old: R,
         mut new: R,
         window: usize,
         hash_mod: u64,
+        mut progress: Option<P>,
     ) -> Result<Self, Box<dyn Error>> {
-        let old_cdc = &build_cdc_rewind(&mut old, window, hash_mod)?;
-        let new_cdc = &build_cdc_rewind(&mut new, window, hash_mod)?;
+        let hash_mod = normalize_hash_mod(hash_mod);
 
+        // ── Phase 1: index the old (baseline) stream ──────────────────────
+        let mut old_map = HashMap::<Hash, Position>::new();
+        // Maps hash → sequential discovery index for matched-color reporting.
+        let mut old_index_map = HashMap::<Hash, usize>::new();
+        let mut old_chunk_idx = 0usize;
+
+        iterate_cdc_rewind(&mut old, window, hash_mod, |position, hash| {
+            let should_insert = match old_map.get(&hash) {
+                Some(existing) => (existing.start + existing.length) > position.start,
+                None => true,
+            };
+            if should_insert {
+                old_map.insert(hash, position);
+                old_index_map.insert(hash, old_chunk_idx);
+            }
+            if let Some(ref mut p) = progress {
+                p(DedupProgress::OldChunk {
+                    index: old_chunk_idx,
+                    len: position.length,
+                });
+            }
+            old_chunk_idx += 1;
+            Some(())
+        })?;
+
+        // ── Phase 2: index the new stream ─────────────────────────────────
+        let mut new_map = HashMap::<Hash, Position>::new();
+        let mut new_chunk_idx = 0usize;
+
+        iterate_cdc_rewind(&mut new, window, hash_mod, |position, hash| {
+            let should_insert = match new_map.get(&hash) {
+                Some(existing) => (existing.start + existing.length) > position.start,
+                None => true,
+            };
+            if should_insert {
+                new_map.insert(hash, position);
+            }
+            let old_index = old_index_map.get(&hash).copied();
+            if let Some(ref mut p) = progress {
+                p(DedupProgress::NewChunk {
+                    index: new_chunk_idx,
+                    len: position.length,
+                    old_index,
+                });
+            }
+            new_chunk_idx += 1;
+            Some(())
+        })?;
+
+        // ── Phase 3: categorise chunks into deleted / unchanged / added ────
         let mut deleted = VecDeque::<Position>::new();
         let mut unchanged = VecDeque::<Position>::new();
         let mut added = VecDeque::<Position>::new();
 
-        for (key, value) in old_cdc {
-            if let None = new_cdc.get(&key) {
+        for (key, value) in &old_map {
+            if new_map.get(key).is_none() {
                 deleted.push_back(*value);
             } else {
                 unchanged.push_back(*value);
             }
         }
 
-        for (key, value) in new_cdc {
-            if let None = old_cdc.get(&key) {
+        for (key, value) in &new_map {
+            if old_map.get(key).is_none() {
                 added.push_back(*value);
             }
         }
@@ -242,12 +317,12 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
             added.len(),
         );
 
-        return Ok(Self {
+        Ok(Self {
             deleted,
             unchanged,
             added,
             new,
-        });
+        })
     }
 }
 
@@ -311,11 +386,12 @@ impl<R: Read + Seek> Iterator for DedupeFragIterator<R> {
     }
 }
 
-pub fn build_diff_fragments<R: Read + Seek>(
+pub fn build_diff_fragments<R: Read + Seek, P: FnMut(DedupProgress)>(
     old: R,
     new: R,
     window: usize,
     hash_mod: u64,
+    progress: Option<P>,
 ) -> Result<DedupeFragIterator<R>, Box<dyn Error>> {
-    Ok(DedupeFragIterator::<R>::build(old, new, window, hash_mod)?)
+    Ok(DedupeFragIterator::<R>::build(old, new, window, hash_mod, progress)?)
 }
