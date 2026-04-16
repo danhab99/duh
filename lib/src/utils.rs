@@ -1,7 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::{
-    error::Error,
-    path::{Path, PathBuf},
+    error::Error, io::Read, path::{Path, PathBuf}
 };
 
 use crate::error::NoRepo;
@@ -82,4 +81,19 @@ pub fn hash_string(txt: String) -> Result<String, Box<dyn Error>> {
 pub fn hash_bytes(data: &[u8]) -> String {
     let digest = Sha256::digest(data);
     hex::encode(digest)
+}
+
+pub fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>, bool)> {
+    if size == 0 {
+        return Ok((vec![0u8; 0], false));
+    }
+    let mut buf = vec![0u8; size];
+    let n = reader.read(&mut buf)?;
+
+    if n == 0 {
+        Ok((Vec::new(), true))
+    } else {
+        buf.truncate(n);
+        Ok((buf, false))
+    }
 }

@@ -7,10 +7,17 @@ use lib::repo::Repo;
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
 #[command(about = "Display the HEAD commit (hash, author, message, files)")]
-pub struct ShowCommand {}
+pub struct ShowCommand {
+    #[arg(help = "commit to show")]
+    pub commit: Option<ObjectReference>,
+}
 
-pub fn show(repo: &mut Repo, _cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
-    let head = repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+pub fn show(repo: &mut Repo, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
+    let head = repo.resolve_ref_name(
+        cmd.commit
+            .clone()
+            .unwrap_or(ObjectReference::Ref("HEAD".to_string())),
+    )?;
 
     if head.is_zero() {
         println!("No commits yet");
@@ -21,12 +28,22 @@ pub fn show(repo: &mut Repo, _cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
         Some(Object::Commit(c)) => {
             println!("{}", crate::colors::cyan(&head.to_string()));
             println!("parent: {}", crate::colors::dim(&c.parent.to_string()));
-            println!("author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
-            println!("committer: {} <{}> {}", c.comitter.name, c.comitter.email, c.comitter.timestamp);
+            println!(
+                "author: {} <{}> {}",
+                c.author.name, c.author.email, c.author.timestamp
+            );
+            println!(
+                "committer: {} <{}> {}",
+                c.comitter.name, c.comitter.email, c.comitter.timestamp
+            );
             println!("\n    {}\n", c.message);
             println!("{}", crate::colors::bold("files:"));
             for (path, h) in c.files.iter() {
-                println!("  {} -> {}", crate::colors::cyan(path), crate::colors::green(&h.to_string()));
+                println!(
+                    "  {} -> {}",
+                    crate::colors::cyan(path),
+                    crate::colors::green(&h.to_string())
+                );
             }
         }
         _ => println!("HEAD does not point to a commit"),

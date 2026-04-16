@@ -30,7 +30,14 @@
           buildType = "release";
           
           # build from the workspace root and select the `cli/` package
-          src = ./.;
+          # Use builtins.path so untracked (but non-ignored) files are included.
+          src = builtins.path {
+            path = ./.;
+            name = "duh-source";
+            filter = path: type:
+              let base = builtins.baseNameOf path; in
+              base != "target" && base != ".git" && base != "result";
+          };
           setSourceRoot = "sourceRoot=$(echo */cli)";
           cargoLock.lockFile = ./cli/Cargo.lock;
           cargoSha256 = cargoVendorHash;

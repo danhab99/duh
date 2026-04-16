@@ -2,7 +2,7 @@ use crate::{hash::Hash, utils::hash_bytes};
 use core::fmt;
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, error::Error, str::FromStr};
+use std::{collections::HashMap, convert::Infallible, error::Error, str::FromStr};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Fragment(#[serde(with = "serde_bytes")] pub Vec<u8>);
@@ -119,15 +119,16 @@ pub enum ObjectReference {
 // }
 
 impl FromStr for ObjectReference {
-    type Err = ();
+    type Err = Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
         if let Some(target) = s.strip_prefix("ref:") {
             Ok(ObjectReference::Ref(target.trim().to_string()))
-        } else {
-            let h = Hash::from_str(s);
+        } else if let Ok(h) = Hash::from_string(s.to_string()) {
             Ok(ObjectReference::Hash(h))
+        } else {
+            Ok(ObjectReference::Ref(s.to_string()))
         }
     }
 }

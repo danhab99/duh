@@ -6,22 +6,8 @@ use std::io::{Read, Seek};
 
 use crate::diff::DiffFragment;
 use crate::hash::Hash;
+use crate::utils::read_chunk;
 use crate::vlog;
-
-fn read_chunk<R: Read>(reader: &mut R, size: usize) -> std::io::Result<(Vec<u8>, bool)> {
-    if size == 0 {
-        return Ok((vec![0u8; 0], false));
-    }
-    let mut buf = vec![0u8; size];
-    let n = reader.read(&mut buf)?;
-
-    if n == 0 {
-        Ok((Vec::new(), true))
-    } else {
-        buf.truncate(n);
-        Ok((buf, false))
-    }
-}
 
 fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash) -> Option<()>>(
     old: &mut R,

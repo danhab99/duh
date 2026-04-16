@@ -15,6 +15,7 @@ pub struct SwitchCommand {
     #[arg(help = "Name of branch to switch to")]
     pub name: String,
 
+    #[arg(help = "Create a new branch")]
     pub create: Option<bool>,
 }
 
@@ -60,7 +61,7 @@ pub fn switch(repo: &mut Repo, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>
             repo,
             &crate::checkout::CheckoutCommand {
                 file_path,
-                commit: Some(commit_hash.to_string()),
+                commit: Some(ObjectReference::Hash(commit_hash)),
             },
         )?;
     }

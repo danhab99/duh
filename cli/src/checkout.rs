@@ -16,20 +16,13 @@ pub struct CheckoutCommand {
 
     /// Commit hash (64 chars) or the literal `HEAD`. Defaults to `HEAD`.
     #[arg(short = 'c', long = "commit", help = "Commit to read from (use `HEAD` or a full 64-character hash)")]
-    pub commit: Option<String>,
+    pub commit: Option<ObjectReference>,
 }
 
 pub fn checkout(repo: &mut Repo, cmd: &CheckoutCommand) -> Result<(), Box<dyn Error>> {
     // Resolve commit (default to HEAD)
     let target_hash = match &cmd.commit {
-        Some(s) if s == "HEAD" => repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?,
-        Some(s) if s.len() == 64 => Hash::from_str(s).clone(),
-        Some(_) => {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "commit must be 'HEAD' or a 64-character hash",
-            )))
-        }
+        Some(r) => repo.resolve_ref_name(r.clone())?,
         None => repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?,
     };
 

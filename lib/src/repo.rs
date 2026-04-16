@@ -665,6 +665,57 @@ impl Repo {
         std::fs::remove_file(ref_path)?;
         Ok(())
     }
+
+    /// Read a value from the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
+    pub fn get_config_value(&self, key: &str) -> RepoResult<String> {
+        let config_path = self.get_path_in_repo("config");
+        let content = fs::read_to_string(&config_path)?;
+        let table = content.parse::<toml::Table>()?;
+
+        let parts: Vec<&str> = key.splitn(2, '.').collect();
+        let value = if parts.len() == 2 {
+            table
+                .get(parts[0])
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get(parts[1]))
+        } else {
+            table.get(parts[0])
+        };
+
+        match value {
+            Some(v) => Ok(v.to_string().trim_matches('"').to_string()),
+            None => Err(format!("config key '{}' not found", key).into()),
+        }
+    }
+
+    /// Write a value to the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
+    pub fn set_config_value(&self, key: &str, value: &str) -> RepoResult<()> {
+        let config_path = self.get_path_in_repo("config");
+        let content = fs::read_to_string(&config_path)?;
+        let mut table = content.parse::<toml::Table>()?;
+
+        let parts: Vec<&str> = key.splitn(2, '.').collect();
+        if parts.len() == 2 {
+            let section = table
+                .entry(parts[0])
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            let section_table = section
+                .as_table_mut()
+                .ok_or_else(|| format!("'{}' is not a table", parts[0]))?;
+            section_table.insert(parts[1].to_string(), toml::Value::String(value.to_string()));
+        } else {
+            // Try to preserve integer type for known numeric keys.
+            let parsed = if let Ok(n) = value.parse::<i64>() {
+                toml::Value::Integer(n)
+            } else {
+                toml::Value::String(value.to_string())
+            };
+            table.insert(parts[0].to_string(), parsed);
+        }
+
+        fs::write(&config_path, toml::to_string(&table)?)?;
+        Ok(())
+    }
 }
 
 // fn get_path_in_metadata(path: &str) -> PathBuf {
