@@ -1,7 +1,7 @@
 use clap::*;
 
 use crate::{
-    branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, log::LogCommand, show::ShowCommand, stage::StageCommand, status::StatusCommand, switch::SwitchCommand, unstage::UnstageCommand
+    branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand, log::LogCommand, show::ShowCommand, stage::StageCommand, status::StatusCommand, switch::SwitchCommand, unstage::UnstageCommand
 };
 
 /// `duh` — binary oriented version control
@@ -44,5 +44,8 @@ pub enum Commands {
     Switch(SwitchCommand),
     
     /// Create delete and manage branches
-    Branch(BranchCommand)
+    Branch(BranchCommand),
+
+    /// Get or set repository configuration values
+    Config(ConfigCommand),
 }

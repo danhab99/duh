@@ -10,10 +10,17 @@ pub struct LogCommand {
     /// Maximum number of commits to show
     #[arg(short = 'n', long = "max", help = "Limit the number of commits displayed")]
     pub max: Option<usize>,
+
+    #[arg(help = "commit to show")]
+    pub commit: Option<ObjectReference>,
 }
 
 pub fn log(repo: &mut Repo, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
-    let mut cur = repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+    let mut cur = repo.resolve_ref_name(
+        cmd.commit
+            .clone()
+            .unwrap_or(ObjectReference::Ref("HEAD".to_string())),
+    )?;
 
     if cur.is_zero() {
         println!("No commits yet");

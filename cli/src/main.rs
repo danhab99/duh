@@ -5,10 +5,12 @@ use lib::repo::Repo;
 
 use cli::{Cli, Commands};
 
+mod branch;
 mod checkout;
 mod cli;
 mod colors;
 mod commit;
+mod config;
 mod init;
 mod log;
 mod show;
@@ -16,7 +18,6 @@ mod stage;
 mod status;
 mod switch;
 mod unstage;
-mod branch;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -57,6 +58,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Branch(c) => {
             branch::branch(&mut repo, c).expect("Unable to branch");
+        }
+        Commands::Config(c) => {
+            config::config(&repo, c).expect("Unable to run config");
         }
     };
 
