@@ -383,9 +383,10 @@ impl Repo {
         }
     }
 
-    pub fn stage_file<F>(&mut self, file_path: String, mut event: Option<F>) -> RepoResult<Hash>
+    pub fn stage_file<F, P>(&mut self, file_path: String, mut event: Option<F>, progress: Option<P>) -> RepoResult<Hash>
     where
         F: FnMut(DiffFragment),
+        P: FnMut(crate::dedup::DedupProgress),
     {
         let fp = self.get_path_in_cwd_str(&file_path);
 
@@ -417,7 +418,7 @@ impl Repo {
         vlog!("repo::stage_file: building diff fragments");
         let fragments =
             // crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
-            crate::dedup::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size as u64);
+            crate::dedup::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size as u64, progress);
 
         // Collect `FileFragment` entries directly in the FileVersion so we avoid
         // creating a separate FileDiffFragment object for every ADDED fragment.
