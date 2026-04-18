@@ -2,7 +2,6 @@ use std::error::Error;
 
 use clap::clap_derive::Args;
 use lib::repo::Repo;
-use crate::Commands::Unstage;
 
 #[derive(Args)]
 #[command(about = "Stage a file (produce fragment objects without committing)")]

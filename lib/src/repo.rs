@@ -160,6 +160,10 @@ impl Repo {
         Ok(r)
     }
 
+    pub fn root_path(&self) -> &str {
+        &self.root_path
+    }
+
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
         vlog!("repo::get_path_in_repo: p='{}'", p);
         // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
@@ -218,7 +222,7 @@ impl Repo {
         // Initialize HEAD and index with correct initial content.
         fs::write(base.join("index"), "")?;
         // refs/main starts at the zero hash; HEAD points at main.
-        fs::write(base.join("refs").join("main"), Hash::new().to_string())?;
+        fs::write(base.join("refs").join("main"), "")?;
         fs::write(base.join("refs").join("HEAD"), "ref:main")?;
 
         Ok(Repo::at_root_path(Some(root_path))?)
