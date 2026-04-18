@@ -10,6 +10,7 @@ clap = { version = "4.5.8", features = ["derive"] }
 lib = { path = "../lib" }
 atty = "0.2"
 walkdir = "2.5.0"
+globwalk = "0.9.1"
 
 [profile.release]
 opt-level = 'z'     # Optimize for size
