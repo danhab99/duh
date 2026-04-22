@@ -9,7 +9,7 @@ use crate::{
 use std::{
     collections::HashMap,
     error::Error,
-    fs::{self, File},
+    fs::File,
     io::{Read, Seek, Write},
     path::PathBuf,
     str::FromStr,
@@ -24,14 +24,15 @@ use std::io;
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek + ?Sized> ReadSeek for T {}
 
-use toml;
+use toml::{self, map::Map, Value};
 
-pub struct Repo {
+pub struct Repo<F: vfs::FileSystem> {
     root_path: String,
     me: Person,
     index: HashMap<String, Hash>,
     chunk_size: usize,
     max_size: usize,
+    fs: F,
 }
 
 pub type RepoError = Box<dyn Error>;
@@ -51,8 +52,8 @@ pub struct FileStagedSummary {
     pub unchanged_bytes: usize,
 }
 
-impl Repo {
-    pub fn at_root_path(root_path: Option<String>) -> RepoResult<Repo> {
+impl<F: vfs::FileSystem> Repo<F> {
+    pub fn at_root_path(root_path: Option<String>, filesystem: F) -> RepoResult<Repo<F>> {
         vlog!("repo::at_root_path called with root_path={:?}", root_path);
         let rp = match root_path {
             Some(x) => x,
@@ -63,11 +64,21 @@ impl Repo {
             }
         };
 
+        let metadata_path = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
+        // metadata_path == "<repo-root>/.duh" — store the repo root (parent of .duh)
+        let repo_root = PathBuf::from(&metadata_path)
+            .parent()
+            .and_then(|p| p.to_str())
+            .ok_or("couldn't determine repo root")?
+            .to_string();
+
         let config_path = find_file(rp.as_str(), &getRepoConfigFileName())?;
 
-        let content = fs::read(config_path)?;
-        let decoded = String::from_utf8(content)?;
-        let config = decoded.parse::<toml::Table>()?;
+        let mut content = String::new();
+        filesystem
+            .open_file(config_path.as_str())?
+            .read_to_string(&mut content)?;
+        let config = content.parse::<toml::Table>()?;
 
         let user_config = config
             .get("user")
@@ -91,15 +102,8 @@ impl Repo {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let metadata_path = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
-        // metadata_path == "<repo-root>/.duh" — store the repo root (parent of .duh)
-        let repo_root = PathBuf::from(&metadata_path)
-            .parent()
-            .and_then(|p| p.to_str())
-            .ok_or("couldn't determine repo root")?
-            .to_string();
-
-        let mut r = Repo {
+        let mut r = Repo::<F> {
+            fs: filesystem,
             root_path: repo_root,
             chunk_size,
             max_size,
@@ -131,13 +135,10 @@ impl Repo {
             r.root_path
         );
 
-        let index_file_path = r.get_path_in_repo("index");
-        vlog!(
-            "repo::at_root_path: index path = {}",
-            index_file_path.display()
-        );
+        let index_file_path = r.get_path_in_repo_str("index");
+        vlog!("repo::at_root_path: index path = {}", index_file_path,);
 
-        let mut index_file = fs::File::open(index_file_path).unwrap();
+        let mut index_file = r.fs.open_file(index_file_path.as_str()).unwrap();
         let mut contents = String::new();
         index_file.read_to_string(&mut contents)?;
         for line in contents.lines() {
@@ -164,14 +165,37 @@ impl Repo {
         &self.root_path
     }
 
+    fn create_dir_all(&self, path: &str) -> Result<(), Box<dyn Error>> {
+        use std::path::Path;
+        let path = Path::new(path);
+        if path.exists() {
+            return Ok(());
+        }
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                self.create_dir_all(parent.to_str().unwrap())?;
+            }
+        }
+        self.fs.create_dir(path.to_str().unwrap())?;
+
+        Ok(())
+    }
+
     fn get_path_in_repo(&self, p: &str) -> PathBuf {
         vlog!("repo::get_path_in_repo: p='{}'", p);
         // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
         let mut b = PathBuf::from(self.root_path.clone());
         b.push(utils::REPO_METADATA_DIR_NAME);
-        fs::create_dir_all(&b).unwrap();
+        self.create_dir_all(&b.as_os_str().to_str().unwrap())
+            .unwrap();
         b.push(p);
         return b;
+    }
+
+    fn get_path_in_repo_str(&self, p: &str) -> String {
+        let b = self.get_path_in_repo(p);
+        let s = b.into_os_string().into_string().unwrap();
+        return s;
     }
 
     // fn get_path_in_repo_str(&self, p: &str) -> String {
@@ -204,28 +228,31 @@ impl Repo {
         self.index.get(path).cloned()
     }
 
-    pub fn initialize_at(root_path: String) -> RepoResult<Repo> {
-        vlog!("repo::initialize_at: root_path='{}'", root_path);
+    pub fn initialize_at(root_path: String, filesystem: F) -> RepoResult<Repo<F>> {
+        let r = Repo::at_root_path(Some(root_path), filesystem)?;
+
+        vlog!("repo::initialize_at: root_path='{}'", r.root_path);
         // Create the metadata directory tree under the provided root path so
         // `at_root_path(Some(root_path))` can locate it reliably (don't rely on CWD).
-        let base = PathBuf::from(root_path.clone()).join(utils::REPO_METADATA_DIR_NAME);
-        fs::create_dir_all(base.join("objects"))?;
-        fs::create_dir_all(base.join("refs"))?;
+        let base = PathBuf::from(r.root_path.clone()).join(utils::REPO_METADATA_DIR_NAME);
+        r.create_dir_all(base.join("objects").to_str().unwrap())?;
+        r.create_dir_all(base.join("refs").to_str().unwrap())?;
 
         // Write a minimal, valid TOML config so `at_root_path` can parse required fields.
         let default_config = format!(
             "chunk_size = {}\nmax_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
             DEFAULT_BLOCK_SIZE, DEFAULT_MAX_FRAGMENT_SIZE
         );
-        fs::write(base.join("config"), default_config)?;
+
+        r.write_to_repo("config", default_config.as_bytes())?;
 
         // Initialize HEAD and index with correct initial content.
-        fs::write(base.join("index"), "")?;
+        r.write_to_repo("index", "".as_bytes())?;
         // refs/main starts at the zero hash; HEAD points at main.
-        fs::write(base.join("refs").join("main"), "")?;
-        fs::write(base.join("refs").join("HEAD"), "ref:main")?;
+        r.write_to_repo(base.join("refs").to_str().unwrap(), "".as_bytes())?;
+        r.write_to_repo(base.join("HEAD").to_str().unwrap(), "ref:main".as_bytes())?;
 
-        Ok(Repo::at_root_path(Some(root_path))?)
+        Ok(r)
     }
 
     pub fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
@@ -247,8 +274,8 @@ impl Repo {
         use tempfile::NamedTempFile;
 
         // Ensure objects dir exists
-        let objects_dir = self.get_path_in_repo("objects");
-        fs::create_dir_all(&objects_dir)?;
+        let objects_dir = &self.get_path_in_repo_str("objects");
+        self.create_dir_all(objects_dir)?;
 
         // Create a named temp file inside the objects dir so rename/persist is atomic
         let mut tmp = NamedTempFile::new_in(&objects_dir)?;
@@ -294,7 +321,7 @@ impl Repo {
         // Persist temp file to final object path
         let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            self.create_dir_all(parent.as_os_str().to_str().unwrap())?;
         }
         tmp.persist(&path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
@@ -307,6 +334,13 @@ impl Repo {
         Ok(hash)
     }
 
+    fn read_in_repo(&self, path: &str) -> RepoResult<Option<Vec<u8>>> {
+        let mut content = Vec::<u8>::new();
+        self.fs.open_file(path)?.read(&mut content)?;
+
+        return Ok(Some(content));
+    }
+
     fn read_object(&self, r: Hash) -> RepoResult<Option<Vec<u8>>> {
         let path = self.get_object_path(ObjectReference::Hash(r))?;
         vlog!("repo::read_object: path={:?}", path);
@@ -317,7 +351,10 @@ impl Repo {
             );
             return Ok(None);
         }
-        let content = fs::read(path)?;
+        let mut content = Vec::<u8>::new();
+        self.fs
+            .open_file(path.as_os_str().to_str().unwrap())?
+            .read(&mut content)?;
         vlog!("repo::read_object: read {} bytes", content.len());
         return Ok(Some(content.to_vec()));
     }
@@ -340,21 +377,27 @@ impl Repo {
         }
     }
 
-    pub fn get_ref_path(&self, name: &str) -> PathBuf {
+    pub fn get_ref_path(&self, name: &str) -> String {
         vlog!("repo::get_ref_path: name='{}'", name);
-        return self.get_path_in_repo(format!("refs/{}", name).as_str());
+        return self.get_path_in_repo_str(format!("refs/{}", name).as_str());
+    }
+
+    pub fn write_to_repo(&self, path: &str, content: &[u8]) -> RepoResult<()> {
+        self.fs.create_file(path)?.write(content)?;
+        Ok(())
     }
 
     pub fn set_ref(&self, name: &str, r: ObjectReference) -> RepoResult<()> {
         let path = self.get_ref_path(name);
-        fs::write(path, r.to_string())?;
+        self.write_to_repo(path.as_str(), r.to_string().as_bytes())?;
         vlog!("repo::set_ref: {} -> {}", name, r.to_string());
         return Ok(());
     }
 
     pub fn get_ref(&self, name: String) -> RepoResult<ObjectReference> {
-        let ref_path = self.get_path_in_repo(format!("refs/{}", name).as_str());
-        let val = String::from_utf8(fs::read(ref_path)?)?;
+        let ref_path = &self.get_path_in_repo_str(format!("refs/{}", name).as_str());
+        let mut val = String::new();
+        self.fs.open_file(ref_path)?.read_to_string(&mut val)?;
         vlog!("repo::get_ref: name='{}' content='{}'", name, val.trim());
 
         // Treat an empty ref file as "no parent" (map to zero hash) to make the
@@ -384,12 +427,21 @@ impl Repo {
                 );
                 return Ok(resolved);
             }
+            ObjectReference::AbbrevHash(a) => {
+                let r = self.get_ref(a.clone())?;
+                return self.resolve_ref_name(r);
+            }
         }
     }
 
-    pub fn stage_file<F, P>(&mut self, file_path: String, mut event: Option<F>, progress: Option<P>) -> RepoResult<Hash>
+    pub fn stage_file<E, P>(
+        &mut self,
+        file_path: String,
+        mut event: Option<E>,
+        progress: Option<P>,
+    ) -> RepoResult<Hash>
     where
-        F: FnMut(DiffFragment),
+        E: FnMut(DiffFragment),
         P: FnMut(crate::dedup::DedupProgress),
     {
         let fp = self.get_path_in_cwd_str(&file_path);
@@ -654,11 +706,10 @@ impl Repo {
     pub fn list_refs(&mut self, path: &str) -> RepoResult<Vec<ObjectReference>> {
         let refs_path = self.get_ref_path(path);
 
-        let refs_names = refs_path
-            .read_dir()?
-            .map(|x| x.unwrap())
-            .filter(|x| x.file_type().unwrap().is_file())
-            .map(|x| ObjectReference::from_str(x.file_name().to_str().unwrap()).unwrap())
+        let refs_names = self
+            .fs
+            .read_dir(&refs_path)?
+            .map(|x| ObjectReference::from_str(x.as_str()).unwrap())
             .collect::<Vec<_>>();
 
         Ok(refs_names)
@@ -666,15 +717,20 @@ impl Repo {
 
     pub fn delete_ref(&mut self, path: &str) -> RepoResult<()> {
         let ref_path = self.get_ref_path(path);
-        std::fs::remove_file(ref_path)?;
+        self.fs.remove_file(ref_path.as_str())?;
         Ok(())
+    }
+
+    fn get_table(&self) -> RepoResult<Map<String, Value>> {
+        let content = String::from_utf8(self.read_in_repo("config")?.unwrap())?;
+        let table = content.parse::<toml::Table>()?;
+
+        return Ok(table);
     }
 
     /// Read a value from the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
     pub fn get_config_value(&self, key: &str) -> RepoResult<String> {
-        let config_path = self.get_path_in_repo("config");
-        let content = fs::read_to_string(&config_path)?;
-        let table = content.parse::<toml::Table>()?;
+        let table = self.get_table()?;
 
         let parts: Vec<&str> = key.splitn(2, '.').collect();
         let value = if parts.len() == 2 {
@@ -694,9 +750,7 @@ impl Repo {
 
     /// Write a value to the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
     pub fn set_config_value(&self, key: &str, value: &str) -> RepoResult<()> {
-        let config_path = self.get_path_in_repo("config");
-        let content = fs::read_to_string(&config_path)?;
-        let mut table = content.parse::<toml::Table>()?;
+        let mut table = self.get_table()?;
 
         let parts: Vec<&str> = key.splitn(2, '.').collect();
         if parts.len() == 2 {
@@ -717,7 +771,9 @@ impl Repo {
             table.insert(parts[0].to_string(), parsed);
         }
 
-        fs::write(&config_path, toml::to_string(&table)?)?;
+        let config_path = self.get_path_in_repo_str("config");
+
+        self.write_to_repo(&config_path, toml::to_string(&table)?.as_bytes())?;
         Ok(())
     }
 }
