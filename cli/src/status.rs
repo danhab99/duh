@@ -72,6 +72,7 @@ pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<bool, Box<dyn Err
     let head_ref_name = match repo.get_ref("HEAD".into())? {
         ObjectReference::Ref(name) => name,
         ObjectReference::Hash(hash) => hash.to_string(),
+        ObjectReference::AbbrevHash(s) => s,
     };
 
     println!("On branch {}", crate::colors::green(head_ref_name.as_str()));

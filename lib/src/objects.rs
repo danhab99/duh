@@ -103,9 +103,11 @@ impl Object {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ObjectReference {
     Hash(Hash),
+    /// An abbreviated (prefix) hex hash, resolved lazily against the object store.
+    AbbrevHash(String),
     Ref(String),
 }
 
@@ -123,13 +125,16 @@ impl FromStr for ObjectReference {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
-        if let Some(target) = s.strip_prefix("ref:") {
-            Ok(ObjectReference::Ref(target.trim().to_string()))
-        } else if let Ok(h) = Hash::from_string(s.to_string()) {
-            Ok(ObjectReference::Hash(h))
-        } else {
-            Ok(ObjectReference::Ref(s.to_string()))
+        let is_hex = !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit());
+        if is_hex && s.len() == 64 {
+            if let Ok(h) = Hash::from_string(s.to_string()) {
+                return Ok(ObjectReference::Hash(h));
+            }
         }
+        if is_hex && s.len() >= 4 {
+            return Ok(ObjectReference::AbbrevHash(s.to_lowercase()));
+        }
+        Ok(ObjectReference::Ref(s.to_string()))
     }
 }
 
@@ -143,6 +148,7 @@ impl fmt::Display for ObjectReference {
     fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Hash(hash) => write!(out, "{}", hash.to_hex())?,
+            Self::AbbrevHash(s) => write!(out, "{}", s)?,
             Self::Ref(name) => write!(out, "{}", name)?,
         };
         Ok(())
