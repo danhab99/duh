@@ -1,8 +1,6 @@
 use crate::{
-    diff::DiffFragment,
     hash::Hash,
-    objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference, Person},
-    replay::LazyFileReplay,
+    objects::{CommitStruct, Object, ObjectReference, Person},
     utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
     vlog,
 };
@@ -18,8 +16,6 @@ use std::{
 
 use serde::Serialize;
 use std::env;
-use std::io;
-
 // Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek + ?Sized> ReadSeek for T {}
@@ -28,10 +24,10 @@ use toml::{self, map::Map, Value};
 
 pub struct Repo<F: vfs::FileSystem> {
     root_path: String,
-    me: Person,
-    index: HashMap<String, Hash>,
-    chunk_size: usize,
-    max_size: usize,
+    pub me: Person,
+    pub index: HashMap<String, Hash>,
+    pub chunk_size: usize,
+    pub max_size: usize,
     fs: F,
 }
 
@@ -43,14 +39,6 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 /// Maximum size (bytes) for a single stored ADDED fragment. Larger ADDED
 /// bodies are split into multiple Fragment objects at stage time.
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
-
-/// Per-file summary of staged changes, broken down by fragment type in bytes.
-pub struct FileStagedSummary {
-    pub path: String,
-    pub added_bytes: usize,
-    pub deleted_bytes: usize,
-    pub unchanged_bytes: usize,
-}
 
 impl<F: vfs::FileSystem> Repo<F> {
     pub fn at_root_path(root_path: Option<String>, filesystem: F) -> RepoResult<Repo<F>> {
@@ -432,228 +420,6 @@ impl<F: vfs::FileSystem> Repo<F> {
                 return self.resolve_ref_name(r);
             }
         }
-    }
-
-    pub fn stage_file<E, P>(
-        &mut self,
-        file_path: String,
-        mut event: Option<E>,
-        progress: Option<P>,
-    ) -> RepoResult<Hash>
-    where
-        E: FnMut(DiffFragment),
-        P: FnMut(crate::dedup::DedupProgress),
-    {
-        let fp = self.get_path_in_cwd_str(&file_path);
-
-        let mut new = File::open(fp.clone())?;
-
-        vlog!("repo::stage_file: computing hash for entire file");
-        let content_hash = Hash::digest_file_stream(&mut new)?;
-        vlog!(
-            "repo::stage_file: entire file hash {}",
-            content_hash.to_string()
-        );
-
-        let head_commit_hash = self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
-
-        let old: Box<dyn ReadSeek> = if head_commit_hash.is_zero() {
-            vlog!("repo::stage_file: no parent hash, using empty cursor");
-            Box::new(io::Cursor::new(Vec::new()))
-        } else {
-            vlog!(
-                "repo::stage_file: opening parent version {}",
-                head_commit_hash.to_string()
-            );
-            // Stream the previous file version directly – no full materialisation.
-            self.open_file(fp.clone(), head_commit_hash)?
-        };
-
-        new.seek(io::SeekFrom::Start(0))?;
-
-        vlog!("repo::stage_file: building diff fragments");
-        let fragments =
-            // crate::diff::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size);
-            crate::dedup::build_diff_fragments(old, Box::new(new), self.chunk_size, self.max_size as u64, progress);
-
-        // Collect `FileFragment` entries directly in the FileVersion so we avoid
-        // creating a separate FileDiffFragment object for every ADDED fragment.
-        let mut file_fragments: Vec<FileFragment> = Vec::new();
-
-        for fragment_res in fragments? {
-            if let Some(ref mut f) = event {
-                f(fragment_res.clone());
-            }
-
-            match fragment_res {
-                DiffFragment::ADDED { body } => {
-                    // split large ADDED bodies into FRAGMENT-sized chunks
-                    for chunk in body.chunks(self.max_size) {
-                        let frag_hash =
-                            self.save_obj(Object::Fragment(Fragment(chunk.to_vec())))?;
-                        vlog!(
-                            "repo::stage_file: ADDED fragment chunk_size={} -> fragment_hash={}",
-                            chunk.len(),
-                            frag_hash.to_string()
-                        );
-                        file_fragments.push(FileFragment::ADDED {
-                            body: frag_hash,
-                            len: chunk.len(),
-                        });
-                    }
-                }
-                DiffFragment::UNCHANGED { len } => {
-                    vlog!("repo::stage_file: UNCHANGED len={}", len);
-                    file_fragments.push(FileFragment::UNCHANGED { len });
-                }
-                DiffFragment::DELETED { len } => {
-                    vlog!("repo::stage_file: DELETED len={}", len);
-                    file_fragments.push(FileFragment::DELETED { len });
-                }
-            }
-        }
-
-        let version = FileVersion {
-            content_hash: content_hash,
-            fragments: file_fragments,
-        };
-
-        let version_hash = self.save_obj(Object::FileVersion(version))?;
-
-        self.index.insert(fp.clone(), version_hash);
-        vlog!(
-            "repo::stage_file: indexed '{}' -> {}",
-            fp,
-            version_hash.to_string()
-        );
-
-        Ok(version_hash)
-    }
-
-    pub fn unstage_file(&mut self, file_path: String) -> RepoResult<()> {
-        self.index.remove(file_path.as_str());
-        Ok(())
-    }
-
-    pub fn commit(&mut self, message: String) -> RepoResult<Hash> {
-        vlog!("repo::commit: message='{}'", message);
-
-        // retrieve the hash of HEAD; the commit struct accepts a hash
-        let head_commit = self.get_head_commit_hash()?;
-
-        let commit = CommitStruct {
-            parent: head_commit,
-            message: message,
-            comitter: self.me.clone(),
-            author: self.me.clone(),
-            files: self.index.clone(),
-        };
-
-        let files_count = commit.files.len();
-        vlog!("repo::commit: creating commit with {} files", files_count);
-
-        let commit_hash = self.save_obj(Object::Commit(commit))?;
-
-        // `head_ref_name` wasn't previously defined; for now we always update
-        // the symbolic HEAD reference.  Later this could read the current
-        // branch name if branches are tracked separately.
-        let head_ref_name = "HEAD".to_string();
-        self.set_ref(
-            head_ref_name.as_str(),
-            ObjectReference::Hash(commit_hash.clone()),
-        )?;
-        vlog!("repo::commit: new HEAD = {}", commit_hash.to_string());
-
-        // Remove the committed entries from the index (they were staged and are now part of history)
-        if files_count > 0 {
-            self.index.clear();
-            vlog!("repo::commit: cleared {} entries from index", files_count);
-            // persist index immediately so callers don't need to remember to call save_index()
-            self.save_index()?;
-        }
-
-        Ok(commit_hash)
-    }
-
-    /// Return byte-level change statistics for every file currently in the index.
-    pub fn staged_summary(&self) -> RepoResult<Vec<FileStagedSummary>> {
-        let mut result = Vec::new();
-        for (path, &version_hash) in &self.index {
-            let mut added = 0usize;
-            let mut deleted = 0usize;
-            let mut unchanged = 0usize;
-            if let Some(Object::FileVersion(fv)) = self.get_object(version_hash)? {
-                for frag in &fv.fragments {
-                    match frag {
-                        FileFragment::ADDED { len, .. } => added += len,
-                        FileFragment::DELETED { len } => deleted += len,
-                        FileFragment::UNCHANGED { len } => unchanged += len,
-                    }
-                }
-            }
-            result.push(FileStagedSummary {
-                path: path.clone(),
-                added_bytes: added,
-                deleted_bytes: deleted,
-                unchanged_bytes: unchanged,
-            });
-        }
-        Ok(result)
-    }
-
-    pub fn open_file(&mut self, file_path: String, hash: Hash) -> RepoResult<Box<dyn ReadSeek>> {
-        vlog!(
-            "repo::open_file: file_path='{}' hash={}",
-            file_path,
-            hash.to_string()
-        );
-        // Resolve the commit pointed to by `hash`; if it doesn't exist, return an empty reader.
-        let fp = self.get_path_in_cwd_str(&file_path);
-
-        let commit = match self.get_object(hash)? {
-            Some(Object::Commit(c)) => c,
-            None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
-            _ => panic!("expected commit object"),
-        };
-
-        // Get file version hash for this path
-        let file_version_hash = match commit.files.get(fp.as_str()) {
-            Some(x) => x,
-            None => {
-                // File doesn't exist in this commit - return empty reader
-                vlog!(
-                    "repo::open_file: file '{}' not in commit {}",
-                    fp,
-                    hash.to_string()
-                );
-                return Ok(Box::new(io::Cursor::new(Vec::<u8>::new())));
-            }
-        };
-
-        let file_version = match self.get_object(*file_version_hash)? {
-            Some(Object::FileVersion(c)) => c,
-            _ => panic!("expected file version"),
-        };
-
-        // Get parent file as a reader (may be lazy or empty)
-        let parent_reader: Box<dyn ReadSeek> = if commit.parent.is_zero() {
-            // No parent - use empty reader
-            Box::new(io::Cursor::new(Vec::<u8>::new()))
-        } else {
-            // Recursively open parent file (this will also use LazyFileReplay)
-            self.open_file(fp.clone(), commit.parent)?
-        };
-
-        vlog!(
-            "repo::open_file: creating lazy replay with {} fragments, parent_hash={}",
-            file_version.fragments.len(),
-            commit.parent.to_string()
-        );
-
-        // Use LazyFileReplay to lazily reconstruct the file
-        let replay = LazyFileReplay::new(self, parent_reader, file_version.fragments)?;
-
-        Ok(Box::new(replay))
     }
 
     pub fn save_index(&mut self) -> RepoResult<()> {
