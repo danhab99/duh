@@ -6,4 +6,5 @@ pub mod objects;
 pub mod repo;
 pub mod replay;
 pub mod dedup;
+pub mod remote;
 pub mod file;

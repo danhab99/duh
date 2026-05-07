@@ -47,19 +47,19 @@ pub struct FileVersion {
     pub fragments: Vec<FileFragment>,
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
-pub enum FileDiffFragment {
-    ADDED { body: Hash, len: usize },
-    UNCHANGED { len: usize },
-    DELETED { len: usize },
-}
+// #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
+// pub enum FileDiffFragment {
+//     ADDED { body: Hash, len: usize },
+//     UNCHANGED { len: usize },
+//     DELETED { len: usize },
+// }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Object {
     Commit(CommitStruct),
     File(FileStruct),
     Fragment(Fragment),
     StagedFileStruct(StagedFileStruct),
-    FileVersion(FileVersion),
+    // FileVersion(FileVersion),
     FileDiffFragment(FileDiffFragment),
 }
 
@@ -92,7 +92,7 @@ impl Object {
 
     pub fn get_classification(self) -> String {
         match self {
-            Self::FileVersion(_) => "fileversion",
+            // Self::FileVersion(_) => "fileversion",
             Self::FileDiffFragment(_) => "filedifffragment",
             Self::Fragment(_) => "fragment",
             Self::Commit(_) => "commit",

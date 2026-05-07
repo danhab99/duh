@@ -1,7 +1,9 @@
 use crate::{
     diff::DiffFragment,
     hash::Hash,
-    objects::{CommitStruct, FileFragment, FileVersion, Fragment, Object, ObjectReference},
+    objects::{
+        CommitStruct, FileFragment, FileStruct,  Fragment, Object, ObjectReference,
+    },
     replay::LazyFileReplay,
     repo::ReadSeek,
     vlog,
@@ -79,7 +81,7 @@ impl<F: vfs::FileSystem> FileOps<F> {
             progress,
         )?;
 
-        let mut file_fragments: Vec<FileFragment> = Vec::new();
+        let mut file_fragments: Vec<Hash> = Vec::new();
 
         for fragment_res in fragments {
             if let Some(ref mut f) = event {
@@ -97,29 +99,35 @@ impl<F: vfs::FileSystem> FileOps<F> {
                             chunk.len(),
                             frag_hash.to_string()
                         );
-                        file_fragments.push(FileFragment::ADDED {
+
+                        let f = FileFragment::ADDED {
                             body: frag_hash,
                             len: chunk.len(),
-                        });
+                        };
+
+                        let h = self.repo.save_obj(Object::FileDiffFragment(f))?;
+                        file_fragments.push(h);
                     }
                 }
                 DiffFragment::UNCHANGED { len } => {
                     vlog!("repo::stage_file: UNCHANGED len={}", len);
-                    file_fragments.push(FileFragment::UNCHANGED { len });
+                    let f = FileFragment::UNCHANGED { len };
+                    let h = self.repo.save_obj(Object::FileDiffFragment(f))?;
+                    file_fragments.push(h);
                 }
                 DiffFragment::DELETED { len } => {
                     vlog!("repo::stage_file: DELETED len={}", len);
-                    file_fragments.push(FileFragment::DELETED { len });
+                    let f = FileFragment::DELETED { len };
+                    let h = self.repo.save_obj(Object::FileDiffFragment(f))?;
+                    file_fragments.push(h);
                 }
             }
         }
 
-        let version = FileVersion {
+        let version_hash = self.repo.save_obj(Object::File(FileStruct {
             content_hash: content_hash,
             fragments: file_fragments,
-        };
-
-        let version_hash = self.repo.save_obj(Object::FileVersion(version))?;
+        }))?;
 
         self.repo.index.insert(fp.clone(), version_hash);
         vlog!(
@@ -196,11 +204,7 @@ impl<F: vfs::FileSystem> FileOps<F> {
         Ok(result)
     }
 
-    pub fn open_file(
-        &mut self,
-        file_path: String,
-        hash: Hash,
-    ) -> FileOpsResult<Box<dyn ReadSeek>> {
+    pub fn open_file(&mut self, file_path: String, hash: Hash) -> FileOpsResult<Box<dyn ReadSeek>> {
         vlog!(
             "repo::open_file: file_path='{}' hash={}",
             file_path,
