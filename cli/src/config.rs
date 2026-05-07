@@ -26,7 +26,7 @@ pub enum ConfigAction {
     },
 }
 
-pub fn config(repo: &Repo, cmd: &ConfigCommand) -> Result<(), Box<dyn Error>> {
+pub fn config<F: vfs::FileSystem>(repo: &Repo<F>, cmd: &ConfigCommand) -> Result<(), Box<dyn Error>> {
     match &cmd.action {
         ConfigAction::Get { key } => {
             let val = repo.get_config_value(key)?;

@@ -115,7 +115,7 @@ impl ProgressPrinter {
     }
 }
 
-fn stage_file(file_path: &str, repo: &mut Repo) -> Result<(), Box<dyn Error>> {
+fn stage_file<F: vfs::FileSystem>(file_path: &str, repo: &mut Repo<F>) -> Result<(), Box<dyn Error>> {
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let bytes_per_col = (file_size / MAX_COLS).max(1);
 
@@ -169,7 +169,7 @@ fn stage_file(file_path: &str, repo: &mut Repo) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn stage(repo: &mut Repo, cmd: &StageCommand) -> Result<(), Box<dyn Error>> {
+pub fn stage<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &StageCommand) -> Result<(), Box<dyn Error>> {
     // Load .duhignore from the repo root if it exists. Each non-blank,
     // non-comment line becomes a negated glob pattern passed to GlobWalkerBuilder.
     let ignore_path = std::path::Path::new(repo.root_path()).join(".duhignore");

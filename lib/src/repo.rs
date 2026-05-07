@@ -218,28 +218,39 @@ impl<F: FileSystem> Repo<F> {
     }
 
     pub fn initialize_at(root_path: String, filesystem: F) -> RepoResult<Repo<F>> {
-        let r = Repo::at_root_path(Some(root_path), filesystem)?;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs();
+
+        let r = Repo::<F> {
+            fs: filesystem,
+            root_path,
+            chunk_size: DEFAULT_BLOCK_SIZE,
+            max_size: DEFAULT_MAX_FRAGMENT_SIZE,
+            me: Person {
+                name: "test".to_string(),
+                email: "test@example.com".to_string(),
+                timestamp: now,
+            },
+            index: HashMap::new(),
+        };
 
         vlog!("repo::initialize_at: root_path='{}'", r.root_path);
-        // Create the metadata directory tree under the provided root path so
-        // `at_root_path(Some(root_path))` can locate it reliably (don't rely on CWD).
         let base = PathBuf::from(r.root_path.clone()).join(utils::REPO_METADATA_DIR_NAME);
         r.create_dir_all(base.join("objects").to_str().unwrap())?;
         r.create_dir_all(base.join("refs").to_str().unwrap())?;
 
-        // Write a minimal, valid TOML config so `at_root_path` can parse required fields.
         let default_config = format!(
             "chunk_size = {}\nmax_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
             DEFAULT_BLOCK_SIZE, DEFAULT_MAX_FRAGMENT_SIZE
         );
 
-        r.write_to_repo("config", default_config.as_bytes())?;
+        r.write_to_repo(r.get_path_in_repo_str("config").as_str(), default_config.as_bytes())?;
+        r.write_to_repo(r.get_path_in_repo_str("index").as_str(), b"")?;
 
-        // Initialize HEAD and index with correct initial content.
-        r.write_to_repo("index", "".as_bytes())?;
-        // refs/main starts at the zero hash; HEAD points at main.
-        r.write_to_repo(base.join("refs").to_str().unwrap(), "".as_bytes())?;
-        r.write_to_repo(base.join("HEAD").to_str().unwrap(), "ref:main".as_bytes())?;
+        // refs/main starts empty (interpreted as zero hash); HEAD points to main.
+        r.write_to_repo(r.get_ref_path("main").as_str(), b"")?;
+        r.write_to_repo(r.get_ref_path("HEAD").as_str(), b"main")?;
 
         Ok(r)
     }
@@ -325,7 +336,7 @@ impl<F: FileSystem> Repo<F> {
 
     fn read_in_repo(&self, path: &str) -> RepoResult<Option<Vec<u8>>> {
         let mut content = Vec::<u8>::new();
-        self.fs.open_file(path)?.read(&mut content)?;
+        self.fs.open_file(path)?.read_to_end(&mut content)?;
 
         return Ok(Some(content));
     }
@@ -343,7 +354,7 @@ impl<F: FileSystem> Repo<F> {
         let mut content = Vec::<u8>::new();
         self.fs
             .open_file(path.as_os_str().to_str().unwrap())?
-            .read(&mut content)?;
+            .read_to_end(&mut content)?;
         vlog!("repo::read_object: read {} bytes", content.len());
         return Ok(Some(content.to_vec()));
     }

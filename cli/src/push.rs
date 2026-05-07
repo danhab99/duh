@@ -1,8 +1,6 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
-use lib::objects::{Object, ObjectReference};
-use lib::remote;
 use lib::repo::Repo;
 
 /// Show the commit currently referenced by HEAD
@@ -17,10 +15,11 @@ pub struct PushCommand {
     pub remote_name: Option<String>,
 }
 
-pub fn push(repo: &mut Repo, cmd: &PushCommand) -> Result<(), Box<dyn Error>> {
-    let remote = repo.get_remote_by_name(cmd.remote_name.unwrap_or("origin"))?;
+pub fn push<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &PushCommand) -> Result<(), Box<dyn Error>> {
+    let mut remote = repo.get_remote_by_name(cmd.remote_name.as_deref().unwrap_or("origin"))?;
 
     let h = repo.get_head_commit_hash()?;
 
-    lib::remote::push_branch_to_remote(repo, remote, h)?;
+    lib::remote::push_branch_to_remote(repo, &mut remote, h, |_| {})?;
+    Ok(())
 }

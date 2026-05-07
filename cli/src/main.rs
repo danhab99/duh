@@ -2,6 +2,7 @@ use std::error::Error;
 
 use clap::Parser;
 use lib::repo::Repo;
+use vfs::PhysicalFS;
 
 use cli::{Cli, Commands};
 
@@ -29,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             init::init()?;
             return Ok(());
         }
-        _ => Repo::at_root_path(None)?,
+        _ => Repo::at_root_path(None, PhysicalFS::new("/"))?,
     };
 
     match &cli.command {
@@ -65,7 +66,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             config::config(&repo, c).expect("Unable to run config");
         }
         Commands::Push(c) => {
-            push::push(&repo, c).expect("Unable to push");
+            push::push(&mut repo, c).expect("Unable to push");
+        }
+        Commands::Pull(c) => {
+            pull::pull(&mut repo, c).expect("Unable to pull");
         }
     };
 

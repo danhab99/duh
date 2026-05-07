@@ -11,7 +11,7 @@ use lib::{
 #[command(about = "Show status of tracked files (compare working copy -> index / HEAD)")]
 pub struct StatusCommand {}
 
-pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
+pub fn status<F: vfs::FileSystem>(repo: &mut Repo<F>, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
     let cwd = std::env::current_dir()?;
     let cwd_str = cwd.to_str().unwrap_or("").to_string();
 
@@ -58,7 +58,7 @@ pub fn status(repo: &mut Repo, _cmd: &StatusCommand) -> Result<bool, Box<dyn Err
         let working_hash = Hash::digest_file_stream(&mut f)?;
 
         match repo.get_object(*version_hash)? {
-            Some(Object::FileVersion(fv)) => {
+            Some(Object::File(fv)) => {
                 if fv.content_hash == working_hash {
                     unchanged.push(display);
                 } else {

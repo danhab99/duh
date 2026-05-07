@@ -20,7 +20,7 @@ pub struct BranchCommand {
     set: Option<String>,
 }
 
-pub fn branch(repo: &mut Repo, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
+pub fn branch<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
     let head_ref = repo.get_ref("HEAD".into())?;
 
     if let Some(name) = cmd.delete.clone() {
@@ -38,6 +38,8 @@ pub fn branch(repo: &mut Repo, cmd: &BranchCommand) -> Result<(), Box<dyn Error>
 
         repo.delete_ref(head_ref.to_string().as_str())?;
         repo.set_ref(&name, ObjectReference::Hash(current_commit))?;
+        // Update HEAD to point to the new branch name; the old ref was just deleted.
+        repo.set_ref("HEAD", ObjectReference::Ref(name.clone()))?;
     } else if let Some(set) = cmd.set.clone() {
         let commit = ObjectReference::from(set);
         repo.set_ref(head_ref.to_string().as_str(), commit)?;

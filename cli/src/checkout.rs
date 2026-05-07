@@ -19,7 +19,7 @@ pub struct CheckoutCommand {
     pub commit: Option<ObjectReference>,
 }
 
-pub fn checkout(repo: &mut Repo, cmd: &CheckoutCommand) -> Result<(), Box<dyn Error>> {
+pub fn checkout<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CheckoutCommand) -> Result<(), Box<dyn Error>> {
     // Resolve commit (default to HEAD)
     let target_hash = match &cmd.commit {
         Some(r) => repo.resolve_ref_name(r.clone())?,

@@ -60,7 +60,7 @@ pub enum Object {
     Fragment(Fragment),
     StagedFileStruct(StagedFileStruct),
     // FileVersion(FileVersion),
-    FileDiffFragment(FileDiffFragment),
+    FileDiffFragment(FileFragment),
 }
 
 impl Object {

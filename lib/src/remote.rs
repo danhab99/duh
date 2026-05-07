@@ -52,13 +52,16 @@ pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
                 hash.to_hex()
             );
 
-            if let Some(Object::FileVersion(obj)) = remote.get_object(*hash)? {
-                local.save_obj(Object::FileVersion(obj.clone()))?;
+            if let Some(Object::File(obj)) = remote.get_object(*hash)? {
+                local.save_obj(Object::File(obj.clone()))?;
 
-                for frag in obj.fragments.iter() {
-                    if let FileFragment::ADDED { body, .. } = frag {
-                        if let Some(f) = remote.get_object(*body)? {
-                            local.save_obj(f)?;
+                for frag_hash in obj.fragments.iter() {
+                    if let Some(Object::FileDiffFragment(frag)) = remote.get_object(*frag_hash)? {
+                        local.save_obj(Object::FileDiffFragment(frag.clone()))?;
+                        if let FileFragment::ADDED { body, .. } = frag {
+                            if let Some(f) = remote.get_object(body)? {
+                                local.save_obj(f)?;
+                            }
                         }
                     }
                 }
@@ -73,7 +76,7 @@ pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
     Ok(())
 }
 
-pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash)>(
+pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash) + Copy>(
     local: &mut Repo<L>,
     remote: &mut Repo<R>,
     hash: Hash,
@@ -94,7 +97,7 @@ pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash)>(
             if let Object::File(f) = o {
                 for frag_hash in f.fragments {
                     if let Some(frag) = local.get_object(frag_hash)? {
-                        remote.save_obj(Object::FileDiffFragment(frag))?;
+                        remote.save_obj(frag)?;
                     }
                 }
             }
