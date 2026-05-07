@@ -19,23 +19,20 @@ pub struct SwitchCommand {
     pub create: Option<bool>,
 }
 
-pub fn switch(repo: &mut Repo, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>> {
+pub fn switch<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>> {
     let uncomitted_changes = status(repo, &crate::status::StatusCommand {})?;
 
     if uncomitted_changes && cmd.create == None || cmd.create == Some(false) {
         panic!("uncommitted changes");
     }
 
-    println!("{} {}", crate::colors::cyan("Staging file"), cmd.name);
-    // let h = repo.switch_file(cmd.name.clone())?;
+    println!("{} {}", crate::colors::cyan("Switching to"), cmd.name);
 
     let branch_name = cmd.name.clone();
 
-    let ref_exists = match repo.get_ref(branch_name.clone()) {
-        Err(_) => false,
-        Ok(ObjectReference::Ref(_)) => true,
-        Ok(ObjectReference::Hash(_)) => panic!("cannot switch to commit rn"),
-    };
+    // Just check existence — all branch refs contain a commit hash, so matching on
+    // Hash(_) and panicking was wrong.
+    let ref_exists = repo.get_ref(branch_name.clone()).is_ok();
 
     let commit_hash: Hash;
 
@@ -43,15 +40,12 @@ pub fn switch(repo: &mut Repo, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>
         repo.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()))?;
         commit_hash = repo.resolve_ref_name(ObjectReference::Ref(branch_name.clone()))?;
     } else if cmd.create == Some(true) {
-        commit_hash = match repo.get_ref("HEAD".into())? {
-            ObjectReference::Hash(h) => h,
-            _ => panic!("why is this branch pointed at another branch?"),
-        };
-
+        // resolve_ref_name handles both attached HEAD (Ref -> Hash) and detached HEAD (Hash directly).
+        commit_hash = repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
         repo.set_ref(&cmd.name, ObjectReference::Hash(commit_hash.clone()))?;
         repo.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()))?;
     } else {
-        panic!("ref does not exist");
+        return Err(format!("branch '{}' does not exist", branch_name).into());
     }
 
     let files = repo.list_files(ObjectReference::Hash(commit_hash))?;

@@ -28,7 +28,7 @@ pub struct CommitCommand {
     pub generate: bool,
 }
 
-pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
+pub fn commit<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
     if let Some(fp) = &cmd.file_path {
         println!("{} {}", crate::colors::cyan("Staging file"), fp);
         repo.stage_file(fp.clone(), None::<fn(_)>, None::<fn(_)>)?;
@@ -58,7 +58,7 @@ pub fn commit(repo: &mut Repo, cmd: &CommitCommand) -> Result<(), Box<dyn Error>
     Ok(())
 }
 
-fn generate_message(repo: &mut Repo) -> Result<String, Box<dyn Error>> {
+fn generate_message<F: vfs::FileSystem>(repo: &mut Repo<F>) -> Result<String, Box<dyn Error>> {
     let summaries = repo.staged_summary()?;
     if summaries.is_empty() {
         return Ok("Empty commit".to_string());

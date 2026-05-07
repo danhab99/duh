@@ -1,26 +1,24 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
-use lib::objects::{Object, ObjectReference};
-use lib::remote;
 use lib::repo::Repo;
 
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
-#[command(about = "Push local changes to the remote")]
-pub struct PushCommand {
+#[command(about = "Pull changes from the remote")]
+pub struct PullCommand {
     #[arg(
         short = 'r',
         long = "remote",
-        help = "The remote to push to (default: origin)"
+        help = "The remote to pull from (default: origin)"
     )]
     pub remote_name: Option<String>,
 }
 
-pub fn push(repo: &mut Repo, cmd: &PushCommand) -> Result<(), Box<dyn Error>> {
-    let remote = repo.get_remote_by_name(cmd.remote_name.unwrap_or("origin"))?;
+pub fn pull<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &PullCommand) -> Result<(), Box<dyn Error>> {
+    let remote_name = cmd.remote_name.as_deref().unwrap_or("origin");
+    let mut remote = repo.get_remote_by_name(remote_name)?;
 
-    let h = remote.get_head_commit_hash()?;
-
-    lib::remote::push_branch_to_remote(remote, repo, h)?;
+    lib::remote::fetch_all_refs(repo, &mut remote, remote_name)?;
+    Ok(())
 }

@@ -11,7 +11,7 @@ pub struct UnstageCommand {
     pub file_path: String,
 }
 
-pub fn unstage(repo: &mut Repo, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
+pub fn unstage<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
     println!("{} {}", crate::colors::cyan("Unstaging file"), cmd.file_path);
     repo.unstage_file(cmd.file_path.clone())?;
 

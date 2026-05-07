@@ -12,7 +12,7 @@ pub struct ShowCommand {
     pub commit: Option<ObjectReference>,
 }
 
-pub fn show(repo: &mut Repo, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
+pub fn show<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
     let head = repo.resolve_ref_name(
         cmd.commit
             .clone()
