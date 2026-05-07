@@ -18,6 +18,8 @@ mod stage;
 mod status;
 mod switch;
 mod unstage;
+mod push;
+mod pull;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -61,6 +63,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Config(c) => {
             config::config(&repo, c).expect("Unable to run config");
+        }
+        Commands::Push(c) => {
+            push::push(&repo, c).expect("Unable to push");
         }
     };
 

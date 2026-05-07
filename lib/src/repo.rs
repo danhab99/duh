@@ -16,13 +16,14 @@ use std::{
 
 use serde::Serialize;
 use std::env;
+use vfs::FileSystem;
 // Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek + ?Sized> ReadSeek for T {}
 
 use toml::{self, map::Map, Value};
 
-pub struct Repo<F: vfs::FileSystem> {
+pub struct Repo<F: ?Sized + FileSystem> {
     root_path: String,
     pub me: Person,
     pub index: HashMap<String, Hash>,
@@ -40,7 +41,7 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 /// bodies are split into multiple Fragment objects at stage time.
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
-impl<F: vfs::FileSystem> Repo<F> {
+impl<F: FileSystem> Repo<F> {
     pub fn at_root_path(root_path: Option<String>, filesystem: F) -> RepoResult<Repo<F>> {
         vlog!("repo::at_root_path called with root_path={:?}", root_path);
         let rp = match root_path {
@@ -541,6 +542,36 @@ impl<F: vfs::FileSystem> Repo<F> {
 
         self.write_to_repo(&config_path, toml::to_string(&table)?.as_bytes())?;
         Ok(())
+    }
+
+    pub fn get_remote_by_name(&self, name: &str) -> RepoResult<Repo<vfs::PhysicalFS>> {
+        use url::Url;
+
+        let u = Url::parse(
+            self.get_config_value(format!("remote.{}", name).as_str())?
+                .as_str(),
+        )?;
+
+        match u.scheme() {
+            "s3" => {
+                panic!("not implemented");
+            }
+            "http" | "https" => {
+                panic!("not implemented");
+            }
+            "ftp" | "sftp" => {
+                panic!("not implemented");
+            }
+            "path" => {
+                let path = u.path();
+                let fs = vfs::PhysicalFS::new(path);
+                let r: Repo<vfs::PhysicalFS> = Repo::at_root_path(Some(path.to_string()), fs)?;
+                Ok(r)
+            }
+            _ => {
+                panic!("not a valid scheme")
+            }
+        }
     }
 }
 
