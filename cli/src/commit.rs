@@ -1,7 +1,7 @@
 use std::{error::Error, fs};
 
 use clap::clap_derive::Args;
-use lib::repo::Repo;
+use lib::{file::FileOps, repo::Repo};
 
 #[derive(Args)]
 #[command(about = "Stage the given file and create a commit with the provided message")]
@@ -28,15 +28,22 @@ pub struct CommitCommand {
     pub generate: bool,
 }
 
-pub fn commit<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
-    if let Some(fp) = &cmd.file_path {
-        println!("{} {}", crate::colors::cyan("Staging file"), fp);
-        repo.stage_file(fp.clone(), None::<fn(_)>, None::<fn(_)>)?;
-    } else {
-        println!(
-            "{}",
-            crate::colors::dim("No file provided — committing staged files in index")
-        );
+pub fn commit<F: vfs::FileSystem>(
+    repo: &mut Repo<F>,
+    cmd: &CommitCommand,
+) -> Result<(), Box<dyn Error>> {
+    {
+        let mut fileops = FileOps::from_repo(repo);
+
+        if let Some(fp) = &cmd.file_path {
+            println!("{} {}", crate::colors::cyan("Staging file"), fp);
+            fileops.stage_file(fp.clone(), None::<fn(_)>, None::<fn(_)>)?;
+        } else {
+            println!(
+                "{}",
+                crate::colors::dim("No file provided — committing staged files in index")
+            );
+        }
     }
 
     println!("{}", crate::colors::cyan("Committing"));
@@ -44,12 +51,20 @@ pub fn commit<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CommitCommand) -> Re
         Some(ref x) if !x.is_empty() => x.clone(),
         _ if cmd.generate || std::env::var("EDITOR").is_err() => {
             let msg = generate_message(repo)?;
-            println!("{} {}", crate::colors::dim("Generated message:"), crate::colors::bold(&msg.lines().next().unwrap_or("")));
+            println!(
+                "{} {}",
+                crate::colors::dim("Generated message:"),
+                crate::colors::bold(&msg.lines().next().unwrap_or(""))
+            );
             msg
         }
         _ => prompt_editor(),
     };
-    let h = repo.commit(message)?;
+
+    let h = {
+        let mut fileops = FileOps::from_repo(repo);
+        fileops.commit(message)?
+    };
     println!(
         "{} {} — index cleared. Run `duh status` to inspect.",
         crate::colors::green(&h.to_string()),
@@ -59,7 +74,8 @@ pub fn commit<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CommitCommand) -> Re
 }
 
 fn generate_message<F: vfs::FileSystem>(repo: &mut Repo<F>) -> Result<String, Box<dyn Error>> {
-    let summaries = repo.staged_summary()?;
+    let fileops = FileOps::from_repo(repo);
+    let summaries = fileops.staged_summary()?;
     if summaries.is_empty() {
         return Ok("Empty commit".to_string());
     }
@@ -79,7 +95,11 @@ fn generate_message<F: vfs::FileSystem>(repo: &mut Repo<F>) -> Result<String, Bo
         let display = s.path.strip_prefix(&cwd_str).unwrap_or(&s.path);
         let is_new = s.unchanged_bytes == 0 && s.deleted_bytes == 0;
         if is_new {
-            lines.push(format!("  {}  +{}  (new)", display, fmt_bytes(s.added_bytes)));
+            lines.push(format!(
+                "  {}  +{}  (new)",
+                display,
+                fmt_bytes(s.added_bytes)
+            ));
         } else {
             let mut parts = vec![format!("+{}", fmt_bytes(s.added_bytes))];
             if s.deleted_bytes > 0 {

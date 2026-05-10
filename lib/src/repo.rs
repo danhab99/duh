@@ -23,6 +23,7 @@ impl<T: Read + Seek + ?Sized> ReadSeek for T {}
 
 use toml::{self, map::Map, Value};
 
+#[derive(Clone)]
 pub struct Repo<F: ?Sized + FileSystem> {
     root_path: String,
     pub me: Person,
