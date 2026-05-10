@@ -70,7 +70,7 @@ pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
 
         fetch_commit_from_remote(local, remote, commit.parent)?;
     } else {
-        panic!("not a commit");
+        return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type")));
     }
 
     Ok(())
@@ -85,7 +85,9 @@ pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash) + Copy>(
     let x = local.get_object(hash)?.unwrap();
 
     if let Object::Commit(c) = x {
-        push_branch_to_remote(local, remote, c.parent, progress)?;
+        if !c.parent.is_zero() {
+            push_branch_to_remote(local, remote, c.parent, progress)?;
+        }
 
         let h = remote.save_obj(Object::Commit(c.clone()))?;
         progress(h);
@@ -103,7 +105,7 @@ pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash) + Copy>(
             }
         }
     } else {
-        panic!("not a commit");
+        return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type")));
     }
 
     Ok(())

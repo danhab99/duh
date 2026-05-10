@@ -1,6 +1,7 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
+use lib::file::FileOps;
 use lib::repo::Repo;
 
 #[derive(Args)]
@@ -13,7 +14,8 @@ pub struct UnstageCommand {
 
 pub fn unstage<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
     println!("{} {}", crate::colors::cyan("Unstaging file"), cmd.file_path);
-    repo.unstage_file(cmd.file_path.clone())?;
+    let mut fileops = FileOps::from_repo(repo);
+    fileops.unstage_file(cmd.file_path.clone())?;
 
     println!("Unstaged {}", crate::colors::green(&cmd.file_path.to_string()));
 

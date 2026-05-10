@@ -217,7 +217,7 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
         let commit = match self.repo.get_object(hash)? {
             Some(Object::Commit(c)) => c,
             None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
-            _ => panic!("expected commit object"),
+            _ => return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
         };
 
         let file_version_hash = match commit.files.get(fp.as_str()) {
@@ -234,14 +234,14 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
         let file_version = match self.repo.get_object(*file_version_hash)? {
             Some(Object::File(c)) => c,
-            _ => panic!("expected file"),
+            _ => return Err(Box::new(crate::error::DuhError::invalid_object("file", "unknown object type"))),
         };
 
         let mut fragments = Vec::with_capacity(file_version.fragments.len());
         for frag_hash in file_version.fragments {
             match self.repo.get_object(frag_hash)? {
                 Some(Object::FileDiffFragment(frag)) => fragments.push(frag),
-                _ => panic!("expected file diff fragment"),
+                _ => return Err(Box::new(crate::error::DuhError::invalid_object("file diff fragment", "unknown object type"))),
             }
         }
 

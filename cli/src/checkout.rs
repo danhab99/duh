@@ -1,9 +1,8 @@
 use std::error::Error;
 use std::fs;
-use std::io::Read;
 
 use clap::clap_derive::Args;
-use lib::hash::Hash;
+use lib::file::FileOps;
 use lib::objects::{Object, ObjectReference};
 use lib::repo::Repo;
 
@@ -49,7 +48,8 @@ pub fn checkout<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CheckoutCommand) -
 
     // Reconstruct and write the file to working directory without
     // materializing the whole contents in memory.
-    let mut reader = repo.open_file(cmd.file_path.clone(), target_hash)?;
+    let mut fileops = FileOps::from_repo(repo);
+    let mut reader = fileops.open_file(cmd.file_path.clone(), target_hash)?;
 
     let out_path = repo.get_path_in_cwd_str(&cmd.file_path);
     let mut out_file = fs::File::create(out_path)?;
