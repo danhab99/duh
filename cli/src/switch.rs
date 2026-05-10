@@ -23,7 +23,7 @@ pub fn switch<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &SwitchCommand) -> Re
     let uncomitted_changes = status(repo, &crate::status::StatusCommand {})?;
 
     if uncomitted_changes && cmd.create == None || cmd.create == Some(false) {
-        panic!("uncommitted changes");
+        return Err(Box::new(lib::error::DuhError::UncommittedChanges));
     }
 
     println!("{} {}", crate::colors::cyan("Switching to"), cmd.name);

@@ -58,7 +58,7 @@ pub fn commit<F: vfs::FileSystem>(
             );
             msg
         }
-        _ => prompt_editor(),
+        _ => prompt_editor()?,
     };
 
     let h = {
@@ -125,7 +125,7 @@ fn fmt_bytes(n: usize) -> String {
     }
 }
 
-fn prompt_editor() -> String {
+fn prompt_editor() -> Result<String, Box<dyn Error>> {
     let editor_command = std::env::var("EDITOR").unwrap();
 
     let message_dir = std::env::temp_dir().to_string_lossy().into_owned();
@@ -137,10 +137,11 @@ fn prompt_editor() -> String {
     let exit_code = command.status().unwrap();
 
     if !exit_code.success() {
-        panic!("exit code is not zero");
+        let code = exit_code.code().unwrap_or(-1);
+        return Err(Box::new(lib::error::DuhError::EditorExitedWithError(code)));
     }
 
     let msg = fs::read(message_path.clone()).unwrap();
 
-    String::from_utf8(msg).unwrap()
+    Ok(String::from_utf8(msg).unwrap())
 }

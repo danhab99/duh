@@ -50,7 +50,7 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
 
         if p.eq(&PathBuf::from("/")) {
             return Err(Box::new(NoRepo {
-                details: String::from(p.to_str().unwrap()),
+                details: String::from("not inside a duh repository"),
             }));
         }
 

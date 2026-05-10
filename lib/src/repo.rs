@@ -452,7 +452,7 @@ impl<F: FileSystem> Repo<F> {
 
         let commit = match self.get_object(commit_hash)? {
             Some(Object::Commit(commit)) => commit,
-            _ => panic!(""),
+            _ => return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
         };
 
         Ok(commit
@@ -470,7 +470,7 @@ impl<F: FileSystem> Repo<F> {
         let commit_hash = self.get_head_commit_hash()?;
         match self.get_object(commit_hash)? {
             Some(Object::Commit(commit)) => Ok(commit),
-            _ => panic!("not a commit"),
+            _ => Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
         }
     }
 
@@ -566,13 +566,13 @@ impl<F: FileSystem> Repo<F> {
 
         match u.scheme() {
             "s3" => {
-                panic!("not implemented");
+                Err(Box::new(crate::error::DuhError::unsupported_scheme("s3", "S3 remotes not yet implemented")))
             }
             "http" | "https" => {
-                panic!("not implemented");
+                Err(Box::new(crate::error::DuhError::unsupported_scheme(u.scheme(), "HTTP/HTTPS remotes not yet implemented")))
             }
             "ftp" | "sftp" => {
-                panic!("not implemented");
+                Err(Box::new(crate::error::DuhError::unsupported_scheme(u.scheme(), "FTP/SFTP remotes not yet implemented")))
             }
             "path" => {
                 let path = u.path();
@@ -581,16 +581,8 @@ impl<F: FileSystem> Repo<F> {
                 Ok(r)
             }
             _ => {
-                panic!("not a valid scheme")
+                Err(Box::new(crate::error::DuhError::unsupported_scheme(u.scheme(), "Unknown remote scheme")))
             }
         }
     }
 }
-
-// fn get_path_in_metadata(path: &str) -> PathBuf {
-//     vlog!("repo::get_path_in_metadata: path='{}'", path);
-//     let mut p = PathBuf::new();
-//     p.push(REPO_METADATA_DIR_NAME);
-//     p.push(path);
-//     return p;
-// }
