@@ -3,13 +3,17 @@ use std::io::{self, Write};
 
 use clap::clap_derive::Args;
 use globwalk::GlobWalkerBuilder;
+use lib::file::FileOps;
 use lib::{dedup::DedupProgress, diff::DiffFragment, repo::Repo};
 
 #[derive(Args)]
 #[command(about = "Stage files (produce fragment objects without committing)")]
 pub struct StageCommand {
     /// Paths or globs of files to stage
-    #[arg(required = true, help = "Paths or glob patterns of files to stage (relative to current working directory)")]
+    #[arg(
+        required = true,
+        help = "Paths or glob patterns of files to stage (relative to current working directory)"
+    )]
     pub file_paths: Vec<String>,
 }
 
@@ -115,14 +119,19 @@ impl ProgressPrinter {
     }
 }
 
-fn stage_file<F: vfs::FileSystem>(file_path: &str, repo: &mut Repo<F>) -> Result<(), Box<dyn Error>> {
+fn stage_file<F: vfs::FileSystem>(
+    file_path: &str,
+    repo: &mut Repo<F>,
+) -> Result<(), Box<dyn Error>> {
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let bytes_per_col = (file_size / MAX_COLS).max(1);
 
     let mut printer = ProgressPrinter::new(bytes_per_col);
     let mut frag_events: Vec<(u64, char, &'static str)> = Vec::new();
 
-    let h = repo.stage_file(
+    let mut fileops = FileOps::from_repo(repo);
+
+    let h = fileops.stage_file(
         file_path.to_string(),
         Some(|fragment: DiffFragment| {
             let entry = match fragment {
@@ -169,7 +178,10 @@ fn stage_file<F: vfs::FileSystem>(file_path: &str, repo: &mut Repo<F>) -> Result
     Ok(())
 }
 
-pub fn stage<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &StageCommand) -> Result<(), Box<dyn Error>> {
+pub fn stage<F: vfs::FileSystem>(
+    repo: &mut Repo<F>,
+    cmd: &StageCommand,
+) -> Result<(), Box<dyn Error>> {
     // Load .duhignore from the repo root if it exists. Each non-blank,
     // non-comment line becomes a negated glob pattern passed to GlobWalkerBuilder.
     let ignore_path = std::path::Path::new(repo.root_path()).join(".duhignore");
