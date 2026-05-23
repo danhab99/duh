@@ -4,7 +4,7 @@ use std::fs;
 use clap::clap_derive::Args;
 use lib::file::FileOps;
 use lib::objects::{Object, ObjectReference};
-use lib::repo::Repo;
+use lib::space::Space;
 
 #[derive(Args)]
 #[command(about = "Restore a file's contents from a specified commit into the working directory")]
@@ -18,17 +18,17 @@ pub struct CheckoutCommand {
     pub commit: Option<ObjectReference>,
 }
 
-pub fn checkout<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CheckoutCommand) -> Result<(), Box<dyn Error>> {
+pub fn checkout<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &CheckoutCommand) -> Result<(), Box<dyn Error>> {
     // Resolve commit (default to HEAD)
     let target_hash = match &cmd.commit {
-        Some(r) => repo.resolve_ref_name(r.clone())?,
-        None => repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?,
+        Some(r) => space.resolve_ref_name(r.clone())?,
+        None => space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?,
     };
 
     // Ensure the commit exists and the file is present in that commit
-    match repo.get_object(target_hash)? {
+    match space.get_object(target_hash)? {
         Some(Object::Commit(c)) => {
-            let fp = repo.get_path_in_cwd_str(&cmd.file_path);
+            let fp = space.get_path_in_cwd_str(&cmd.file_path);
             if c.files.get(fp.as_str()).is_none() {
                 println!("{} {}",
                     crate::colors::red("file not found in commit:"),
@@ -48,13 +48,13 @@ pub fn checkout<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &CheckoutCommand) -
 
     // Reconstruct and write the file to working directory without
     // materializing the whole contents in memory.
-    let mut fileops = FileOps::from_repo(repo);
+    let mut fileops = FileOps::from_space(space);
     let mut reader = fileops.open_file(cmd.file_path.clone(), target_hash)?;
 
-    let out_path = repo.get_path_in_cwd_str(&cmd.file_path);
+    let out_path = space.get_path_in_cwd_str(&cmd.file_path);
     let mut out_file = fs::File::create(out_path)?;
 
-    // copy stream directly from the repo reader to the output file
+    // copy stream directly from the space reader to the output file
     std::io::copy(&mut reader, &mut out_file)?;
 
     println!("{} {} @ {}",

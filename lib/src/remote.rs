@@ -1,15 +1,15 @@
 use crate::{
     hash::Hash,
     objects::{FileFragment, Object},
-    repo::Repo,
+    space::Space,
     vlog,
 };
 use std::error::Error;
 use vfs::FileSystem;
 
 pub fn fetch_all_refs<L: FileSystem, R: FileSystem>(
-    local: &mut Repo<L>,
-    remote: &mut Repo<R>,
+    local: &mut Space<L>,
+    remote: &mut Space<R>,
     remote_name: &str,
 ) -> Result<(), Box<dyn Error>> {
     vlog!("remote::fetch_all_refs");
@@ -31,8 +31,8 @@ pub fn fetch_all_refs<L: FileSystem, R: FileSystem>(
 }
 
 pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
-    local: &mut Repo<L>,
-    remote: &mut Repo<R>,
+    local: &mut Space<L>,
+    remote: &mut Space<R>,
     hash: Hash,
 ) -> Result<(), Box<dyn Error>> {
     vlog!("remote::fetch_commit_from_remote {}", hash.to_hex());
@@ -77,8 +77,8 @@ pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
 }
 
 pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash) + Copy>(
-    local: &mut Repo<L>,
-    remote: &mut Repo<R>,
+    local: &mut Space<L>,
+    remote: &mut Space<R>,
     hash: Hash,
     progress: F,
 ) -> Result<(), Box<dyn Error>> {

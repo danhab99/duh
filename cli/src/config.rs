@@ -1,10 +1,10 @@
 use std::error::Error;
 
 use clap::{clap_derive::Args, Subcommand};
-use lib::repo::Repo;
+use lib::space::Space;
 
 #[derive(Args)]
-#[command(about = "Get or set repository configuration values")]
+#[command(about = "Get or set spacesitory configuration values")]
 pub struct ConfigCommand {
     #[command(subcommand)]
     pub action: ConfigAction,
@@ -26,14 +26,14 @@ pub enum ConfigAction {
     },
 }
 
-pub fn config<F: vfs::FileSystem>(repo: &Repo<F>, cmd: &ConfigCommand) -> Result<(), Box<dyn Error>> {
+pub fn config<F: vfs::FileSystem>(space: &Space<F>, cmd: &ConfigCommand) -> Result<(), Box<dyn Error>> {
     match &cmd.action {
         ConfigAction::Get { key } => {
-            let val = repo.get_config_value(key)?;
+            let val = space.get_config_value(key)?;
             println!("{}", val);
         }
         ConfigAction::Set { key, value } => {
-            repo.set_config_value(key, value)?;
+            space.set_config_value(key, value)?;
             println!(
                 "{} {} = {}",
                 crate::colors::green("set"),

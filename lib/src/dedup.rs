@@ -230,7 +230,7 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
 
         // ── Phase 1: index the old (baseline) stream ──────────────────────
         let mut old_map = HashMap::<Hash, Position>::new();
-        // Maps hash → sequential discovery index for matched-color reporting.
+        // Maps hash → sequential discovery index for matched-color spacerting.
         let mut old_index_map = HashMap::<Hash, usize>::new();
         let mut old_chunk_idx = 0usize;
 

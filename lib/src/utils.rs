@@ -3,7 +3,7 @@ use std::{
     error::Error, io::Read, path::{Path, PathBuf}
 };
 
-use crate::error::NoRepo;
+use crate::error::NoSpace;
 
 pub fn get_cwd() -> String {
     std::env::current_dir()
@@ -34,12 +34,12 @@ macro_rules! vlog {
     };
 }
 
-pub const REPO_METADATA_DIR_NAME: &str = ".duh";
-pub fn getRepoConfigFileName() -> String {
-    return format!("{}/{}", REPO_METADATA_DIR_NAME, "config");
+pub const SPACE_METADATA_DIR_NAME: &str = ".duh";
+pub fn getSpaceConfigFileName() -> String {
+    return format!("{}/{}", SPACE_METADATA_DIR_NAME, "config");
 }
-pub fn getRepoIgnoreFileName() -> String {
-    return format!("{}/{}", REPO_METADATA_DIR_NAME, "ignore");
+pub fn getSpaceIgnoreFileName() -> String {
+    return format!("{}/{}", SPACE_METADATA_DIR_NAME, "ignore");
 }
 
 pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error>> {
@@ -49,8 +49,8 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
         let mut p = path.clone();
 
         if p.eq(&PathBuf::from("/")) {
-            return Err(Box::new(NoRepo {
-                details: String::from("not inside a duh repository"),
+            return Err(Box::new(NoSpace {
+                details: String::from("not inside a duh spacesitory"),
             }));
         }
 

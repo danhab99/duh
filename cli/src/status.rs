@@ -4,14 +4,14 @@ use clap::clap_derive::Args;
 use lib::{
     hash::Hash,
     objects::{Object, ObjectReference},
-    repo::Repo,
+    space::Space,
 };
 
 #[derive(Args)]
 #[command(about = "Show status of tracked files (compare working copy -> index / HEAD)")]
 pub struct StatusCommand {}
 
-pub fn status<F: vfs::FileSystem>(repo: &mut Repo<F>, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
+pub fn status<F: vfs::FileSystem>(space: &mut Space<F>, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
     let cwd = std::env::current_dir()?;
     let cwd_str = cwd.to_str().unwrap_or("").to_string();
 
@@ -19,17 +19,17 @@ pub fn status<F: vfs::FileSystem>(repo: &mut Repo<F>, _cmd: &StatusCommand) -> R
     // entries in the index override when present.
     let mut tracked: HashMap<String, Hash> = HashMap::new();
 
-    let head_hash = repo.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+    let head_hash = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
     if !head_hash.is_zero() {
-        if let Some(Object::Commit(head)) = repo.get_object(head_hash)? {
+        if let Some(Object::Commit(head)) = space.get_object(head_hash)? {
             for (path, version_hash) in head.files.iter() {
                 tracked.insert(path.clone(), *version_hash);
             }
         }
     }
 
-    for path in repo.index_paths() {
-        if let Some(version_hash) = repo.get_indexed_version(&path) {
+    for path in space.index_paths() {
+        if let Some(version_hash) = space.get_indexed_version(&path) {
             tracked.insert(path.clone(), version_hash);
         }
     }
@@ -57,7 +57,7 @@ pub fn status<F: vfs::FileSystem>(repo: &mut Repo<F>, _cmd: &StatusCommand) -> R
         let mut f = std::fs::File::open(&path)?;
         let working_hash = Hash::digest_file_stream(&mut f)?;
 
-        match repo.get_object(*version_hash)? {
+        match space.get_object(*version_hash)? {
             Some(Object::File(fv)) => {
                 if fv.content_hash == working_hash {
                     unchanged.push(display);
@@ -69,7 +69,7 @@ pub fn status<F: vfs::FileSystem>(repo: &mut Repo<F>, _cmd: &StatusCommand) -> R
         }
     }
 
-    let head_ref_name = match repo.get_ref("HEAD".into())? {
+    let head_ref_name = match space.get_ref("HEAD".into())? {
         ObjectReference::Ref(name) => name,
         ObjectReference::Hash(hash) => hash.to_string(),
         ObjectReference::AbbrevHash(s) => s,

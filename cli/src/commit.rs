@@ -1,7 +1,7 @@
 use std::{error::Error, fs};
 
 use clap::clap_derive::Args;
-use lib::{file::FileOps, repo::Repo};
+use lib::{file::FileOps, space::Space};
 
 #[derive(Args)]
 #[command(about = "Stage the given file and create a commit with the provided message")]
@@ -29,11 +29,11 @@ pub struct CommitCommand {
 }
 
 pub fn commit<F: vfs::FileSystem>(
-    repo: &mut Repo<F>,
+    space: &mut Space<F>,
     cmd: &CommitCommand,
 ) -> Result<(), Box<dyn Error>> {
     {
-        let mut fileops = FileOps::from_repo(repo);
+        let mut fileops = FileOps::from_space(space);
 
         if let Some(fp) = &cmd.file_path {
             println!("{} {}", crate::colors::cyan("Staging file"), fp);
@@ -50,7 +50,7 @@ pub fn commit<F: vfs::FileSystem>(
     let message = match cmd.message.clone() {
         Some(ref x) if !x.is_empty() => x.clone(),
         _ if cmd.generate || std::env::var("EDITOR").is_err() => {
-            let msg = generate_message(repo)?;
+            let msg = generate_message(space)?;
             println!(
                 "{} {}",
                 crate::colors::dim("Generated message:"),
@@ -62,7 +62,7 @@ pub fn commit<F: vfs::FileSystem>(
     };
 
     let h = {
-        let mut fileops = FileOps::from_repo(repo);
+        let mut fileops = FileOps::from_space(space);
         fileops.commit(message)?
     };
     println!(
@@ -73,8 +73,8 @@ pub fn commit<F: vfs::FileSystem>(
     Ok(())
 }
 
-fn generate_message<F: vfs::FileSystem>(repo: &mut Repo<F>) -> Result<String, Box<dyn Error>> {
-    let fileops = FileOps::from_repo(repo);
+fn generate_message<F: vfs::FileSystem>(space: &mut Space<F>) -> Result<String, Box<dyn Error>> {
+    let fileops = FileOps::from_space(space);
     let summaries = fileops.staged_summary()?;
     if summaries.is_empty() {
         return Ok("Empty commit".to_string());

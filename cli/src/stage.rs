@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use clap::clap_derive::Args;
 use globwalk::GlobWalkerBuilder;
 use lib::file::FileOps;
-use lib::{dedup::DedupProgress, diff::DiffFragment, repo::Repo};
+use lib::{dedup::DedupProgress, diff::DiffFragment, space::Space};
 
 #[derive(Args)]
 #[command(about = "Stage files (produce fragment objects without committing)")]
@@ -121,7 +121,7 @@ impl ProgressPrinter {
 
 fn stage_file<F: vfs::FileSystem>(
     file_path: &str,
-    repo: &mut Repo<F>,
+    space: &mut Space<F>,
 ) -> Result<(), Box<dyn Error>> {
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let bytes_per_col = (file_size / MAX_COLS).max(1);
@@ -129,7 +129,7 @@ fn stage_file<F: vfs::FileSystem>(
     let mut printer = ProgressPrinter::new(bytes_per_col);
     let mut frag_events: Vec<(u64, char, &'static str)> = Vec::new();
 
-    let mut fileops = FileOps::from_repo(repo);
+    let mut fileops = FileOps::from_space(space);
 
     let h = fileops.stage_file(
         file_path.to_string(),
@@ -179,12 +179,12 @@ fn stage_file<F: vfs::FileSystem>(
 }
 
 pub fn stage<F: vfs::FileSystem>(
-    repo: &mut Repo<F>,
+    space: &mut Space<F>,
     cmd: &StageCommand,
 ) -> Result<(), Box<dyn Error>> {
-    // Load .duhignore from the repo root if it exists. Each non-blank,
+    // Load .duhignore from the space root if it exists. Each non-blank,
     // non-comment line becomes a negated glob pattern passed to GlobWalkerBuilder.
-    let ignore_path = std::path::Path::new(repo.root_path()).join(".duhignore");
+    let ignore_path = std::path::Path::new(space.root_path()).join(".duhignore");
     let mut ignore_patterns: Vec<String> = Vec::new();
     if ignore_path.exists() {
         let contents = std::fs::read_to_string(&ignore_path)?;
@@ -234,7 +234,7 @@ pub fn stage<F: vfs::FileSystem>(
                 }
                 let path = p.to_string_lossy().into_owned();
                 println!("-- Staging file {}", path);
-                stage_file(&path, repo)?;
+                stage_file(&path, space)?;
             }
         }
     }

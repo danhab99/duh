@@ -1,5 +1,5 @@
 use crate::objects::FileFragment;
-use crate::repo::{ReadSeek, Repo, RepoResult};
+use crate::space::{ReadSeek, Space, SpaceResult};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 /// - **`UNCHANGED { len }`**: Reads `len` bytes from the old file stream.
 ///   The old file position advances by `len` bytes.
 /// 
-/// - **`ADDED { body, len }`**: Outputs the added fragment data (loaded from repo).
+/// - **`ADDED { body, len }`**: Outputs the added fragment data (loaded from space).
 ///   The old file position stays the same (no advancement).
 /// 
 /// - **`DELETED { len }`**: Skips `len` bytes in the old file without outputting anything.
@@ -64,17 +64,17 @@ use std::path::PathBuf;
 /// 
 /// ```rust,no_run
 /// use lib::replay::LazyFileReplay;
-/// use lib::repo::Repo;
+/// use lib::space::Space;
 /// use std::fs::File;
 /// use std::io::Read;
 /// 
-/// # fn example(repo: &Repo, fragments: Vec<lib::objects::FileFragment>) -> std::io::Result<()> {
+/// # fn example(space: &Space, fragments: Vec<lib::objects::FileFragment>) -> std::io::Result<()> {
 /// // Open the old file
 /// let old_file = File::open("old_version.bin")?;
 /// 
 /// // Create the lazy replay reader
 /// let mut reader = LazyFileReplay::new(
-///     repo,
+///     space,
 ///     Box::new(old_file),
 ///     fragments,
 /// ).expect("Failed to create replay reader");
@@ -119,10 +119,10 @@ pub struct LazyFileReplay {
 impl LazyFileReplay {
     /// Create a new lazy file replay reader
     pub fn new<F: vfs::FileSystem>(
-        repo: &Repo<F>,
+        space: &Space<F>,
         old_reader: Box<dyn ReadSeek>,
         fragments: Vec<FileFragment>,
-    ) -> RepoResult<Self> {
+    ) -> SpaceResult<Self> {
         use crate::objects::ObjectReference;
 
         // Pre-compute on-disk paths for ADDED fragment objects.
@@ -133,7 +133,7 @@ impl LazyFileReplay {
         for frag in &fragments {
             match frag {
                 FileFragment::ADDED { body, .. } => {
-                    let path = repo.get_object_path(ObjectReference::Hash(*body))?;
+                    let path = space.get_object_path(ObjectReference::Hash(*body))?;
                     added_fragment_paths.push(Some(path));
                 }
                 _ => {
@@ -510,18 +510,18 @@ mod tests {
             FileFragment::UNCHANGED { len: 10 },
         ];
         
-        // Create a temporary repo for testing
+        // Create a temporary space for testing
         use tempfile::TempDir;
         
         let temp_dir = TempDir::new().unwrap();
-        let repo_root = temp_dir.path().to_str().unwrap().to_string();
+        let space_root = temp_dir.path().to_str().unwrap().to_string();
         
-        // Initialize the repo properly
-        let repo = Repo::initialize_at(repo_root).unwrap();
+        // Initialize the space properly
+        let space = Space::initialize_at(space_root).unwrap();
         
         // Create the replay reader
         let mut replay = LazyFileReplay::new(
-            &repo,
+            &space,
             Box::new(old_reader),
             fragments,
         ).unwrap();

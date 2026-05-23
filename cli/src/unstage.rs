@@ -2,7 +2,7 @@ use std::error::Error;
 
 use clap::clap_derive::Args;
 use lib::file::FileOps;
-use lib::repo::Repo;
+use lib::space::Space;
 
 #[derive(Args)]
 #[command(about = "Stage a file (produce fragment objects without committing)")]
@@ -12,9 +12,9 @@ pub struct UnstageCommand {
     pub file_path: String,
 }
 
-pub fn unstage<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
+pub fn unstage<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
     println!("{} {}", crate::colors::cyan("Unstaging file"), cmd.file_path);
-    let mut fileops = FileOps::from_repo(repo);
+    let mut fileops = FileOps::from_space(space);
     fileops.unstage_file(cmd.file_path.clone())?;
 
     println!("Unstaged {}", crate::colors::green(&cmd.file_path.to_string()));

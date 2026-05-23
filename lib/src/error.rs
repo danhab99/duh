@@ -40,7 +40,7 @@ pub enum DuhError {
     FileOperationFailed(String),
     
     // Generic errors  
-    NoRepo(String),
+    NoSpace(String),
     Generic(String),
 }
 
@@ -82,7 +82,7 @@ impl fmt::Display for DuhError {
             DuhError::FileOperationFailed(msg) => {
                 write!(f, "File operation failed: {}", msg)
             }
-            DuhError::NoRepo(msg) => {
+            DuhError::NoSpace(msg) => {
                 write!(f, "{}", msg)
             }
             DuhError::Generic(msg) => {
@@ -92,28 +92,28 @@ impl fmt::Display for DuhError {
     }
 }
 
-// Keep backward compatibility with NoRepo
-pub struct NoRepo {
+// Keep backward compatibility with NoSpace
+pub struct NoSpace {
     pub details: String,
 }
 
-impl Error for NoRepo {}
+impl Error for NoSpace {}
 
-impl fmt::Debug for NoRepo {
+impl fmt::Debug for NoSpace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.details)
     }
 }
 
-impl fmt::Display for NoRepo {
+impl fmt::Display for NoSpace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.details)
     }
 }
 
-impl NoRepo {
-    pub fn new(msg: &str) -> Box<NoRepo> {
-        Box::new(NoRepo { details: msg.to_string() })
+impl NoSpace {
+    pub fn new(msg: &str) -> Box<NoSpace> {
+        Box::new(NoSpace { details: msg.to_string() })
     }
 }
 

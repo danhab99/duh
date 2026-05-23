@@ -2,7 +2,7 @@ use std::error::Error;
 
 use clap::clap_derive::Args;
 use lib::objects::{Object, ObjectReference};
-use lib::repo::Repo;
+use lib::space::Space;
 
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
@@ -12,8 +12,8 @@ pub struct ShowCommand {
     pub commit: Option<ObjectReference>,
 }
 
-pub fn show<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
-    let head = repo.resolve_ref_name(
+pub fn show<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> {
+    let head = space.resolve_ref_name(
         cmd.commit
             .clone()
             .unwrap_or(ObjectReference::Ref("HEAD".to_string())),
@@ -24,7 +24,7 @@ pub fn show<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &ShowCommand) -> Result
         return Ok(());
     }
 
-    match repo.get_object(head)? {
+    match space.get_object(head)? {
         Some(Object::Commit(c)) => {
             println!("{}", crate::colors::cyan(&head.to_string()));
             println!("parent: {}", crate::colors::dim(&c.parent.to_string()));
