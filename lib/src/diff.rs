@@ -337,7 +337,7 @@ mod tests {
         let new = b"12356";
         let frags = fragments_from(old, new, 2, 1024);
         // because the last two bytes in `old` form a full window and no
-        // matching window is found in `new`, the algorithm reports the suffix
+        // matching window is found in `new`, the algorithm spacerts the suffix
         // as deleted before resynchronising.
         assert_eq!(frags, vec![
             DiffFragment::UNCHANGED { len: 2 },

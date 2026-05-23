@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
-use lib::repo::Repo;
+use lib::space::Space;
 
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
@@ -15,11 +15,11 @@ pub struct PushCommand {
     pub remote_name: Option<String>,
 }
 
-pub fn push<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &PushCommand) -> Result<(), Box<dyn Error>> {
-    let mut remote = repo.get_remote_by_name(cmd.remote_name.as_deref().unwrap_or("origin"))?;
+pub fn push<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &PushCommand) -> Result<(), Box<dyn Error>> {
+    let mut remote = space.get_remote_by_name(cmd.remote_name.as_deref().unwrap_or("origin"))?;
 
-    let h = repo.get_head_commit_hash()?;
+    let h = space.get_head_commit_hash()?;
 
-    lib::remote::push_branch_to_remote(repo, &mut remote, h, |_| {})?;
+    lib::remote::push_branch_to_remote(space, &mut remote, h, |_| {})?;
     Ok(())
 }

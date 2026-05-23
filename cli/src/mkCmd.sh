@@ -9,7 +9,7 @@ use std::error::Error;
 
 use clap::clap_derive::Args;
 use lib::objects::{Object, ObjectReference};
-use lib::repo::Repo;
+use lib::space::Space;
 
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
@@ -17,7 +17,7 @@ use lib::repo::Repo;
 pub struct $1Command {
 }
 
-pub fn $1(repo: &mut Repo, cmd: &$1Command) -> Result<(), Box<dyn Error>> {
+pub fn $1(space: &mut Space, cmd: &$1Command) -> Result<(), Box<dyn Error>> {
 }
 
 EOF

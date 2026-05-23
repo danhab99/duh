@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
-use lib::{objects::ObjectReference, repo::Repo};
+use lib::{objects::ObjectReference, space::Space};
 
 #[derive(Args)]
 #[command(about = "Stage a file (produce fragment objects without committing)")]
@@ -20,11 +20,11 @@ pub struct BranchCommand {
     set: Option<String>,
 }
 
-pub fn branch<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
-    let head_ref = repo.get_ref("HEAD".into())?;
+pub fn branch<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
+    let head_ref = space.get_ref("HEAD".into())?;
 
     if let Some(name) = cmd.delete.clone() {
-        let deleting_ref = repo.get_ref(name.clone())?;
+        let deleting_ref = space.get_ref(name.clone())?;
 
         if head_ref.eq(&deleting_ref) {
             println!("Unable to delete the branch you are on");
@@ -32,21 +32,21 @@ pub fn branch<F: vfs::FileSystem>(repo: &mut Repo<F>, cmd: &BranchCommand) -> Re
         }
 
         println!("Deleting branch {}", name.clone());
-        repo.delete_ref(name.as_str())?;
+        space.delete_ref(name.as_str())?;
     } else if let Some(name) = cmd.rename.clone() {
-        let current_commit = repo.resolve_ref_name(head_ref.clone())?;
+        let current_commit = space.resolve_ref_name(head_ref.clone())?;
 
-        repo.delete_ref(head_ref.to_string().as_str())?;
-        repo.set_ref(&name, ObjectReference::Hash(current_commit))?;
+        space.delete_ref(head_ref.to_string().as_str())?;
+        space.set_ref(&name, ObjectReference::Hash(current_commit))?;
         // Update HEAD to point to the new branch name; the old ref was just deleted.
-        repo.set_ref("HEAD", ObjectReference::Ref(name.clone()))?;
+        space.set_ref("HEAD", ObjectReference::Ref(name.clone()))?;
     } else if let Some(set) = cmd.set.clone() {
         let commit = ObjectReference::from(set);
-        repo.set_ref(head_ref.to_string().as_str(), commit)?;
+        space.set_ref(head_ref.to_string().as_str(), commit)?;
     } else {
         println!("Listing all branches");
 
-        let refs = repo.list_refs("branch")?;
+        let refs = space.list_refs("branch")?;
 
         for r in refs {
             if let ObjectReference::Ref(name) = r {

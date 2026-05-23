@@ -1,7 +1,7 @@
 use crate::{
     hash::Hash,
     objects::{CommitStruct, Object, ObjectReference, Person},
-    utils::{self, find_file, getRepoConfigFileName, REPO_METADATA_DIR_NAME},
+    utils::{self, find_file, getSpaceConfigFileName, SPACE_METADATA_DIR_NAME},
     vlog,
 };
 use std::{
@@ -24,7 +24,7 @@ impl<T: Read + Seek + ?Sized> ReadSeek for T {}
 use toml::{self, map::Map, Value};
 
 #[derive(Clone)]
-pub struct Repo<F: ?Sized + FileSystem> {
+pub struct Space<F: ?Sized + FileSystem> {
     root_path: String,
     pub me: Person,
     pub index: HashMap<String, Hash>,
@@ -33,8 +33,8 @@ pub struct Repo<F: ?Sized + FileSystem> {
     fs: F,
 }
 
-pub type RepoError = Box<dyn Error>;
-pub type RepoResult<T> = Result<T, RepoError>;
+pub type SpaceError = Box<dyn Error>;
+pub type SpaceResult<T> = Result<T, SpaceError>;
 
 pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 
@@ -42,9 +42,9 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 /// bodies are split into multiple Fragment objects at stage time.
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
-impl<F: FileSystem> Repo<F> {
-    pub fn at_root_path(root_path: Option<String>, filesystem: F) -> RepoResult<Repo<F>> {
-        vlog!("repo::at_root_path called with root_path={:?}", root_path);
+impl<F: FileSystem> Space<F> {
+    pub fn at_root_path(root_path: Option<String>, filesystem: F) -> SpaceResult<Space<F>> {
+        vlog!("space::at_root_path called with root_path={:?}", root_path);
         let rp = match root_path {
             Some(x) => x,
             None => {
@@ -54,15 +54,15 @@ impl<F: FileSystem> Repo<F> {
             }
         };
 
-        let metadata_path = find_file(rp.as_str(), REPO_METADATA_DIR_NAME)?;
-        // metadata_path == "<repo-root>/.duh" — store the repo root (parent of .duh)
-        let repo_root = PathBuf::from(&metadata_path)
+        let metadata_path = find_file(rp.as_str(), SPACE_METADATA_DIR_NAME)?;
+        // metadata_path == "<space-root>/.duh" — store the space root (parent of .duh)
+        let space_root = PathBuf::from(&metadata_path)
             .parent()
             .and_then(|p| p.to_str())
-            .ok_or("couldn't determine repo root")?
+            .ok_or("couldn't determine space root")?
             .to_string();
 
-        let config_path = find_file(rp.as_str(), &getRepoConfigFileName())?;
+        let config_path = find_file(rp.as_str(), &getSpaceConfigFileName())?;
 
         let mut content = String::new();
         filesystem
@@ -92,9 +92,9 @@ impl<F: FileSystem> Repo<F> {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let mut r = Repo::<F> {
+        let mut r = Space::<F> {
             fs: filesystem,
-            root_path: repo_root,
+            root_path: space_root,
             chunk_size,
             max_size,
             me: Person {
@@ -117,16 +117,16 @@ impl<F: FileSystem> Repo<F> {
             index: HashMap::new(),
         };
 
-        // Verbose: show resolved repo/user info
+        // Verbose: show resolved space/user info
         vlog!(
-            "repo::at_root_path: user='{} <{}>' repo_root='{}'",
+            "space::at_root_path: user='{} <{}>' space_root='{}'",
             r.me.name,
             r.me.email,
             r.root_path
         );
 
-        let index_file_path = r.get_path_in_repo_str("index");
-        vlog!("repo::at_root_path: index path = {}", index_file_path,);
+        let index_file_path = r.get_path_in_space_str("index");
+        vlog!("space::at_root_path: index path = {}", index_file_path,);
 
         let mut index_file = r.fs.open_file(index_file_path.as_str()).unwrap();
         let mut contents = String::new();
@@ -146,7 +146,7 @@ impl<F: FileSystem> Repo<F> {
             );
         }
 
-        vlog!("repo::at_root_path: loaded {} index entries", r.index.len());
+        vlog!("space::at_root_path: loaded {} index entries", r.index.len());
 
         Ok(r)
     }
@@ -171,31 +171,31 @@ impl<F: FileSystem> Repo<F> {
         Ok(())
     }
 
-    fn get_path_in_repo(&self, p: &str) -> PathBuf {
-        vlog!("repo::get_path_in_repo: p='{}'", p);
+    fn get_path_in_space(&self, p: &str) -> PathBuf {
+        vlog!("space::get_path_in_space: p='{}'", p);
         // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
         let mut b = PathBuf::from(self.root_path.clone());
-        b.push(utils::REPO_METADATA_DIR_NAME);
+        b.push(utils::SPACE_METADATA_DIR_NAME);
         self.create_dir_all(&b.as_os_str().to_str().unwrap())
             .unwrap();
         b.push(p);
         return b;
     }
 
-    fn get_path_in_repo_str(&self, p: &str) -> String {
-        let b = self.get_path_in_repo(p);
+    fn get_path_in_space_str(&self, p: &str) -> String {
+        let b = self.get_path_in_space(p);
         let s = b.into_os_string().into_string().unwrap();
         return s;
     }
 
-    // fn get_path_in_repo_str(&self, p: &str) -> String {
-    //     let b = self.get_path_in_repo(p);
+    // fn get_path_in_space_str(&self, p: &str) -> String {
+    //     let b = self.get_path_in_space(p);
     //     let s = b.into_os_string().into_string().unwrap();
     //     return s;
     // }
 
     pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
-        vlog!("repo::get_path_in_cwd: p='{}' cwd={}", p, utils::get_cwd());
+        vlog!("space::get_path_in_cwd: p='{}' cwd={}", p, utils::get_cwd());
         PathBuf::from(utils::get_cwd()).join(p)
         // PathBuf::from(self.root_path.clone())
         //     .join(utils::get_cwd())
@@ -218,12 +218,12 @@ impl<F: FileSystem> Repo<F> {
         self.index.get(path).cloned()
     }
 
-    pub fn initialize_at(root_path: String, filesystem: F) -> RepoResult<Repo<F>> {
+    pub fn initialize_at(root_path: String, filesystem: F) -> SpaceResult<Space<F>> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let r = Repo::<F> {
+        let r = Space::<F> {
             fs: filesystem,
             root_path,
             chunk_size: DEFAULT_BLOCK_SIZE,
@@ -236,8 +236,8 @@ impl<F: FileSystem> Repo<F> {
             index: HashMap::new(),
         };
 
-        vlog!("repo::initialize_at: root_path='{}'", r.root_path);
-        let base = PathBuf::from(r.root_path.clone()).join(utils::REPO_METADATA_DIR_NAME);
+        vlog!("space::initialize_at: root_path='{}'", r.root_path);
+        let base = PathBuf::from(r.root_path.clone()).join(utils::SPACE_METADATA_DIR_NAME);
         r.create_dir_all(base.join("objects").to_str().unwrap())?;
         r.create_dir_all(base.join("refs").to_str().unwrap())?;
 
@@ -246,36 +246,36 @@ impl<F: FileSystem> Repo<F> {
             DEFAULT_BLOCK_SIZE, DEFAULT_MAX_FRAGMENT_SIZE
         );
 
-        r.write_to_repo(r.get_path_in_repo_str("config").as_str(), default_config.as_bytes())?;
-        r.write_to_repo(r.get_path_in_repo_str("index").as_str(), b"")?;
+        r.write_to_space(r.get_path_in_space_str("config").as_str(), default_config.as_bytes())?;
+        r.write_to_space(r.get_path_in_space_str("index").as_str(), b"")?;
 
         // refs/main starts empty (interpreted as zero hash); HEAD points to main.
-        r.write_to_repo(r.get_ref_path("main").as_str(), b"")?;
-        r.write_to_repo(r.get_ref_path("HEAD").as_str(), b"main")?;
+        r.write_to_space(r.get_ref_path("main").as_str(), b"")?;
+        r.write_to_space(r.get_ref_path("HEAD").as_str(), b"main")?;
 
         Ok(r)
     }
 
-    pub fn get_object_path(&self, r: ObjectReference) -> RepoResult<PathBuf> {
+    pub fn get_object_path(&self, r: ObjectReference) -> SpaceResult<PathBuf> {
         let hash = self.resolve_ref_name(r)?.to_string();
-        vlog!("repo::get_object_path: resolved hash={}", hash);
+        vlog!("space::get_object_path: resolved hash={}", hash);
         let top = &hash[0..3];
         let top1 = &hash[3..6];
         let top2 = &hash[6..9];
         let bottom = &hash[9..hash.len()];
 
-        Ok(self.get_path_in_repo(format!("objects/{}/{}/{}/{}", top, top1, top2, bottom).as_str()))
+        Ok(self.get_path_in_space(format!("objects/{}/{}/{}/{}", top, top1, top2, bottom).as_str()))
     }
 
-    pub fn save_obj(&self, o: Object) -> RepoResult<Hash> {
-        vlog!("repo::save_obj: saving object");
+    pub fn save_obj(&self, o: Object) -> SpaceResult<Hash> {
+        vlog!("space::save_obj: saving object");
         use rmp_serde::Serializer;
         use sha2::{Digest, Sha256};
         use std::io::Write as IoWrite;
         use tempfile::NamedTempFile;
 
         // Ensure objects dir exists
-        let objects_dir = &self.get_path_in_repo_str("objects");
+        let objects_dir = &self.get_path_in_space_str("objects");
         self.create_dir_all(objects_dir)?;
 
         // Create a named temp file inside the objects dir so rename/persist is atomic
@@ -327,27 +327,27 @@ impl<F: FileSystem> Repo<F> {
         tmp.persist(&path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        vlog!("repo::save_obj: persisted object at {:?}", path);
-        vlog!("repo::save_obj: object hash={}", hash.to_string());
+        vlog!("space::save_obj: persisted object at {:?}", path);
+        vlog!("space::save_obj: object hash={}", hash.to_string());
 
         // NOTE: `.raw` sidecars removed — fragment bytes are stored only inside the
         // serialized `Fragment` object on disk and will be deserialized when first read.
         Ok(hash)
     }
 
-    fn read_in_repo(&self, path: &str) -> RepoResult<Option<Vec<u8>>> {
+    fn read_in_space(&self, path: &str) -> SpaceResult<Option<Vec<u8>>> {
         let mut content = Vec::<u8>::new();
         self.fs.open_file(path)?.read_to_end(&mut content)?;
 
         return Ok(Some(content));
     }
 
-    fn read_object(&self, r: Hash) -> RepoResult<Option<Vec<u8>>> {
+    fn read_object(&self, r: Hash) -> SpaceResult<Option<Vec<u8>>> {
         let path = self.get_object_path(ObjectReference::Hash(r))?;
-        vlog!("repo::read_object: path={:?}", path);
+        vlog!("space::read_object: path={:?}", path);
         if !path.exists() {
             vlog!(
-                "repo::read_object: object not found for hash={}",
+                "space::read_object: object not found for hash={}",
                 r.to_string()
             );
             return Ok(None);
@@ -356,73 +356,73 @@ impl<F: FileSystem> Repo<F> {
         self.fs
             .open_file(path.as_os_str().to_str().unwrap())?
             .read_to_end(&mut content)?;
-        vlog!("repo::read_object: read {} bytes", content.len());
+        vlog!("space::read_object: read {} bytes", content.len());
         return Ok(Some(content.to_vec()));
     }
 
-    pub fn get_object(&self, r: Hash) -> RepoResult<Option<Object>> {
-        vlog!("repo::get_object: hash={}", r.to_string());
+    pub fn get_object(&self, r: Hash) -> SpaceResult<Option<Object>> {
+        vlog!("space::get_object: hash={}", r.to_string());
         let content = self.read_object(r)?;
         match content {
             Some(content) => {
                 vlog!(
-                    "repo::get_object: deserializing object ({} bytes)",
+                    "space::get_object: deserializing object ({} bytes)",
                     content.len()
                 );
                 Ok(Some(Object::from_msgpack(content)?))
             }
             None => {
-                vlog!("repo::get_object: object not found");
+                vlog!("space::get_object: object not found");
                 Ok(None)
             }
         }
     }
 
     pub fn get_ref_path(&self, name: &str) -> String {
-        vlog!("repo::get_ref_path: name='{}'", name);
-        return self.get_path_in_repo_str(format!("refs/{}", name).as_str());
+        vlog!("space::get_ref_path: name='{}'", name);
+        return self.get_path_in_space_str(format!("refs/{}", name).as_str());
     }
 
-    pub fn write_to_repo(&self, path: &str, content: &[u8]) -> RepoResult<()> {
+    pub fn write_to_space(&self, path: &str, content: &[u8]) -> SpaceResult<()> {
         self.fs.create_file(path)?.write(content)?;
         Ok(())
     }
 
-    pub fn set_ref(&self, name: &str, r: ObjectReference) -> RepoResult<()> {
+    pub fn set_ref(&self, name: &str, r: ObjectReference) -> SpaceResult<()> {
         let path = self.get_ref_path(name);
-        self.write_to_repo(path.as_str(), r.to_string().as_bytes())?;
-        vlog!("repo::set_ref: {} -> {}", name, r.to_string());
+        self.write_to_space(path.as_str(), r.to_string().as_bytes())?;
+        vlog!("space::set_ref: {} -> {}", name, r.to_string());
         return Ok(());
     }
 
-    pub fn get_ref(&self, name: String) -> RepoResult<ObjectReference> {
-        let ref_path = &self.get_path_in_repo_str(format!("refs/{}", name).as_str());
+    pub fn get_ref(&self, name: String) -> SpaceResult<ObjectReference> {
+        let ref_path = &self.get_path_in_space_str(format!("refs/{}", name).as_str());
         let mut val = String::new();
         self.fs.open_file(ref_path)?.read_to_string(&mut val)?;
-        vlog!("repo::get_ref: name='{}' content='{}'", name, val.trim());
+        vlog!("space::get_ref: name='{}' content='{}'", name, val.trim());
 
         // Treat an empty ref file as "no parent" (map to zero hash) to make the
         // first commit/HEAD behaviour safe.
         if val.trim().is_empty() {
-            vlog!("repo::get_ref: empty ref -> returning zero-hash");
+            vlog!("space::get_ref: empty ref -> returning zero-hash");
             return Ok(ObjectReference::Hash(Hash::new()));
         }
 
         Ok(ObjectReference::from(val))
     }
 
-    pub fn resolve_ref_name(&self, ref_name: ObjectReference) -> RepoResult<Hash> {
+    pub fn resolve_ref_name(&self, ref_name: ObjectReference) -> SpaceResult<Hash> {
         match ref_name {
             ObjectReference::Hash(h) => {
-                vlog!("repo::resolve_ref_name: given hash {}", h.to_string());
+                vlog!("space::resolve_ref_name: given hash {}", h.to_string());
                 Ok(h)
             }
             ObjectReference::Ref(r) => {
-                vlog!("repo::resolve_ref_name: resolving ref '{}'", r);
+                vlog!("space::resolve_ref_name: resolving ref '{}'", r);
                 let n = self.get_ref(r.clone())?;
                 let resolved = self.resolve_ref_name(n)?;
                 vlog!(
-                    "repo::resolve_ref_name: ref '{}' -> {}",
+                    "space::resolve_ref_name: ref '{}' -> {}",
                     r,
                     resolved.to_string()
                 );
@@ -435,10 +435,10 @@ impl<F: FileSystem> Repo<F> {
         }
     }
 
-    pub fn save_index(&mut self) -> RepoResult<()> {
-        vlog!("repo::save_index: saving {} entries", self.index.len());
+    pub fn save_index(&mut self) -> SpaceResult<()> {
+        vlog!("space::save_index: saving {} entries", self.index.len());
 
-        let mut index_file = File::create(self.get_path_in_repo("index"))?;
+        let mut index_file = File::create(self.get_path_in_space("index"))?;
 
         for (key, value) in &self.index {
             writeln!(index_file, "{} = \"{}\"", key, value.to_string())?;
@@ -447,7 +447,7 @@ impl<F: FileSystem> Repo<F> {
         Ok(())
     }
 
-    pub fn list_files(&mut self, commit_ref: ObjectReference) -> RepoResult<Vec<String>> {
+    pub fn list_files(&mut self, commit_ref: ObjectReference) -> SpaceResult<Vec<String>> {
         let commit_hash = self.resolve_ref_name(commit_ref)?;
 
         let commit = match self.get_object(commit_hash)? {
@@ -462,11 +462,11 @@ impl<F: FileSystem> Repo<F> {
             .collect::<Vec<String>>())
     }
 
-    pub fn get_head_commit_hash(&mut self) -> RepoResult<Hash> {
+    pub fn get_head_commit_hash(&mut self) -> SpaceResult<Hash> {
         Ok(self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?)
     }
 
-    pub fn get_head_commit(&mut self) -> RepoResult<CommitStruct> {
+    pub fn get_head_commit(&mut self) -> SpaceResult<CommitStruct> {
         let commit_hash = self.get_head_commit_hash()?;
         match self.get_object(commit_hash)? {
             Some(Object::Commit(commit)) => Ok(commit),
@@ -474,7 +474,7 @@ impl<F: FileSystem> Repo<F> {
         }
     }
 
-    pub fn create_branch(&mut self, name: &str) -> RepoResult<()> {
+    pub fn create_branch(&mut self, name: &str) -> SpaceResult<()> {
         let head_hash = self.get_head_commit_hash()?;
         self.set_ref(
             format!("head/{}", name).as_str(),
@@ -482,7 +482,7 @@ impl<F: FileSystem> Repo<F> {
         )
     }
 
-    pub fn list_refs(&mut self, path: &str) -> RepoResult<Vec<ObjectReference>> {
+    pub fn list_refs(&mut self, path: &str) -> SpaceResult<Vec<ObjectReference>> {
         let refs_path = self.get_ref_path(path);
 
         let refs_names = self
@@ -494,21 +494,21 @@ impl<F: FileSystem> Repo<F> {
         Ok(refs_names)
     }
 
-    pub fn delete_ref(&mut self, path: &str) -> RepoResult<()> {
+    pub fn delete_ref(&mut self, path: &str) -> SpaceResult<()> {
         let ref_path = self.get_ref_path(path);
         self.fs.remove_file(ref_path.as_str())?;
         Ok(())
     }
 
-    fn get_table(&self) -> RepoResult<Map<String, Value>> {
-        let content = String::from_utf8(self.read_in_repo("config")?.unwrap())?;
+    fn get_table(&self) -> SpaceResult<Map<String, Value>> {
+        let content = String::from_utf8(self.read_in_space("config")?.unwrap())?;
         let table = content.parse::<toml::Table>()?;
 
         return Ok(table);
     }
 
     /// Read a value from the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
-    pub fn get_config_value(&self, key: &str) -> RepoResult<String> {
+    pub fn get_config_value(&self, key: &str) -> SpaceResult<String> {
         let table = self.get_table()?;
 
         let parts: Vec<&str> = key.splitn(2, '.').collect();
@@ -528,7 +528,7 @@ impl<F: FileSystem> Repo<F> {
     }
 
     /// Write a value to the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
-    pub fn set_config_value(&self, key: &str, value: &str) -> RepoResult<()> {
+    pub fn set_config_value(&self, key: &str, value: &str) -> SpaceResult<()> {
         let mut table = self.get_table()?;
 
         let parts: Vec<&str> = key.splitn(2, '.').collect();
@@ -550,13 +550,13 @@ impl<F: FileSystem> Repo<F> {
             table.insert(parts[0].to_string(), parsed);
         }
 
-        let config_path = self.get_path_in_repo_str("config");
+        let config_path = self.get_path_in_space_str("config");
 
-        self.write_to_repo(&config_path, toml::to_string(&table)?.as_bytes())?;
+        self.write_to_space(&config_path, toml::to_string(&table)?.as_bytes())?;
         Ok(())
     }
 
-    pub fn get_remote_by_name(&self, name: &str) -> RepoResult<Repo<vfs::PhysicalFS>> {
+    pub fn get_remote_by_name(&self, name: &str) -> SpaceResult<Space<vfs::PhysicalFS>> {
         use url::Url;
 
         let u = Url::parse(
@@ -577,7 +577,7 @@ impl<F: FileSystem> Repo<F> {
             "path" => {
                 let path = u.path();
                 let fs = vfs::PhysicalFS::new(path);
-                let r: Repo<vfs::PhysicalFS> = Repo::at_root_path(Some(path.to_string()), fs)?;
+                let r: Space<vfs::PhysicalFS> = Space::at_root_path(Some(path.to_string()), fs)?;
                 Ok(r)
             }
             _ => {

@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use clap::Parser;
-use lib::repo::Repo;
+use lib::space::Space;
 use vfs::PhysicalFS;
 
 use cli::{Cli, Commands};
@@ -25,55 +25,55 @@ mod pull;
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
-    let mut repo = match &cli.command {
+    let mut space = match &cli.command {
         Commands::Init => {
             init::init()?;
             return Ok(());
         }
-        _ => Repo::at_root_path(None, PhysicalFS::new("/"))?,
+        _ => Space::at_root_path(None, PhysicalFS::new("/"))?,
     };
 
     match &cli.command {
         Commands::Init => unreachable!(),
         Commands::Stage(c) => {
-            stage::stage(&mut repo, c).expect("Unable to stage");
+            stage::stage(&mut space, c).expect("Unable to stage");
         }
         Commands::Unstage(c) => {
-            unstage::unstage(&mut repo, c).expect("Unable to unstage");
+            unstage::unstage(&mut space, c).expect("Unable to unstage");
         }
         Commands::Commit(c) => {
-            commit::commit(&mut repo, c).expect("Unable to commit");
+            commit::commit(&mut space, c).expect("Unable to commit");
         }
         Commands::Show(c) => {
-            show::show(&mut repo, c).expect("Unable to show commit");
+            show::show(&mut space, c).expect("Unable to show commit");
         }
         Commands::Checkout(c) => {
-            checkout::checkout(&mut repo, c).expect("Unable to checkout");
+            checkout::checkout(&mut space, c).expect("Unable to checkout");
         }
         Commands::Log(c) => {
-            log::log(&mut repo, c).expect("Unable to show log");
+            log::log(&mut space, c).expect("Unable to show log");
         }
         Commands::Status(c) => {
-            status::status(&mut repo, c).expect("Unable to show status");
+            status::status(&mut space, c).expect("Unable to show status");
         }
         Commands::Switch(c) => {
-            switch::switch(&mut repo, c).expect("Unable to switch");
+            switch::switch(&mut space, c).expect("Unable to switch");
         }
         Commands::Branch(c) => {
-            branch::branch(&mut repo, c).expect("Unable to branch");
+            branch::branch(&mut space, c).expect("Unable to branch");
         }
         Commands::Config(c) => {
-            config::config(&repo, c).expect("Unable to run config");
+            config::config(&space, c).expect("Unable to run config");
         }
         Commands::Push(c) => {
-            push::push(&mut repo, c).expect("Unable to push");
+            push::push(&mut space, c).expect("Unable to push");
         }
         Commands::Pull(c) => {
-            pull::pull(&mut repo, c).expect("Unable to pull");
+            pull::pull(&mut space, c).expect("Unable to pull");
         }
     };
 
-    repo.save_index()?;
+    space.save_index()?;
 
     Ok(())
 }

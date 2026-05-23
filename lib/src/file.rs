@@ -5,7 +5,7 @@ use crate::{
         CommitStruct, FileFragment, FileStruct,  Fragment, Object, ObjectReference,
     },
     replay::LazyFileReplay,
-    repo::ReadSeek,
+    space::ReadSeek,
     vlog,
 };
 use std::{error::Error, fs::File, io::Seek};
@@ -13,7 +13,7 @@ use vfs::FileSystem;
 
 use std::io;
 
-use crate::repo::Repo;
+use crate::space::Space;
 
 pub type FileOpsError = Box<dyn Error>;
 pub type FileOpsResult<T> = Result<T, FileOpsError>;
@@ -26,12 +26,12 @@ pub struct FileStagedSummary {
 }
 
 pub struct FileOps<'a, F: FileSystem> {
-    repo: &'a mut Repo<F>,
+    space: &'a mut Space<F>,
 }
 
 impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
-    pub fn from_repo(repo: &'a mut Repo<F>) -> Self {
-        Self { repo }
+    pub fn from_space(space: &'a mut Space<F>) -> Self {
+        Self { space }
     }
 
     pub fn stage_file<E, P>(
@@ -44,27 +44,27 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
         E: FnMut(DiffFragment),
         P: FnMut(crate::dedup::DedupProgress),
     {
-        let fp = self.repo.get_path_in_cwd_str(&file_path);
+        let fp = self.space.get_path_in_cwd_str(&file_path);
 
         let mut new = File::open(fp.clone())?;
 
-        vlog!("repo::stage_file: computing hash for entire file");
+        vlog!("space::stage_file: computing hash for entire file");
         let content_hash = Hash::digest_file_stream(&mut new)?;
         vlog!(
-            "repo::stage_file: entire file hash {}",
+            "space::stage_file: entire file hash {}",
             content_hash.to_string()
         );
 
         let head_commit_hash = self
-            .repo
+            .space
             .resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
 
         let old: Box<dyn ReadSeek> = if head_commit_hash.is_zero() {
-            vlog!("repo::stage_file: no parent hash, using empty cursor");
+            vlog!("space::stage_file: no parent hash, using empty cursor");
             Box::new(io::Cursor::new(Vec::new()))
         } else {
             vlog!(
-                "repo::stage_file: opening parent version {}",
+                "space::stage_file: opening parent version {}",
                 head_commit_hash.to_string()
             );
             self.open_file(fp.clone(), head_commit_hash)?
@@ -72,12 +72,12 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
         new.seek(io::SeekFrom::Start(0))?;
 
-        vlog!("repo::stage_file: building diff fragments");
+        vlog!("space::stage_file: building diff fragments");
         let fragments = crate::dedup::build_diff_fragments(
             old,
             Box::new(new),
-            self.repo.chunk_size,
-            self.repo.max_size as u64,
+            self.space.chunk_size,
+            self.space.max_size as u64,
             progress,
         )?;
 
@@ -90,12 +90,12 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
             match fragment_res {
                 DiffFragment::ADDED { body } => {
-                    for chunk in body.chunks(self.repo.max_size) {
+                    for chunk in body.chunks(self.space.max_size) {
                         let frag_hash = self
-                            .repo
+                            .space
                             .save_obj(Object::Fragment(Fragment(chunk.to_vec())))?;
                         vlog!(
-                            "repo::stage_file: ADDED fragment chunk_size={} -> fragment_hash={}",
+                            "space::stage_file: ADDED fragment chunk_size={} -> fragment_hash={}",
                             chunk.len(),
                             frag_hash.to_string()
                         );
@@ -105,33 +105,33 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
                             len: chunk.len(),
                         };
 
-                        let h = self.repo.save_obj(Object::FileDiffFragment(f))?;
+                        let h = self.space.save_obj(Object::FileDiffFragment(f))?;
                         file_fragments.push(h);
                     }
                 }
                 DiffFragment::UNCHANGED { len } => {
-                    vlog!("repo::stage_file: UNCHANGED len={}", len);
+                    vlog!("space::stage_file: UNCHANGED len={}", len);
                     let f = FileFragment::UNCHANGED { len };
-                    let h = self.repo.save_obj(Object::FileDiffFragment(f))?;
+                    let h = self.space.save_obj(Object::FileDiffFragment(f))?;
                     file_fragments.push(h);
                 }
                 DiffFragment::DELETED { len } => {
-                    vlog!("repo::stage_file: DELETED len={}", len);
+                    vlog!("space::stage_file: DELETED len={}", len);
                     let f = FileFragment::DELETED { len };
-                    let h = self.repo.save_obj(Object::FileDiffFragment(f))?;
+                    let h = self.space.save_obj(Object::FileDiffFragment(f))?;
                     file_fragments.push(h);
                 }
             }
         }
 
-        let version_hash = self.repo.save_obj(Object::File(FileStruct {
+        let version_hash = self.space.save_obj(Object::File(FileStruct {
             content_hash: content_hash,
             fragments: file_fragments,
         }))?;
 
-        self.repo.index.insert(fp.clone(), version_hash);
+        self.space.index.insert(fp.clone(), version_hash);
         vlog!(
-            "repo::stage_file: indexed '{}' -> {}",
+            "space::stage_file: indexed '{}' -> {}",
             fp,
             version_hash.to_string()
         );
@@ -140,40 +140,40 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
     }
 
     pub fn unstage_file(&mut self, file_path: String) -> FileOpsResult<()> {
-        let fp = self.repo.get_path_in_cwd_str(&file_path);
-        self.repo.index.remove(fp.as_str());
+        let fp = self.space.get_path_in_cwd_str(&file_path);
+        self.space.index.remove(fp.as_str());
         Ok(())
     }
 
     pub fn commit(&mut self, message: String) -> FileOpsResult<Hash> {
-        vlog!("repo::commit: message='{}'", message);
+        vlog!("space::commit: message='{}'", message);
 
-        let head_commit = self.repo.get_head_commit_hash()?;
+        let head_commit = self.space.get_head_commit_hash()?;
 
         let commit = CommitStruct {
             parent: head_commit,
             message: message,
-            comitter: self.repo.me.clone(),
-            author: self.repo.me.clone(),
-            files: self.repo.index.clone(),
+            comitter: self.space.me.clone(),
+            author: self.space.me.clone(),
+            files: self.space.index.clone(),
         };
 
         let files_count = commit.files.len();
-        vlog!("repo::commit: creating commit with {} files", files_count);
+        vlog!("space::commit: creating commit with {} files", files_count);
 
-        let commit_hash = self.repo.save_obj(Object::Commit(commit))?;
+        let commit_hash = self.space.save_obj(Object::Commit(commit))?;
 
         let head_ref_name = "HEAD".to_string();
-        self.repo.set_ref(
+        self.space.set_ref(
             head_ref_name.as_str(),
             ObjectReference::Hash(commit_hash.clone()),
         )?;
-        vlog!("repo::commit: new HEAD = {}", commit_hash.to_string());
+        vlog!("space::commit: new HEAD = {}", commit_hash.to_string());
 
         if files_count > 0 {
-            self.repo.index.clear();
-            vlog!("repo::commit: cleared {} entries from index", files_count);
-            self.repo.save_index()?;
+            self.space.index.clear();
+            vlog!("space::commit: cleared {} entries from index", files_count);
+            self.space.save_index()?;
         }
 
         Ok(commit_hash)
@@ -181,13 +181,13 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
     pub fn staged_summary(&self) -> FileOpsResult<Vec<FileStagedSummary>> {
         let mut result = Vec::new();
-        for (path, &version_hash) in &self.repo.index {
+        for (path, &version_hash) in &self.space.index {
             let mut added = 0usize;
             let mut deleted = 0usize;
             let mut unchanged = 0usize;
-            if let Some(Object::File(file)) = self.repo.get_object(version_hash)? {
+            if let Some(Object::File(file)) = self.space.get_object(version_hash)? {
                 for frag_hash in &file.fragments {
-                    if let Some(Object::FileDiffFragment(frag)) = self.repo.get_object(*frag_hash)? {
+                    if let Some(Object::FileDiffFragment(frag)) = self.space.get_object(*frag_hash)? {
                         match frag {
                             FileFragment::ADDED { len, .. } => added += len,
                             FileFragment::DELETED { len } => deleted += len,
@@ -208,13 +208,13 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
     pub fn open_file(&mut self, file_path: String, hash: Hash) -> FileOpsResult<Box<dyn ReadSeek>> {
         vlog!(
-            "repo::open_file: file_path='{}' hash={}",
+            "space::open_file: file_path='{}' hash={}",
             file_path,
             hash.to_string()
         );
-        let fp = self.repo.get_path_in_cwd_str(&file_path);
+        let fp = self.space.get_path_in_cwd_str(&file_path);
 
-        let commit = match self.repo.get_object(hash)? {
+        let commit = match self.space.get_object(hash)? {
             Some(Object::Commit(c)) => c,
             None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
             _ => return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
@@ -224,7 +224,7 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
             Some(x) => x,
             None => {
                 vlog!(
-                    "repo::open_file: file '{}' not in commit {}",
+                    "space::open_file: file '{}' not in commit {}",
                     fp,
                     hash.to_string()
                 );
@@ -232,14 +232,14 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
             }
         };
 
-        let file_version = match self.repo.get_object(*file_version_hash)? {
+        let file_version = match self.space.get_object(*file_version_hash)? {
             Some(Object::File(c)) => c,
             _ => return Err(Box::new(crate::error::DuhError::invalid_object("file", "unknown object type"))),
         };
 
         let mut fragments = Vec::with_capacity(file_version.fragments.len());
         for frag_hash in file_version.fragments {
-            match self.repo.get_object(frag_hash)? {
+            match self.space.get_object(frag_hash)? {
                 Some(Object::FileDiffFragment(frag)) => fragments.push(frag),
                 _ => return Err(Box::new(crate::error::DuhError::invalid_object("file diff fragment", "unknown object type"))),
             }
@@ -252,12 +252,12 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
         };
 
         vlog!(
-            "repo::open_file: creating lazy replay with {} fragments, parent_hash={}",
+            "space::open_file: creating lazy replay with {} fragments, parent_hash={}",
             fragments.len(),
             commit.parent.to_string()
         );
 
-        let replay = LazyFileReplay::new(&self.repo, parent_reader, fragments)?;
+        let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
 
         Ok(Box::new(replay))
     }
