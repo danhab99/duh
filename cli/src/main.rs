@@ -21,6 +21,7 @@ mod switch;
 mod unstage;
 mod push;
 mod pull;
+mod tag;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -70,6 +71,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Pull(c) => {
             pull::pull(&mut space, c).expect("Unable to pull");
+        }
+        Commands::Tag(c) => {
+            tag::tag(&mut space, c).expect("Unable to tag");
         }
     };
 
