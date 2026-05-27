@@ -3,7 +3,7 @@ use clap::*;
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
     log::LogCommand, pull::PullCommand, push::PushCommand, show::ShowCommand, stage::StageCommand,
-    status::StatusCommand, switch::SwitchCommand, unstage::UnstageCommand,
+    status::StatusCommand, switch::SwitchCommand, tag::TagCommand, unstage::UnstageCommand,
 };
 
 /// `duh` — binary oriented version control
@@ -56,4 +56,7 @@ pub enum Commands {
 
     /// Pull changes from the remote
     Pull(PullCommand),
+
+    /// Create, list, or delete lightweight tags
+    Tag(TagCommand),
 }
