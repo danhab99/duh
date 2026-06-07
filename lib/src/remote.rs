@@ -44,7 +44,7 @@ pub fn copy_commits<L: FileSystem, R: FileSystem, P>(
     progress: Option<P>,
 ) -> Result<(), Box<dyn Error>>
 where
-    P: Fn(CopyCommitsProgress),
+    P: Fn(CopyCommitsProgress) + std::marker::Copy,
 {
     vlog!("remote::fetch_commit_from_remote {}", hash.to_hex());
 
@@ -77,7 +77,7 @@ where
                     dest.save_obj(Object::FileDiffFragment(frag.clone()))?;
 
                     match frag {
-                        FileFragment::ADDED { body, len } => {
+                        FileFragment::ADDED { body, len: _ } => {
                             if let Some(f) = dest.get_object(body)? {
                                 dest.save_obj(f)?;
                             }
