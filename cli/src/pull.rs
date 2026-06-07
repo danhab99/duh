@@ -15,10 +15,13 @@ pub struct PullCommand {
     pub remote_name: Option<String>,
 }
 
-pub fn pull<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &PullCommand) -> Result<(), Box<dyn Error>> {
+pub fn pull<F: vfs::FileSystem>(
+    space: &mut Space<F>,
+    cmd: &PullCommand,
+) -> Result<(), Box<dyn Error>> {
     let remote_name = cmd.remote_name.as_deref().unwrap_or("origin");
     let mut remote = space.get_remote_by_name(remote_name)?;
 
-    lib::remote::fetch_all_refs(space, &mut remote, remote_name)?;
+    lib::remote::copy_commits(space, &mut remote, remote_name)?;
     Ok(())
 }

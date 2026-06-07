@@ -11,40 +11,50 @@ pub fn fetch_all_refs<L: FileSystem, R: FileSystem>(
     local: &mut Space<L>,
     remote: &mut Space<R>,
     remote_name: &str,
+    prefix: &str,
 ) -> Result<(), Box<dyn Error>> {
     vlog!("remote::fetch_all_refs");
 
     let remote_refs = remote.list_refs("/")?;
 
     for r in remote_refs {
-        let head_hash = remote.resolve_ref_name(r.clone())?;
-
         local.set_ref(
-            format!("{}/{}", remote_name, r.clone().to_string().as_str()).as_str(),
+            format!(
+                "{}/{}/{}",
+                prefix,
+                remote_name,
+                r.clone().to_string().as_str()
+            )
+            .as_str(),
             r,
         )?;
-
-        fetch_commit_from_remote(local, remote, head_hash)?;
     }
 
     Ok(())
 }
 
-pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
-    local: &mut Space<L>,
-    remote: &mut Space<R>,
+pub enum CopyCommitsProgress {
+    Commit(Hash),
+}
+
+pub fn copy_commits<L: FileSystem, R: FileSystem, P>(
+    src: &mut Space<L>,
+    dest: &mut Space<R>,
     hash: Hash,
-) -> Result<(), Box<dyn Error>> {
+    progress: Option<P>,
+) -> Result<(), Box<dyn Error>>
+where
+    P: Fn(CopyCommitsProgress),
+{
     vlog!("remote::fetch_commit_from_remote {}", hash.to_hex());
 
-    if let Some(_) = local.get_object(hash)? {
+    if let Some(_) = dest.get_object(hash)? {
         return Ok(());
     }
 
-    let commit_object = remote.get_object(hash)?;
-
-    if let Some(Object::Commit(commit)) = commit_object {
-        local.save_obj(Object::Commit(commit.clone()))?;
+    if let Some(Object::Commit(commit)) = src.get_object(hash)? {
+        copy_commits(src, dest, commit.parent, progress)?;
+        dest.save_obj(Object::Commit(commit.clone()))?;
 
         for (_, hash) in commit.files.iter() {
             vlog!(
@@ -52,60 +62,40 @@ pub fn fetch_commit_from_remote<L: FileSystem, R: FileSystem>(
                 hash.to_hex()
             );
 
-            if let Some(Object::File(obj)) = remote.get_object(*hash)? {
-                local.save_obj(Object::File(obj.clone()))?;
+            let obj = if let Some(Object::File(obj)) = src.get_object(*hash)? {
+                dest.save_obj(Object::File(obj.clone()))?;
+                obj
+            } else {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "file",
+                    "didn't receive a file",
+                )));
+            };
 
-                for frag_hash in obj.fragments.iter() {
-                    if let Some(Object::FileDiffFragment(frag)) = remote.get_object(*frag_hash)? {
-                        local.save_obj(Object::FileDiffFragment(frag.clone()))?;
-                        if let FileFragment::ADDED { body, .. } = frag {
-                            if let Some(f) = remote.get_object(body)? {
-                                local.save_obj(f)?;
+            for frag_hash in obj.fragments.iter() {
+                if let Some(Object::FileDiffFragment(frag)) = dest.get_object(*frag_hash)? {
+                    dest.save_obj(Object::FileDiffFragment(frag.clone()))?;
+
+                    match frag {
+                        FileFragment::ADDED { body, len } => {
+                            if let Some(f) = dest.get_object(body)? {
+                                dest.save_obj(f)?;
                             }
                         }
+                        _ => {}
                     }
                 }
             }
         }
 
-        fetch_commit_from_remote(local, remote, commit.parent)?;
-    } else {
-        return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type")));
-    }
-
-    Ok(())
-}
-
-pub fn push_branch_to_remote<L: FileSystem, R: FileSystem, F: Fn(Hash) + Copy>(
-    local: &mut Space<L>,
-    remote: &mut Space<R>,
-    hash: Hash,
-    progress: F,
-) -> Result<(), Box<dyn Error>> {
-    let x = local.get_object(hash)?.unwrap();
-
-    if let Object::Commit(c) = x {
-        if !c.parent.is_zero() {
-            push_branch_to_remote(local, remote, c.parent, progress)?;
-        }
-
-        let h = remote.save_obj(Object::Commit(c.clone()))?;
-        progress(h);
-
-        for (_, h) in c.files.iter() {
-            let o = local.get_object(*h)?.unwrap();
-            remote.save_obj(o.clone())?;
-
-            if let Object::File(f) = o {
-                for frag_hash in f.fragments {
-                    if let Some(frag) = local.get_object(frag_hash)? {
-                        remote.save_obj(frag)?;
-                    }
-                }
-            }
+        if let Some(p) = progress {
+            p(CopyCommitsProgress::Commit(hash));
         }
     } else {
-        return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type")));
+        return Err(Box::new(crate::error::DuhError::invalid_object(
+            "commit",
+            "unknown object type",
+        )));
     }
 
     Ok(())
