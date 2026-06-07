@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fs;
 
+use clap::builder::Str;
 use clap::clap_derive::Args;
 use lib::file::FileOps;
 use lib::objects::{Object, ObjectReference};
@@ -14,11 +15,21 @@ pub struct CheckoutCommand {
     pub file_path: String,
 
     /// Commit hash (64 chars) or the literal `HEAD`. Defaults to `HEAD`.
-    #[arg(short = 'c', long = "commit", help = "Commit to read from (use `HEAD` or a full 64-character hash)")]
+    #[arg(
+        short = 'c',
+        long = "commit",
+        help = "Commit to read from (use `HEAD` or a full 64-character hash)"
+    )]
     pub commit: Option<ObjectReference>,
+
+    #[arg(long = "as", help = "checkout a file at a commit as a different name")]
+    pub as_name: Option<String>,
 }
 
-pub fn checkout<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &CheckoutCommand) -> Result<(), Box<dyn Error>> {
+pub fn checkout<F: vfs::FileSystem>(
+    space: &mut Space<F>,
+    cmd: &CheckoutCommand,
+) -> Result<(), Box<dyn Error>> {
     // Resolve commit (default to HEAD)
     let target_hash = match &cmd.commit {
         Some(r) => space.resolve_ref_name(r.clone())?,
@@ -30,7 +41,8 @@ pub fn checkout<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &CheckoutCommand)
         Some(Object::Commit(c)) => {
             let fp = space.get_path_in_cwd_str(&cmd.file_path);
             if c.files.get(fp.as_str()).is_none() {
-                println!("{} {}",
+                println!(
+                    "{} {}",
                     crate::colors::red("file not found in commit:"),
                     crate::colors::yellow(&cmd.file_path)
                 );
@@ -38,7 +50,8 @@ pub fn checkout<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &CheckoutCommand)
             }
         }
         _ => {
-            println!("{} {}",
+            println!(
+                "{} {}",
                 crate::colors::red("commit not found:"),
                 crate::colors::cyan(&target_hash.to_string())
             );
@@ -51,13 +64,16 @@ pub fn checkout<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &CheckoutCommand)
     let mut fileops = FileOps::from_space(space);
     let mut reader = fileops.open_file(cmd.file_path.clone(), target_hash)?;
 
-    let out_path = space.get_path_in_cwd_str(&cmd.file_path);
+    let out_path = cmd
+        .as_name
+        .or_else(space.get_path_in_cwd_str(&cmd.file_path));
     let mut out_file = fs::File::create(out_path)?;
 
     // copy stream directly from the space reader to the output file
     std::io::copy(&mut reader, &mut out_file)?;
 
-    println!("{} {} @ {}",
+    println!(
+        "{} {} @ {}",
         crate::colors::green("checked out"),
         crate::colors::cyan(&cmd.file_path),
         crate::colors::cyan(&target_hash.to_string())
