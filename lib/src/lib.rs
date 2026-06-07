@@ -6,7 +6,6 @@ pub mod objects;
 pub mod space;
 pub mod replay;
 pub mod dedup;
-pub mod calibrate;
 pub mod remote;
 pub mod file;
 pub mod display;
