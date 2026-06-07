@@ -146,7 +146,10 @@ impl<F: FileSystem> Space<F> {
             );
         }
 
-        vlog!("space::at_root_path: loaded {} index entries", r.index.len());
+        vlog!(
+            "space::at_root_path: loaded {} index entries",
+            r.index.len()
+        );
 
         Ok(r)
     }
@@ -246,7 +249,10 @@ impl<F: FileSystem> Space<F> {
             DEFAULT_BLOCK_SIZE, DEFAULT_MAX_FRAGMENT_SIZE
         );
 
-        r.write_to_space(r.get_path_in_space_str("config").as_str(), default_config.as_bytes())?;
+        r.write_to_space(
+            r.get_path_in_space_str("config").as_str(),
+            default_config.as_bytes(),
+        )?;
         r.write_to_space(r.get_path_in_space_str("index").as_str(), b"")?;
 
         // refs/main starts empty (interpreted as zero hash); HEAD points to main.
@@ -264,7 +270,11 @@ impl<F: FileSystem> Space<F> {
         let top2 = &hash[6..9];
         let bottom = &hash[9..hash.len()];
 
-        Ok(self.get_path_in_space(format!("objects/{}/{}/{}/{}", top, top1, top2, bottom).as_str()))
+        Ok(
+            self.get_path_in_space(
+                format!("objects/{}/{}/{}/{}", top, top1, top2, bottom).as_str(),
+            ),
+        )
     }
 
     pub fn save_obj(&self, o: Object) -> SpaceResult<Hash> {
@@ -452,7 +462,12 @@ impl<F: FileSystem> Space<F> {
 
         let commit = match self.get_object(commit_hash)? {
             Some(Object::Commit(commit)) => commit,
-            _ => return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "commit",
+                    "unknown object type",
+                )))
+            }
         };
 
         Ok(commit
@@ -470,7 +485,10 @@ impl<F: FileSystem> Space<F> {
         let commit_hash = self.get_head_commit_hash()?;
         match self.get_object(commit_hash)? {
             Some(Object::Commit(commit)) => Ok(commit),
-            _ => Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
+            _ => Err(Box::new(crate::error::DuhError::invalid_object(
+                "commit",
+                "unknown object type",
+            ))),
         }
     }
 
@@ -565,24 +583,39 @@ impl<F: FileSystem> Space<F> {
         )?;
 
         match u.scheme() {
-            "s3" => {
-                Err(Box::new(crate::error::DuhError::unsupported_scheme("s3", "S3 remotes not yet implemented")))
-            }
-            "http" | "https" => {
-                Err(Box::new(crate::error::DuhError::unsupported_scheme(u.scheme(), "HTTP/HTTPS remotes not yet implemented")))
-            }
-            "ftp" | "sftp" => {
-                Err(Box::new(crate::error::DuhError::unsupported_scheme(u.scheme(), "FTP/SFTP remotes not yet implemented")))
-            }
+            "s3" => Err(Box::new(crate::error::DuhError::unsupported_scheme(
+                "s3",
+                "S3 remotes not yet implemented",
+            ))),
+            "http" | "https" => Err(Box::new(crate::error::DuhError::unsupported_scheme(
+                u.scheme(),
+                "HTTP/HTTPS remotes not yet implemented",
+            ))),
+            "ftp" | "sftp" => Err(Box::new(crate::error::DuhError::unsupported_scheme(
+                u.scheme(),
+                "FTP/SFTP remotes not yet implemented",
+            ))),
             "path" => {
                 let path = u.path();
                 let fs = vfs::PhysicalFS::new(path);
                 let r: Space<vfs::PhysicalFS> = Space::at_root_path(Some(path.to_string()), fs)?;
                 Ok(r)
             }
-            _ => {
-                Err(Box::new(crate::error::DuhError::unsupported_scheme(u.scheme(), "Unknown remote scheme")))
-            }
+            _ => Err(Box::new(crate::error::DuhError::unsupported_scheme(
+                u.scheme(),
+                "Unknown remote scheme",
+            ))),
         }
+    }
+
+    pub fn log_ref(&self, r: ObjectReference, hash: Hash, message: &str) -> SpaceResult<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(self.get_path_in_space(format!("reflog/{}", r)))?;
+
+        file.write_all(format!("{} | {}", hash.to_string(), message).as_bytes())?;
+
+        Ok(())
     }
 }
