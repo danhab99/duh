@@ -15,11 +15,14 @@ pub struct PushCommand {
     pub remote_name: Option<String>,
 }
 
-pub fn push<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &PushCommand) -> Result<(), Box<dyn Error>> {
+pub fn push<F: vfs::FileSystem>(
+    space: &mut Space<F>,
+    cmd: &PushCommand,
+) -> Result<(), Box<dyn Error>> {
     let mut remote = space.get_remote_by_name(cmd.remote_name.as_deref().unwrap_or("origin"))?;
 
     let h = space.get_head_commit_hash()?;
 
-    lib::remote::push_branch_to_remote(space, &mut remote, h, |_| {})?;
+    lib::remote::copy_commits(space, &mut remote, h, |_| {})?;
     Ok(())
 }
