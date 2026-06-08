@@ -14,15 +14,16 @@ mod commit;
 mod config;
 mod init;
 mod log;
+mod pull;
+mod push;
+mod reflog;
 mod reset;
 mod show;
 mod stage;
 mod status;
 mod switch;
-mod unstage;
-mod push;
-mod pull;
 mod tag;
+mod unstage;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
