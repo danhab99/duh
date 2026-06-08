@@ -66,8 +66,9 @@ pub fn checkout<F: vfs::FileSystem>(
 
     let out_path = cmd
         .as_name
-        .or_else(space.get_path_in_cwd_str(&cmd.file_path));
-    let mut out_file = fs::File::create(out_path)?;
+        .clone()
+        .or_else(|| Some(space.get_path_in_cwd_str(&cmd.file_path)));
+    let mut out_file = fs::File::create(out_path.unwrap())?;
 
     // copy stream directly from the space reader to the output file
     std::io::copy(&mut reader, &mut out_file)?;

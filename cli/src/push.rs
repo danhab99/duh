@@ -23,6 +23,6 @@ pub fn push<F: vfs::FileSystem>(
 
     let h = space.get_head_commit_hash()?;
 
-    lib::remote::copy_commits(space, &mut remote, h, |_| {})?;
+    lib::remote::copy_commits(space, &mut remote, h, Some(|_| {}))?;
     Ok(())
 }

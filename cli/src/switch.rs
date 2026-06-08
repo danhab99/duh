@@ -56,6 +56,7 @@ pub fn switch<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &SwitchCommand) -> 
             &crate::checkout::CheckoutCommand {
                 file_path,
                 commit: Some(ObjectReference::Hash(commit_hash)),
+                as_name: None,
             },
         )?;
     }

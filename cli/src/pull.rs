@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
-use lib::space::Space;
+use lib::{hash::Hash, space::Space};
 
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
@@ -22,6 +22,6 @@ pub fn pull<F: vfs::FileSystem>(
     let remote_name = cmd.remote_name.as_deref().unwrap_or("origin");
     let mut remote = space.get_remote_by_name(remote_name)?;
 
-    lib::remote::copy_commits(space, &mut remote, remote_name)?;
+    lib::remote::copy_commits::<_, _, fn(lib::remote::CopyCommitsProgress)>(space, &mut remote, Hash::from_str(remote_name), None)?;
     Ok(())
 }
