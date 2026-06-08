@@ -14,6 +14,7 @@ mod commit;
 mod config;
 mod init;
 mod log;
+mod reset;
 mod show;
 mod stage;
 mod status;
@@ -74,6 +75,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Commands::Tag(c) => {
             tag::tag(&mut space, c).expect("Unable to tag");
+        }
+        Commands::Reset(c) => {
+            reset::reset(&mut space, c).expect("Unable to reset");
         }
     };
 

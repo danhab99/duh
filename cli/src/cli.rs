@@ -2,8 +2,9 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    log::LogCommand, pull::PullCommand, push::PushCommand, show::ShowCommand, stage::StageCommand,
-    status::StatusCommand, switch::SwitchCommand, tag::TagCommand, unstage::UnstageCommand,
+    log::LogCommand, pull::PullCommand, push::PushCommand, reset::ResetCommand, show::ShowCommand,
+    stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
+    unstage::UnstageCommand,
 };
 
 /// `duh` — binary oriented version control
@@ -59,4 +60,7 @@ pub enum Commands {
 
     /// Create, list, or delete lightweight tags
     Tag(TagCommand),
+
+    /// Reset the current branch to a specified commit
+    Reset(ResetCommand),
 }
