@@ -398,10 +398,24 @@ impl<F: FileSystem> Space<F> {
         Ok(())
     }
 
-    pub fn set_ref(&self, name: &str, r: ObjectReference) -> SpaceResult<()> {
+    pub fn set_ref(
+        &self,
+        name: &str,
+        r: ObjectReference,
+        log_msg: Option<&str>,
+    ) -> SpaceResult<()> {
         let path = self.get_ref_path(name);
         self.write_to_space(path.as_str(), r.to_string().as_bytes())?;
         vlog!("space::set_ref: {} -> {}", name, r.to_string());
+
+        if let Some(log_msg) = log_msg {
+            self.log_ref(
+                ObjectReference::Ref(name.to_string()),
+                self.resolve_ref_name(r)?,
+                log_msg,
+            );
+        }
+
         return Ok(());
     }
 
@@ -497,6 +511,7 @@ impl<F: FileSystem> Space<F> {
         self.set_ref(
             format!("head/{}", name).as_str(),
             ObjectReference::Hash(head_hash),
+            Some(format!("create branch: {}", name).as_str()),
         )
     }
 
@@ -617,5 +632,16 @@ impl<F: FileSystem> Space<F> {
         file.write_all(format!("{} | {}", hash.to_string(), message).as_bytes())?;
 
         Ok(())
+    }
+
+    pub fn get_reflog(&self, branch: &str) -> SpaceResult<String> {
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(self.get_path_in_space(&format!("reflog/{}", r)))?;
+
+        let mut s: Vec<u8>;
+        file.read_to_end(&mut s)?;
+
+        Ok(String::from_utf8(s)?)
     }
 }

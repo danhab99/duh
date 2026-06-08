@@ -1,9 +1,7 @@
 use crate::{
     diff::DiffFragment,
     hash::Hash,
-    objects::{
-        CommitStruct, FileFragment, FileStruct,  Fragment, Object, ObjectReference,
-    },
+    objects::{CommitStruct, FileFragment, FileStruct, Fragment, Object, ObjectReference},
     replay::LazyFileReplay,
     space::ReadSeek,
     vlog,
@@ -152,7 +150,7 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
         let commit = CommitStruct {
             parent: head_commit,
-            message: message,
+            message: message.clone(),
             comitter: self.space.me.clone(),
             author: self.space.me.clone(),
             files: self.space.index.clone(),
@@ -167,6 +165,7 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
         self.space.set_ref(
             head_ref_name.as_str(),
             ObjectReference::Hash(commit_hash.clone()),
+            Some(format!("commit: {}", message.clone()).as_str()),
         )?;
         vlog!("space::commit: new HEAD = {}", commit_hash.to_string());
 
@@ -187,7 +186,9 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
             let mut unchanged = 0usize;
             if let Some(Object::File(file)) = self.space.get_object(version_hash)? {
                 for frag_hash in &file.fragments {
-                    if let Some(Object::FileDiffFragment(frag)) = self.space.get_object(*frag_hash)? {
+                    if let Some(Object::FileDiffFragment(frag)) =
+                        self.space.get_object(*frag_hash)?
+                    {
                         match frag {
                             FileFragment::ADDED { len, .. } => added += len,
                             FileFragment::DELETED { len } => deleted += len,
@@ -217,7 +218,12 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
         let commit = match self.space.get_object(hash)? {
             Some(Object::Commit(c)) => c,
             None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
-            _ => return Err(Box::new(crate::error::DuhError::invalid_object("commit", "unknown object type"))),
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "commit",
+                    "unknown object type",
+                )))
+            }
         };
 
         let file_version_hash = match commit.files.get(fp.as_str()) {
@@ -234,14 +240,24 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
         let file_version = match self.space.get_object(*file_version_hash)? {
             Some(Object::File(c)) => c,
-            _ => return Err(Box::new(crate::error::DuhError::invalid_object("file", "unknown object type"))),
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "file",
+                    "unknown object type",
+                )))
+            }
         };
 
         let mut fragments = Vec::with_capacity(file_version.fragments.len());
         for frag_hash in file_version.fragments {
             match self.space.get_object(frag_hash)? {
                 Some(Object::FileDiffFragment(frag)) => fragments.push(frag),
-                _ => return Err(Box::new(crate::error::DuhError::invalid_object("file diff fragment", "unknown object type"))),
+                _ => {
+                    return Err(Box::new(crate::error::DuhError::invalid_object(
+                        "file diff fragment",
+                        "unknown object type",
+                    )))
+                }
             }
         }
 

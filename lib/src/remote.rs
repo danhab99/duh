@@ -27,6 +27,7 @@ pub fn fetch_all_refs<L: FileSystem, R: FileSystem>(
             )
             .as_str(),
             r,
+            Some(format!("fetch: {}", remote_name).as_str()),
         )?;
     }
 
