@@ -612,7 +612,7 @@ impl<F: FileSystem> Space<F> {
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
-            .open(self.get_path_in_space(format!("reflog/{}", r)))?;
+            .open(self.get_path_in_space(&format!("reflog/{}", r)))?;
 
         file.write_all(format!("{} | {}", hash.to_string(), message).as_bytes())?;
 
