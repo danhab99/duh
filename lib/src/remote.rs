@@ -5,11 +5,10 @@ use crate::{
     vlog,
 };
 use std::error::Error;
-use vfs::FileSystem;
 
-pub fn fetch_all_refs<L: FileSystem, R: FileSystem>(
-    local: &mut Space<L>,
-    remote: &mut Space<R>,
+pub fn fetch_all_refs(
+    local: &mut Space,
+    remote: &mut Space,
     remote_name: &str,
     prefix: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -38,9 +37,9 @@ pub enum CopyCommitsProgress {
     Commit(Hash),
 }
 
-pub fn copy_commits<L: FileSystem, R: FileSystem, P>(
-    src: &mut Space<L>,
-    dest: &mut Space<R>,
+pub fn copy_commits<P>(
+    src: &mut Space,
+    dest: &mut Space,
     hash: Hash,
     progress: Option<P>,
 ) -> Result<(), Box<dyn Error>>

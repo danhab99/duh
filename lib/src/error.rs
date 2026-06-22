@@ -1,45 +1,32 @@
-use std::fmt;
 use std::error::Error;
+use std::fmt;
 
 /// Comprehensive error type for duh operations
 #[derive(Debug)]
 pub enum DuhError {
     // Object/Data structure errors
-    InvalidObjectType { 
-        expected: String,
-        found: String,
-    },
-    ObjectNotFound {
-        hash: String,
-        object_type: String,
-    },
-    FileNotInCommit {
-        file: String,
-        commit: String,
-    },
-    
+    InvalidObjectType { expected: String, found: String },
+    ObjectNotFound { hash: String, object_type: String },
+    FileNotInCommit { file: String, commit: String },
+
     // Reference/Branch errors
     RefNotFound(String),
     InvalidRefFormat(String),
-    
+
     // Remote/Network errors
-    UnsupportedRemoteScheme {
-        scheme: String,
-        reason: String,
-    },
+    UnsupportedRemoteScheme { scheme: String, reason: String },
     RemoteOperationNotImplemented(String),
-    
+    RemoteNotFound(String),
+
     // State errors
     UncommittedChanges,
-    DetachedHead {
-        operation: String,
-    },
-    
+    DetachedHead { operation: String },
+
     // Filesystem errors
     EditorExitedWithError(i32),
     FileOperationFailed(String),
-    
-    // Generic errors  
+
+    // Generic errors
     NoSpace(String),
     Generic(String),
 }
@@ -50,7 +37,11 @@ impl fmt::Display for DuhError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             DuhError::InvalidObjectType { expected, found } => {
-                write!(f, "Invalid object type: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "Invalid object type: expected {}, found {}",
+                    expected, found
+                )
             }
             DuhError::ObjectNotFound { hash, object_type } => {
                 write!(f, "{} object not found: {}", object_type, hash)
@@ -74,10 +65,18 @@ impl fmt::Display for DuhError {
                 write!(f, "Cannot switch branches with uncommitted changes.\nPlease commit or stash your changes first.")
             }
             DuhError::DetachedHead { operation } => {
-                write!(f, "Cannot {} on a detached HEAD.\nCreate or switch to a branch first.", operation)
+                write!(
+                    f,
+                    "Cannot {} on a detached HEAD.\nCreate or switch to a branch first.",
+                    operation
+                )
             }
             DuhError::EditorExitedWithError(code) => {
-                write!(f, "Editor exited with error code {}. Commit message not saved.", code)
+                write!(
+                    f,
+                    "Editor exited with error code {}. Commit message not saved.",
+                    code
+                )
             }
             DuhError::FileOperationFailed(msg) => {
                 write!(f, "File operation failed: {}", msg)
@@ -87,6 +86,9 @@ impl fmt::Display for DuhError {
             }
             DuhError::Generic(msg) => {
                 write!(f, "{}", msg)
+            }
+            DuhError::RemoteNotFound(name) => {
+                write!(f, "remote not found: {}", name)
             }
         }
     }
@@ -113,7 +115,9 @@ impl fmt::Display for NoSpace {
 
 impl NoSpace {
     pub fn new(msg: &str) -> Box<NoSpace> {
-        Box::new(NoSpace { details: msg.to_string() })
+        Box::new(NoSpace {
+            details: msg.to_string(),
+        })
     }
 }
 
