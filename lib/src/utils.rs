@@ -1,9 +1,40 @@
 use sha2::{Digest, Sha256};
 use std::{
-    error::Error, io::Read, path::{Path, PathBuf}
+    error::Error,
+    fs::OpenOptions,
+    io::{BufWriter, Read, Write},
+    path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use crate::error::NoSpace;
+
+static LOG_WRITER: OnceLock<Option<BufWriter<std::fs::File>>> = OnceLock::new();
+
+/// Initialize the diagnostic log file. Returns Ok(()) if successfully opened.
+/// Subsequent calls are no-ops (first writer wins).
+pub fn init_log(path: &str) -> std::io::Result<()> {
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let writer = BufWriter::new(file);
+    let _ = LOG_WRITER.set(Some(writer));
+    Ok(())
+}
+
+/// Write a line to the diagnostic log file (if initialized).
+pub fn log_to_file(line: &str) {
+    if let Some(ref mut writer) = LOG_WRITER.get().flatten() {
+        let _ = writeln!(writer, "{}", line);
+        let _ = writer.flush();
+    }
+}
+
+/// Check if diagnostic logging is active.
+pub fn log_active() -> bool {
+    LOG_WRITER.get().flatten().is_some()
+}
 
 pub fn get_cwd() -> String {
     std::env::current_dir()

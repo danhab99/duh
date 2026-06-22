@@ -1,7 +1,8 @@
 use crate::{
+    error::DuhError,
     hash::Hash,
     objects::{CommitStruct, Object, ObjectReference, Person},
-    utils::{self, find_file, getSpaceConfigFileName, SPACE_METADATA_DIR_NAME},
+    utils::{self},
     vlog,
 };
 use std::{
@@ -14,23 +15,22 @@ use std::{
     time::SystemTime,
 };
 
+use opendal::blocking::Operator;
 use serde::Serialize;
-use std::env;
-use vfs::FileSystem;
+
+use toml::{self};
+
 // Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek + ?Sized> ReadSeek for T {}
 
-use toml::{self, map::Map, Value};
-
 #[derive(Clone)]
-pub struct Space<F: ?Sized + FileSystem> {
-    root_path: String,
+pub struct Space {
     pub me: Person,
     pub index: HashMap<String, Hash>,
     pub chunk_size: usize,
     pub max_size: usize,
-    fs: F,
+    fs: Operator,
 }
 
 pub type SpaceError = Box<dyn Error>;
@@ -42,31 +42,21 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 /// bodies are split into multiple Fragment objects at stage time.
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
-impl<F: FileSystem> Space<F> {
-    pub fn at_root_path(root_path: Option<String>, filesystem: F) -> SpaceResult<Space<F>> {
-        vlog!("space::at_root_path called with root_path={:?}", root_path);
-        let rp = match root_path {
-            Some(x) => x,
-            None => {
-                let cwd = env::current_dir()?;
-                let c = cwd.to_str().ok_or("cannot identify dir")?;
-                String::from(c)
-            }
-        };
-
-        let metadata_path = find_file(rp.as_str(), SPACE_METADATA_DIR_NAME)?;
+impl Space {
+    pub fn at_root_path(filesystem: Operator) -> SpaceResult<Space> {
+        vlog!("space::at_root_path called with");
         // metadata_path == "<space-root>/.duh" — store the space root (parent of .duh)
-        let space_root = PathBuf::from(&metadata_path)
-            .parent()
-            .and_then(|p| p.to_str())
-            .ok_or("couldn't determine space root")?
-            .to_string();
+        // let space_root = PathBuf::from(&metadata_path)
+        //     .parent()
+        //     .and_then(|p| p.to_str())
+        //     .ok_or("couldn't determine space root")?
+        //     .to_string();
 
-        let config_path = find_file(rp.as_str(), &getSpaceConfigFileName())?;
+        // let config_path = find_file(rp.as_str(), &getSpaceConfigFileName())?;
 
         let mut content = String::new();
         filesystem
-            .open_file(config_path.as_str())?
+            .read("config.toml")?
             .read_to_string(&mut content)?;
         let config = content.parse::<toml::Table>()?;
 
@@ -92,9 +82,8 @@ impl<F: FileSystem> Space<F> {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let mut r = Space::<F> {
+        let mut r = Space {
             fs: filesystem,
-            root_path: space_root,
             chunk_size,
             max_size,
             me: Person {
@@ -118,19 +107,16 @@ impl<F: FileSystem> Space<F> {
         };
 
         // Verbose: show resolved space/user info
-        vlog!(
-            "space::at_root_path: user='{} <{}>' space_root='{}'",
-            r.me.name,
-            r.me.email,
-            r.root_path
-        );
+        vlog!("space::at_root_path: user='{} <{}>'", r.me.name, r.me.email,);
 
         let index_file_path = r.get_path_in_space_str("index");
         vlog!("space::at_root_path: index path = {}", index_file_path,);
 
-        let mut index_file = r.fs.open_file(index_file_path.as_str()).unwrap();
+        let index_file = r.fs.reader(index_file_path.as_str()).unwrap();
         let mut contents = String::new();
-        index_file.read_to_string(&mut contents)?;
+        index_file
+            .into_std_read(0..)?
+            .read_to_string(&mut contents)?;
         for line in contents.lines() {
             let parts = line.split("=").collect::<Vec<_>>();
             assert!(parts.len() == 2);
@@ -154,10 +140,6 @@ impl<F: FileSystem> Space<F> {
         Ok(r)
     }
 
-    pub fn root_path(&self) -> &str {
-        &self.root_path
-    }
-
     fn create_dir_all(&self, path: &str) -> Result<(), Box<dyn Error>> {
         use std::path::Path;
         let path = Path::new(path);
@@ -177,12 +159,8 @@ impl<F: FileSystem> Space<F> {
     fn get_path_in_space(&self, p: &str) -> PathBuf {
         vlog!("space::get_path_in_space: p='{}'", p);
         // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
-        let mut b = PathBuf::from(self.root_path.clone());
-        b.push(utils::SPACE_METADATA_DIR_NAME);
-        self.create_dir_all(&b.as_os_str().to_str().unwrap())
-            .unwrap();
-        b.push(p);
-        return b;
+        self.create_dir_all(p).unwrap();
+        return PathBuf::from(p);
     }
 
     fn get_path_in_space_str(&self, p: &str) -> String {
@@ -221,14 +199,13 @@ impl<F: FileSystem> Space<F> {
         self.index.get(path).cloned()
     }
 
-    pub fn initialize_at(root_path: String, filesystem: F) -> SpaceResult<Space<F>> {
+    pub fn initialize_at(filesystem: Operator) -> SpaceResult<Space> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let r = Space::<F> {
+        let r = Space {
             fs: filesystem,
-            root_path,
             chunk_size: DEFAULT_BLOCK_SIZE,
             max_size: DEFAULT_MAX_FRAGMENT_SIZE,
             me: Person {
@@ -239,10 +216,9 @@ impl<F: FileSystem> Space<F> {
             index: HashMap::new(),
         };
 
-        vlog!("space::initialize_at: root_path='{}'", r.root_path);
-        let base = PathBuf::from(r.root_path.clone()).join(utils::SPACE_METADATA_DIR_NAME);
-        r.create_dir_all(base.join("objects").to_str().unwrap())?;
-        r.create_dir_all(base.join("refs").to_str().unwrap())?;
+        vlog!("space::initialize_at");
+        r.create_dir_all("objects")?;
+        r.create_dir_all("refs")?;
 
         let default_config = format!(
             "chunk_size = {}\nmax_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
@@ -347,7 +323,10 @@ impl<F: FileSystem> Space<F> {
 
     fn read_in_space(&self, path: &str) -> SpaceResult<Option<Vec<u8>>> {
         let mut content = Vec::<u8>::new();
-        self.fs.open_file(path)?.read_to_end(&mut content)?;
+        self.fs
+            .reader(path)?
+            .into_std_read(0..)?
+            .read_to_end(&mut content)?;
 
         return Ok(Some(content));
     }
@@ -364,7 +343,8 @@ impl<F: FileSystem> Space<F> {
         }
         let mut content = Vec::<u8>::new();
         self.fs
-            .open_file(path.as_os_str().to_str().unwrap())?
+            .reader(path.as_os_str().to_str().unwrap())?
+            .into_std_read(0..)?
             .read_to_end(&mut content)?;
         vlog!("space::read_object: read {} bytes", content.len());
         return Ok(Some(content.to_vec()));
@@ -394,7 +374,7 @@ impl<F: FileSystem> Space<F> {
     }
 
     pub fn write_to_space(&self, path: &str, content: &[u8]) -> SpaceResult<()> {
-        self.fs.create_file(path)?.write(content)?;
+        self.fs.write(path, Vec::from(content))?;
         Ok(())
     }
 
@@ -422,7 +402,10 @@ impl<F: FileSystem> Space<F> {
     pub fn get_ref(&self, name: String) -> SpaceResult<ObjectReference> {
         let ref_path = &self.get_path_in_space_str(format!("refs/{}", name).as_str());
         let mut val = String::new();
-        self.fs.open_file(ref_path)?.read_to_string(&mut val)?;
+        self.fs
+            .reader(ref_path)?
+            .into_std_read(0..)?
+            .read_to_string(&mut val)?;
         vlog!("space::get_ref: name='{}' content='{}'", name, val.trim());
 
         // Treat an empty ref file as "no parent" (map to zero hash) to make the
@@ -520,8 +503,9 @@ impl<F: FileSystem> Space<F> {
 
         let refs_names = self
             .fs
-            .read_dir(&refs_path)?
-            .map(|x| ObjectReference::from_str(x.as_str()).unwrap())
+            .list(&refs_path)?
+            .iter()
+            .map(|x| ObjectReference::from_str(x.name()).unwrap())
             .collect::<Vec<_>>();
 
         Ok(refs_names)
@@ -529,13 +513,13 @@ impl<F: FileSystem> Space<F> {
 
     pub fn delete_ref(&mut self, path: &str) -> SpaceResult<()> {
         let ref_path = self.get_ref_path(path);
-        self.fs.remove_file(ref_path.as_str())?;
+        self.fs.delete(ref_path.as_str())?;
         Ok(())
     }
 
-    fn get_table(&self) -> SpaceResult<Map<String, Value>> {
+    fn get_table(&self) -> SpaceResult<toml::Table> {
         let content = String::from_utf8(self.read_in_space("config")?.unwrap())?;
-        let table = content.parse::<toml::Table>()?;
+        let table = toml::from_str(&content)?;
 
         return Ok(table);
     }
@@ -589,38 +573,34 @@ impl<F: FileSystem> Space<F> {
         Ok(())
     }
 
-    pub fn get_remote_by_name(&self, name: &str) -> SpaceResult<Space<vfs::PhysicalFS>> {
-        use url::Url;
+    pub fn get_remote_by_name(&self, name: &str) -> SpaceResult<Space> {
+        let full_table = self.get_table()?;
 
-        let u = Url::parse(
-            self.get_config_value(format!("remote.{}", name).as_str())?
-                .as_str(),
-        )?;
+        let this_remote_table = full_table
+            .get("remote")
+            .and_then(|r| r.as_table())
+            .and_then(|table| table.get(name)?.as_table())
+            .ok_or(DuhError::RemoteNotFound(name.to_string()))?;
 
-        match u.scheme() {
-            "s3" => Err(Box::new(crate::error::DuhError::unsupported_scheme(
-                "s3",
-                "S3 remotes not yet implemented",
-            ))),
-            "http" | "https" => Err(Box::new(crate::error::DuhError::unsupported_scheme(
-                u.scheme(),
-                "HTTP/HTTPS remotes not yet implemented",
-            ))),
-            "ftp" | "sftp" => Err(Box::new(crate::error::DuhError::unsupported_scheme(
-                u.scheme(),
-                "FTP/SFTP remotes not yet implemented",
-            ))),
-            "path" => {
-                let path = u.path();
-                let fs = vfs::PhysicalFS::new(path);
-                let r: Space<vfs::PhysicalFS> = Space::at_root_path(Some(path.to_string()), fs)?;
-                Ok(r)
-            }
-            _ => Err(Box::new(crate::error::DuhError::unsupported_scheme(
-                u.scheme(),
-                "Unknown remote scheme",
-            ))),
-        }
+        let url_s = this_remote_table
+            .get("url")
+            .ok_or(DuhError::Generic("remote requires url".to_string()))?
+            .as_str()
+            .ok_or(DuhError::Generic("remote url must be a string".to_string()))?;
+
+        let config_pairs: Vec<(String, String)> = this_remote_table
+            .get("config")
+            .and_then(|c| c.as_table())
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let fs = Operator::from_uri((url_s, config_pairs))?;
+        let r: Space = Space::at_root_path(fs)?;
+        Ok(r)
     }
 
     pub fn log_ref(&self, r: ObjectReference, hash: Hash, message: &str) -> SpaceResult<()> {
@@ -637,9 +617,9 @@ impl<F: FileSystem> Space<F> {
     pub fn get_reflog(&self, branch: &str) -> SpaceResult<String> {
         let mut file = std::fs::OpenOptions::new()
             .read(true)
-            .open(self.get_path_in_space(&format!("reflog/{}", r)))?;
+            .open(self.get_path_in_space(&format!("reflog/{}", branch)))?;
 
-        let mut s: Vec<u8>;
+        let mut s: Vec<u8> = Vec::new();
         file.read_to_end(&mut s)?;
 
         Ok(String::from_utf8(s)?)
