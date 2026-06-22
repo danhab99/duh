@@ -1,10 +1,14 @@
-use std::error::Error;
+use std::{
+    error::Error,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 use lib::space::Space;
 use vfs::PhysicalFS;
 
 use cli::{Cli, Commands};
+use opendal::{self, Builder};
 
 mod branch;
 mod checkout;
@@ -33,7 +37,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             init::init()?;
             return Ok(());
         }
-        _ => Space::at_root_path(None, PhysicalFS::new("/"))?,
+        _ => {
+            // Space::at_root_path()?
+            let root_dir = find_duh_dir(std::env::current_dir()?.as_path());
+
+            let op = opendal::services::Fs::default()
+                .root(root_dir.and_then(|x| x.as_os_str().to_str()).unwrap());
+            let fs = opendal::blocking::Operator::from(fs.build()?);
+
+            lib::space::Space::at_root_path(fs)?
+        }
     };
 
     match &cli.command {
@@ -85,4 +98,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     space.save_index()?;
 
     Ok(())
+}
+
+pub fn find_duh_dir(current_dir: &Path) -> Option<&Path> {
+    let mut duh_dir = PathBuf::from(current_dir);
+    duh_dir.push(".duh");
+
+    if Path::from(duh_dir).is_dir() {
+        return Some(current_dir.as_path());
+    } else {
+        current_dir.parent().and_then(find_duh_dir)
+    }
 }
