@@ -40,7 +40,8 @@ pub fn checkout<F: vfs::FileSystem>(
     match space.get_object(target_hash)? {
         Some(Object::Commit(c)) => {
             let fp = space.get_path_in_cwd_str(&cmd.file_path);
-            if c.files.get(fp.as_str()).is_none() {
+            let files = space.get_commit_files(target_hash)?;
+            if files.get(fp.as_str()).is_none() {
                 println!(
                     "{} {}",
                     crate::colors::red("file not found in commit:"),

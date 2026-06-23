@@ -33,9 +33,10 @@ pub fn reset<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &ResetCommand) -> Re
 
     match space.get_object(target_hash)? {
         Some(Object::Commit(c)) => {
+            let files = space.get_commit_files(target_hash)?;
             match cmd.mode {
                 ResetMode::Soft | ResetMode::Mixed => {
-                    space.index = c.files;
+                    space.index = files.clone();
                     println!(
                         "{} index to {}",
                         crate::colors::green("Reset"),
@@ -43,7 +44,7 @@ pub fn reset<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &ResetCommand) -> Re
                     );
                 }
                 ResetMode::Hard => {
-                    space.index = c.files;
+                    space.index = files;
 
                     let files = space.list_files(ObjectReference::Hash(target_hash))?;
 
