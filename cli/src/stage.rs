@@ -17,9 +17,9 @@ pub struct StageCommand {
     pub file_paths: Vec<String>,
 }
 
-fn stage_file<F: vfs::FileSystem>(
+fn stage_file(
     file_path: &str,
-    space: &mut Space<F>,
+    space: &mut Space,
 ) -> Result<(), Box<dyn Error>> {
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let bytes_per_col = (file_size / display::MAX_COLS).max(1);
@@ -46,13 +46,13 @@ fn stage_file<F: vfs::FileSystem>(
     Ok(())
 }
 
-pub fn stage<F: vfs::FileSystem>(
-    space: &mut Space<F>,
+pub fn stage(
+    space: &mut Space,
     cmd: &StageCommand,
 ) -> Result<(), Box<dyn Error>> {
     // Load .duhignore from the space root if it exists. Each non-blank,
     // non-comment line becomes a negated glob pattern passed to GlobWalkerBuilder.
-    let ignore_path = std::path::Path::new(space.root_path()).join(".duhignore");
+    let ignore_path = std::env::current_dir()?.join(".duhignore");
     let mut ignore_patterns: Vec<String> = Vec::new();
     if ignore_path.exists() {
         let contents = std::fs::read_to_string(&ignore_path)?;

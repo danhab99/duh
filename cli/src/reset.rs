@@ -25,14 +25,14 @@ pub struct ResetCommand {
     pub commit: Option<ObjectReference>,
 }
 
-pub fn reset<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &ResetCommand) -> Result<(), Box<dyn Error>> {
+pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>> {
     let target_hash = match &cmd.commit {
         Some(r) => space.resolve_ref_name(r.clone())?,
         None => space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?,
     };
 
     match space.get_object(target_hash)? {
-        Some(Object::Commit(c)) => {
+        Some(Object::Commit(_c)) => {
             let files = space.get_commit_files(target_hash)?;
             match cmd.mode {
                 ResetMode::Soft | ResetMode::Mixed => {

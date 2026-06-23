@@ -20,7 +20,7 @@ pub struct BranchCommand {
     set: Option<String>,
 }
 
-pub fn branch<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
+pub fn branch(space: &mut Space, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
     let head_ref = space.get_ref("HEAD".into())?;
 
     if let Some(name) = cmd.delete.clone() {
@@ -37,12 +37,12 @@ pub fn branch<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &BranchCommand) -> 
         let current_commit = space.resolve_ref_name(head_ref.clone())?;
 
         space.delete_ref(head_ref.to_string().as_str())?;
-        space.set_ref(&name, ObjectReference::Hash(current_commit))?;
+        space.set_ref(&name, ObjectReference::Hash(current_commit), Some("rename branch"))?;
         // Update HEAD to point to the new branch name; the old ref was just deleted.
-        space.set_ref("HEAD", ObjectReference::Ref(name.clone()))?;
+        space.set_ref("HEAD", ObjectReference::Ref(name.clone()), Some("rename branch"))?;
     } else if let Some(set) = cmd.set.clone() {
         let commit = ObjectReference::from(set);
-        space.set_ref(head_ref.to_string().as_str(), commit)?;
+        space.set_ref(head_ref.to_string().as_str(), commit, Some("set branch"))?;
     } else {
         println!("Listing all branches");
 

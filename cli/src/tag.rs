@@ -20,7 +20,7 @@ pub struct TagCommand {
     commit: Option<String>,
 }
 
-pub fn tag<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &TagCommand) -> Result<(), Box<dyn Error>> {
+pub fn tag(space: &mut Space, cmd: &TagCommand) -> Result<(), Box<dyn Error>> {
     if let Some(name) = cmd.delete.clone() {
         let tag_ref = format!("tags/{}", name);
         if space.get_ref(tag_ref.clone()).is_err() {
@@ -32,7 +32,7 @@ pub fn tag<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &TagCommand) -> Result
         let commit = ObjectReference::from(commit_ref.to_string());
         let commit_hash = space.resolve_ref_name(commit)?;
         let tag_ref = format!("tags/{}", name);
-        space.set_ref(tag_ref.as_str(), ObjectReference::Hash(commit_hash))?;
+        space.set_ref(tag_ref.as_str(), ObjectReference::Hash(commit_hash), Some("tag"))?;
         println!("Created tag {} -> {}", name, commit_hash.to_string());
     } else {
         println!("Listing all tags");

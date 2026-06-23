@@ -15,7 +15,7 @@ pub struct LogCommand {
     pub commit: Option<ObjectReference>,
 }
 
-pub fn log<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
+pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
     let mut cur = space.resolve_ref_name(
         cmd.commit
             .clone()

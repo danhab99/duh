@@ -11,7 +11,7 @@ use lib::{
 #[command(about = "Show status of tracked files (compare working copy -> index / HEAD)")]
 pub struct StatusCommand {}
 
-pub fn status<F: vfs::FileSystem>(space: &mut Space<F>, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
+pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
     let cwd = std::env::current_dir()?;
     let cwd_str = cwd.to_str().unwrap_or("").to_string();
 
@@ -21,7 +21,7 @@ pub fn status<F: vfs::FileSystem>(space: &mut Space<F>, _cmd: &StatusCommand) ->
 
     let head_hash = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
     if !head_hash.is_zero() {
-        if let Some(Object::Commit(head)) = space.get_object(head_hash)? {
+        if let Some(Object::Commit(_head)) = space.get_object(head_hash)? {
             let head_files = space.get_commit_files(head_hash)?;
             for (path, version_hash) in head_files.iter() {
                 tracked.insert(path.clone(), *version_hash);
