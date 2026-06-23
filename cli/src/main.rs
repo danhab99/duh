@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
 use clap::Parser;
@@ -29,55 +29,56 @@ mod unstage;
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
-    // Handle copy/clone specially since it can work outside a duh space
-    if let Commands::Copy(c) = &cli.command {
-        let cwd = std::env::current_dir()?;
-        let root_dir = find_duh_dir(cwd.as_path());
-
-        if root_dir.is_none() {
-            // Outside a duh space: treat as clone
-            if let Some(ref url) = c.from {
-                let dest_dir = c.as_branch.as_deref().unwrap_or_else(|| {
-                    // Default to the last component of the URL
-                    url.split('/').last().unwrap_or("repo")
-                        .trim_end_matches(".duh")
-                });
-                copy::clone(url, dest_dir, c.branch.as_deref())?;
-                return Ok(());
-            } else {
-                return Err("must specify --from when cloning outside a duh space".into());
-            }
-        }
-
-        // Inside a duh space: normal copy behavior
-        let op =
-            opendal::services::Fs::default().root(root_dir.and_then(|x| x.to_str()).unwrap());
-
-        let afs = opendal::Operator::new(op)?.finish();
-        let fs = opendal::blocking::Operator::new(afs)?;
-
-        let mut space = lib::space::Space::at_root_path(fs)?;
-        copy::copy(&mut space, c)?;
-        space.save_index()?;
-        return Ok(());
-    }
-
     let mut space = match &cli.command {
         Commands::Init => {
             init::init()?;
             return Ok(());
         }
-        _ => {
+        Commands::Copy(c) => {
             let cwd = std::env::current_dir()?;
-            let root_dir = find_duh_dir(cwd.as_path());
+            let result = lib::utils::find_duh_dir(cwd.to_str().unwrap());
 
+            if result.is_err() {
+                // Outside a duh space: treat as clone
+                if let Some(ref url) = c.from {
+                    let dest_dir = c.as_branch.as_deref().unwrap_or_else(|| {
+                        // Default to the last component of the URL
+                        url.split('/')
+                            .last()
+                            .unwrap_or("repo")
+                            .trim_end_matches(".duh")
+                    });
+                    copy::clone(url, dest_dir, c.branch.as_deref())?;
+                    return Ok(());
+                } else {
+                    return Err("must specify --from when cloning outside a duh space".into());
+                }
+            }
+
+            // Inside a duh space: normal copy behavior
+            let (metadata_dir, _worktree) = result?;
             let op =
-                opendal::services::Fs::default().root(root_dir.and_then(|x| x.to_str()).unwrap());
+                opendal::services::Fs::default().root(metadata_dir.to_str().unwrap());
 
             let afs = opendal::Operator::new(op)?.finish();
             let fs = opendal::blocking::Operator::new(afs)?;
 
-            lib::space::Space::at_root_path(fs)?
+            let mut space = lib::space::Space::at_root_path(fs, _worktree)?;
+            copy::copy(&mut space, c)?;
+            space.save_index()?;
+            return Ok(());
+        }
+        _ => {
+            let cwd = std::env::current_dir()?;
+            let (metadata_dir, worktree) = lib::utils::find_duh_dir(cwd.to_str().unwrap())?;
+
+            let op =
+                opendal::services::Fs::default().root(metadata_dir.to_str().unwrap());
+
+            let afs = opendal::Operator::new(op)?.finish();
+            let fs = opendal::blocking::Operator::new(afs)?;
+
+            lib::space::Space::at_root_path(fs, worktree)?
         }
     };
 
@@ -130,13 +131,3 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn find_duh_dir(current_dir: &Path) -> Option<&Path> {
-    let mut duh_dir = PathBuf::from(current_dir);
-    duh_dir.push(".duh");
-
-    if duh_dir.is_dir() {
-        return Some(current_dir);
-    } else {
-        current_dir.parent().and_then(find_duh_dir)
-    }
-}
