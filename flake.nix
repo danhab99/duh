@@ -28,9 +28,7 @@
           pname = "duh";
           version = cliToml.package.version;
           buildType = "release";
-          
-          # build from the workspace root and select the `cli/` package
-          # Use builtins.path so untracked (but non-ignored) files are included.
+
           src = builtins.path {
             path = ./.;
             name = "duh-source";
@@ -38,6 +36,7 @@
               let base = builtins.baseNameOf path; in
               base != "target" && base != ".git" && base != "result";
           };
+
           setSourceRoot = "sourceRoot=$(echo */cli)";
           cargoLock.lockFile = ./cli/Cargo.lock;
           cargoSha256 = cargoVendorHash;
@@ -45,7 +44,23 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
           ];
-          
+
+          RUSTFLAGS = [
+            "-C target-cpu=native"
+            "-C opt-level=3"
+            "-C codegen-units=1"
+            "-C lto=fat"
+            "-C strip=symbols"
+          ];
+
+          env = {
+            CARGO_PROFILE_RELEASE_OPT_LEVEL = "3";
+            CARGO_PROFILE_RELEASE_LTO = "fat";
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
+            CARGO_PROFILE_RELEASE_PANIC = "abort";
+            CARGO_PROFILE_RELEASE_STRIP = "symbols";
+          };
+
           meta = with pkgs.lib; {
             description = "deduplicative update helper";
             homepage = "https://github.com/danhab99/duh";
@@ -82,6 +97,15 @@
           duh = pkgs.mkShell {
             buildInputs = [ duh pkgs.time ];
           };
+        };
+
+        apps = {
+          duh = flake-utils.lib.mkApp {
+            drv = duh;
+            exePath = "/bin/duh";
+          };
+
+          default = self.apps.${system}.duh;
         };
 
         version = cliToml.package.version;
