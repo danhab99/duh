@@ -7,7 +7,6 @@ use crate::{
     vlog,
 };
 use std::{error::Error, fs::File, io::Seek};
-use vfs::FileSystem;
 
 use std::io;
 
@@ -23,12 +22,12 @@ pub struct FileStagedSummary {
     pub unchanged_bytes: usize,
 }
 
-pub struct FileOps<'a, F: FileSystem> {
-    space: &'a mut Space<F>,
+pub struct FileOps<'a> {
+    space: &'a mut Space,
 }
 
-impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
-    pub fn from_space(space: &'a mut Space<F>) -> Self {
+impl<'a> FileOps<'a> {
+    pub fn from_space(space: &'a mut Space) -> Self {
         Self { space }
     }
 
@@ -148,15 +147,17 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
         let head_commit = self.space.get_head_commit_hash()?;
 
+        let tree_hash = self.space.build_tree(&self.space.index)?;
+
         let commit = CommitStruct {
             parent: head_commit,
+            tree: tree_hash,
             message: message.clone(),
             comitter: self.space.me.clone(),
             author: self.space.me.clone(),
-            files: self.space.index.clone(),
         };
 
-        let files_count = commit.files.len();
+        let files_count = self.space.index.len();
         vlog!("space::commit: creating commit with {} files", files_count);
 
         let commit_hash = self.space.save_obj(Object::Commit(commit))?;
@@ -217,7 +218,12 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
 
         let commit = match self.space.get_object(hash)? {
             Some(Object::Commit(c)) => c,
-            None => return Ok(Box::new(io::Cursor::new(Vec::<u8>::new()))),
+            None => {
+                return Err(Box::new(crate::error::DuhError::object_not_found(
+                    &hash.to_string(),
+                    "commit",
+                )));
+            }
             _ => {
                 return Err(Box::new(crate::error::DuhError::invalid_object(
                     "commit",
@@ -226,7 +232,8 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
             }
         };
 
-        let file_version_hash = match commit.files.get(fp.as_str()) {
+        let files = self.space.get_commit_files(hash)?;
+        let file_version_hash = match files.get(fp.as_str()) {
             Some(x) => x,
             None => {
                 vlog!(
@@ -234,7 +241,10 @@ impl<'a, F: vfs::FileSystem> FileOps<'a, F> {
                     fp,
                     hash.to_string()
                 );
-                return Ok(Box::new(io::Cursor::new(Vec::<u8>::new())));
+                return Err(Box::new(crate::error::DuhError::file_not_in_commit(
+                    &fp,
+                    &hash.to_string(),
+                )));
             }
         };
 
