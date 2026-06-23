@@ -38,7 +38,7 @@ pub fn checkout(
     // Ensure the commit exists and the file is present in that commit
     match space.get_object(target_hash)? {
         Some(Object::Commit(_c)) => {
-            let fp = space.get_path_in_cwd_str(&cmd.file_path);
+            let fp = space.get_path_in_worktree_str(&cmd.file_path)?;
             let files = space.get_commit_files(target_hash)?;
             if files.get(fp.as_str()).is_none() {
                 println!(
@@ -67,7 +67,7 @@ pub fn checkout(
     let out_path = cmd
         .as_name
         .clone()
-        .or_else(|| Some(space.get_path_in_cwd_str(&cmd.file_path)));
+        .or_else(|| space.get_path_in_worktree_str(&cmd.file_path).ok());
     let mut out_file = fs::File::create(out_path.unwrap())?;
 
     // copy stream directly from the space reader to the output file

@@ -60,7 +60,7 @@ pub fn clone(
     let op = Fs::default().root(dest_path.to_str().unwrap());
     let afs = opendal::Operator::new(op)?.finish();
     let fs = opendal::blocking::Operator::new(afs)?;
-    let mut space = Space::initialize_at(fs)?;
+    let mut space = Space::initialize_at(fs, Some(dest_path.clone()))?;
 
     // Add the remote as "origin"
     space.add_remote("origin", url)?;
