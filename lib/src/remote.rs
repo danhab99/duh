@@ -53,10 +53,14 @@ where
     }
 
     if let Some(Object::Commit(commit)) = src.get_object(hash)? {
-        copy_commits(src, dest, commit.parent, progress)?;
+        if !commit.parent.is_zero() {
+            copy_commits(src, dest, commit.parent, progress)?;
+        }
+
         dest.save_obj(Object::Commit(commit.clone()))?;
 
-        for (_, hash) in commit.files.iter() {
+        let files = src.get_commit_files(hash)?;
+        for (_, hash) in files.iter() {
             vlog!(
                 "remote::fetch_commit_from_remote transferred object {}",
                 hash.to_hex()

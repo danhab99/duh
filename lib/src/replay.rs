@@ -118,8 +118,8 @@ pub struct LazyFileReplay {
 
 impl LazyFileReplay {
     /// Create a new lazy file replay reader
-    pub fn new<F: vfs::FileSystem>(
-        space: &Space<F>,
+    pub fn new(
+        space: &Space,
         old_reader: Box<dyn ReadSeek>,
         fragments: Vec<FileFragment>,
     ) -> SpaceResult<Self> {
