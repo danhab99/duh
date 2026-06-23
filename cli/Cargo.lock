@@ -1005,7 +1005,6 @@ dependencies = [
  "globwalk",
  "lib",
  "opendal",
- "vfs",
  "walkdir",
 ]
 
@@ -1956,7 +1955,6 @@ dependencies = [
  "tempfile",
  "toml 0.8.19",
  "url",
- "vfs",
  "virtual-fs",
 ]
 
@@ -4382,15 +4380,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vfs"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69d33cbe2ac48f2a446f04c33aef4906078ffd224888df5ae60b7ed401ded771"
-dependencies = [
- "filetime",
-]
 
 [[package]]
 name = "virtual-fs"
