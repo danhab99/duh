@@ -41,7 +41,7 @@ impl<'a> FileOps<'a> {
         E: FnMut(DiffFragment),
         P: FnMut(crate::dedup::DedupProgress),
     {
-        let fp = self.space.get_path_in_cwd_str(&file_path);
+        let fp = self.space.get_path_in_worktree_str(&file_path)?;
 
         let mut new = File::open(fp.clone())?;
 
@@ -137,7 +137,7 @@ impl<'a> FileOps<'a> {
     }
 
     pub fn unstage_file(&mut self, file_path: String) -> FileOpsResult<()> {
-        let fp = self.space.get_path_in_cwd_str(&file_path);
+        let fp = self.space.get_path_in_worktree_str(&file_path)?;
         self.space.index.remove(fp.as_str());
         Ok(())
     }
@@ -214,7 +214,7 @@ impl<'a> FileOps<'a> {
             file_path,
             hash.to_string()
         );
-        let fp = self.space.get_path_in_cwd_str(&file_path);
+        let fp = self.space.get_path_in_worktree_str(&file_path)?;
 
         let commit = match self.space.get_object(hash)? {
             Some(Object::Commit(c)) => c,
