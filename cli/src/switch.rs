@@ -19,7 +19,7 @@ pub struct SwitchCommand {
     pub create: Option<bool>,
 }
 
-pub fn switch<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>> {
+pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>> {
     let uncomitted_changes = status(space, &crate::status::StatusCommand {})?;
 
     if uncomitted_changes && cmd.create == None || cmd.create == Some(false) {
@@ -37,13 +37,13 @@ pub fn switch<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &SwitchCommand) -> 
     let commit_hash: Hash;
 
     if ref_exists {
-        space.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()))?;
+        space.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()), Some("switch"))?;
         commit_hash = space.resolve_ref_name(ObjectReference::Ref(branch_name.clone()))?;
     } else if cmd.create == Some(true) {
         // resolve_ref_name handles both attached HEAD (Ref -> Hash) and detached HEAD (Hash directly).
         commit_hash = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
-        space.set_ref(&cmd.name, ObjectReference::Hash(commit_hash.clone()))?;
-        space.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()))?;
+        space.set_ref(&cmd.name, ObjectReference::Hash(commit_hash.clone()), Some("switch"))?;
+        space.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()), Some("switch"))?;
     } else {
         return Err(format!("branch '{}' does not exist", branch_name).into());
     }

@@ -28,8 +28,8 @@ pub struct CommitCommand {
     pub generate: bool,
 }
 
-pub fn commit<F: vfs::FileSystem>(
-    space: &mut Space<F>,
+pub fn commit(
+    space: &mut Space,
     cmd: &CommitCommand,
 ) -> Result<(), Box<dyn Error>> {
     {
@@ -73,7 +73,7 @@ pub fn commit<F: vfs::FileSystem>(
     Ok(())
 }
 
-fn generate_message<F: vfs::FileSystem>(space: &mut Space<F>) -> Result<String, Box<dyn Error>> {
+fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
     let fileops = FileOps::from_space(space);
     let summaries = fileops.staged_summary()?;
     if summaries.is_empty() {

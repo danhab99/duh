@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::fs;
 
-use clap::builder::Str;
 use clap::clap_derive::Args;
 use lib::file::FileOps;
 use lib::objects::{Object, ObjectReference};
@@ -26,8 +25,8 @@ pub struct CheckoutCommand {
     pub as_name: Option<String>,
 }
 
-pub fn checkout<F: vfs::FileSystem>(
-    space: &mut Space<F>,
+pub fn checkout(
+    space: &mut Space,
     cmd: &CheckoutCommand,
 ) -> Result<(), Box<dyn Error>> {
     // Resolve commit (default to HEAD)
@@ -38,7 +37,7 @@ pub fn checkout<F: vfs::FileSystem>(
 
     // Ensure the commit exists and the file is present in that commit
     match space.get_object(target_hash)? {
-        Some(Object::Commit(c)) => {
+        Some(Object::Commit(_c)) => {
             let fp = space.get_path_in_cwd_str(&cmd.file_path);
             let files = space.get_commit_files(target_hash)?;
             if files.get(fp.as_str()).is_none() {

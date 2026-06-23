@@ -26,7 +26,7 @@ pub enum ConfigAction {
     },
 }
 
-pub fn config<F: vfs::FileSystem>(space: &Space<F>, cmd: &ConfigCommand) -> Result<(), Box<dyn Error>> {
+pub fn config(space: &Space, cmd: &ConfigCommand) -> Result<(), Box<dyn Error>> {
     match &cmd.action {
         ConfigAction::Get { key } => {
             let val = space.get_config_value(key)?;

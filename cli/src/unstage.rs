@@ -12,7 +12,7 @@ pub struct UnstageCommand {
     pub file_path: String,
 }
 
-pub fn unstage<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
+pub fn unstage(space: &mut Space, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
     println!("{} {}", crate::colors::cyan("Unstaging file"), cmd.file_path);
     let mut fileops = FileOps::from_space(space);
     fileops.unstage_file(cmd.file_path.clone())?;
