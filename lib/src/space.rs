@@ -30,6 +30,7 @@ pub struct Space {
     pub index: HashMap<String, Hash>,
     pub chunk_size: usize,
     pub max_size: usize,
+    pub worktree: Option<PathBuf>,
     fs: Operator,
 }
 
@@ -43,7 +44,7 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
 impl Space {
-    pub fn at_root_path(filesystem: Operator) -> SpaceResult<Space> {
+    pub fn at_root_path(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
         vlog!("space::at_root_path called with");
         // metadata_path == "<space-root>/.duh" — store the space root (parent of .duh)
         // let space_root = PathBuf::from(&metadata_path)
@@ -86,6 +87,7 @@ impl Space {
             fs: filesystem,
             chunk_size,
             max_size,
+            worktree,
             me: Person {
                 name: String::from(
                     user_config
@@ -175,18 +177,18 @@ impl Space {
     //     return s;
     // }
 
-    pub fn get_path_in_cwd(&self, p: &str) -> PathBuf {
-        vlog!("space::get_path_in_cwd: p='{}' cwd={}", p, utils::get_cwd());
-        PathBuf::from(utils::get_cwd()).join(p)
-        // PathBuf::from(self.root_path.clone())
-        //     .join(utils::get_cwd())
-        //     .join(p)
+    pub fn get_path_in_worktree(&self, p: &str) -> SpaceResult<PathBuf> {
+        vlog!("space::get_path_in_worktree: p='{}'", p);
+        match &self.worktree {
+            Some(wt) => Ok(wt.join(p)),
+            None => Err(Box::new(DuhError::BareRepoNoWorktree)),
+        }
     }
 
-    pub fn get_path_in_cwd_str(&self, p: &str) -> String {
-        let b = self.get_path_in_cwd(p);
+    pub fn get_path_in_worktree_str(&self, p: &str) -> SpaceResult<String> {
+        let b = self.get_path_in_worktree(p)?;
         let s = b.into_os_string().into_string().unwrap();
-        return s;
+        Ok(s)
     }
 
     /// Return a list of file paths currently present in the index (cloned).
@@ -199,7 +201,7 @@ impl Space {
         self.index.get(path).cloned()
     }
 
-    pub fn initialize_at(filesystem: Operator) -> SpaceResult<Space> {
+    pub fn initialize_at(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
@@ -208,6 +210,7 @@ impl Space {
             fs: filesystem,
             chunk_size: DEFAULT_BLOCK_SIZE,
             max_size: DEFAULT_MAX_FRAGMENT_SIZE,
+            worktree,
             me: Person {
                 name: "test".to_string(),
                 email: "test@example.com".to_string(),
@@ -671,7 +674,7 @@ impl Space {
             .unwrap_or_default();
 
         let fs = Operator::from_uri((url_s, config_pairs))?;
-        let r: Space = Space::at_root_path(fs)?;
+        let r: Space = Space::at_root_path(fs, None)?;
         Ok(r)
     }
 
