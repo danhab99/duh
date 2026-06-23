@@ -1,7 +1,7 @@
 use crate::{
     error::DuhError,
     hash::Hash,
-    objects::{CommitStruct, Object, ObjectReference, Person},
+    objects::{CommitStruct, Object, ObjectReference, Person, TreeEntry, TreeStruct},
     utils::{self},
     vlog,
 };
@@ -389,7 +389,7 @@ impl Space {
         vlog!("space::set_ref: {} -> {}", name, r.to_string());
 
         if let Some(log_msg) = log_msg {
-            self.log_ref(
+            let _ = self.log_ref(
                 ObjectReference::Ref(name.to_string()),
                 self.resolve_ref_name(r)?,
                 log_msg,
@@ -456,26 +456,21 @@ impl Space {
 
     pub fn list_files(&mut self, commit_ref: ObjectReference) -> SpaceResult<Vec<String>> {
         let commit_hash = self.resolve_ref_name(commit_ref)?;
-
-        let commit = match self.get_object(commit_hash)? {
-            Some(Object::Commit(commit)) => commit,
-            _ => {
-                return Err(Box::new(crate::error::DuhError::invalid_object(
-                    "commit",
-                    "unknown object type",
-                )))
-            }
-        };
-
-        Ok(commit
-            .files
-            .keys()
-            .map(|x| x.to_string())
-            .collect::<Vec<String>>())
+        let files = self.get_commit_files(commit_hash)?;
+        Ok(files.keys().cloned().collect())
     }
 
     pub fn get_head_commit_hash(&mut self) -> SpaceResult<Hash> {
         Ok(self.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?)
+    }
+
+    /// Returns the branch name that HEAD points to (e.g. "main").
+    pub fn get_head_branch_name(&self) -> SpaceResult<String> {
+        let head_ref = self.get_ref("HEAD".to_string())?;
+        match head_ref {
+            ObjectReference::Ref(branch) => Ok(branch),
+            _ => Err("HEAD does not point to a branch".into()),
+        }
     }
 
     pub fn get_head_commit(&mut self) -> SpaceResult<CommitStruct> {
@@ -487,6 +482,83 @@ impl Space {
                 "unknown object type",
             ))),
         }
+    }
+
+    /// Build a tree object from a flat map of file paths to hashes, returning the tree's hash.
+    pub fn build_tree(&self, files: &HashMap<String, Hash>) -> SpaceResult<Hash> {
+        let mut entries: Vec<TreeEntry> = Vec::new();
+        let mut dirs: HashMap<String, HashMap<String, Hash>> = HashMap::new();
+
+        for (path, hash) in files {
+            let parts: Vec<&str> = path.split('/').collect();
+            if parts.len() == 1 {
+                entries.push(TreeEntry {
+                    name: path.clone(),
+                    mode: 0o100644,
+                    hash: *hash,
+                });
+            } else {
+                let dir = parts[0].to_string();
+                let subpath = parts[1..].join("/");
+                dirs.entry(dir).or_default().insert(subpath, *hash);
+            }
+        }
+
+        for (dir_name, sub_files) in dirs {
+            let sub_tree_hash = self.build_tree(&sub_files)?;
+            entries.push(TreeEntry {
+                name: dir_name,
+                mode: 0o40000,
+                hash: sub_tree_hash,
+            });
+        }
+
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        let tree = TreeStruct { entries };
+        self.save_obj(Object::Tree(tree))
+    }
+
+    /// Walk a tree object recursively, returning a flat map of file paths to hashes.
+    pub fn walk_tree(&self, tree_hash: Hash) -> SpaceResult<HashMap<String, Hash>> {
+        let mut files = HashMap::new();
+
+        let tree = match self.get_object(tree_hash)? {
+            Some(Object::Tree(t)) => t,
+            None => return Ok(files),
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "tree",
+                    "expected tree object",
+                )))
+            }
+        };
+
+        for entry in tree.entries {
+            if entry.mode == 0o40000 {
+                let sub_files = self.walk_tree(entry.hash)?;
+                for (sub_path, hash) in sub_files {
+                    files.insert(format!("{}/{}", entry.name, sub_path), hash);
+                }
+            } else {
+                files.insert(entry.name, entry.hash);
+            }
+        }
+
+        Ok(files)
+    }
+
+    /// Get the flat file map for a commit by walking its root tree.
+    pub fn get_commit_files(&self, commit_hash: Hash) -> SpaceResult<HashMap<String, Hash>> {
+        let commit = match self.get_object(commit_hash)? {
+            Some(Object::Commit(c)) => c,
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "commit",
+                    "expected commit object",
+                )))
+            }
+        };
+        self.walk_tree(commit.tree)
     }
 
     pub fn create_branch(&mut self, name: &str) -> SpaceResult<()> {
@@ -623,5 +695,127 @@ impl Space {
         file.read_to_end(&mut s)?;
 
         Ok(String::from_utf8(s)?)
+    }
+
+    /// List all configured remotes as (name, url) pairs.
+    pub fn list_remotes(&self) -> SpaceResult<Vec<(String, String)>> {
+        let full_table = self.get_table()?;
+        let remote_table = full_table.get("remote").and_then(|r| r.as_table());
+
+        let mut result = Vec::new();
+        if let Some(table) = remote_table {
+            for (name, remote_val) in table {
+                let url = remote_val
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                result.push((name.clone(), url));
+            }
+        }
+        Ok(result)
+    }
+
+    /// Add a new remote with the given name and URL.
+    pub fn add_remote(&self, name: &str, url: &str) -> SpaceResult<()> {
+        let mut table = self.get_table()?;
+
+        let remote_section = table
+            .entry("remote")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let remote_table = remote_section
+            .as_table_mut()
+            .ok_or_else(|| "remote section is not a table".to_string())?;
+
+        let remote_entry = remote_table
+            .entry(name.to_string())
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let remote_entry_table = remote_entry
+            .as_table_mut()
+            .ok_or_else(|| format!("'{}' is not a table", name))?;
+
+        remote_entry_table.insert(
+            "url".to_string(),
+            toml::Value::String(url.to_string()),
+        );
+
+        let config_path = self.get_path_in_space_str("config");
+        self.write_to_space(&config_path, toml::to_string(&table)?.as_bytes())?;
+        Ok(())
+    }
+
+    /// Remove a remote by name.
+    pub fn remove_remote(&self, name: &str) -> SpaceResult<()> {
+        let mut table = self.get_table()?;
+
+        let remote_section = table
+            .get_mut("remote")
+            .and_then(|r| r.as_table_mut())
+            .ok_or_else(|| "no remotes configured".to_string())?;
+
+        if remote_section.remove(name).is_none() {
+            return Err(DuhError::RemoteNotFound(name.to_string()).into());
+        }
+
+        let config_path = self.get_path_in_space_str("config");
+        self.write_to_space(&config_path, toml::to_string(&table)?.as_bytes())?;
+        Ok(())
+    }
+
+    /// Rename a remote from old_name to new_name.
+    pub fn rename_remote(&self, old_name: &str, new_name: &str) -> SpaceResult<()> {
+        let mut table = self.get_table()?;
+
+        let remote_section = table
+            .get_mut("remote")
+            .and_then(|r| r.as_table_mut())
+            .ok_or_else(|| "no remotes configured".to_string())?;
+
+        let remote_entry = remote_section
+            .remove(old_name)
+            .ok_or_else(|| DuhError::RemoteNotFound(old_name.to_string()))?;
+
+        remote_section.insert(new_name.to_string(), remote_entry);
+
+        let config_path = self.get_path_in_space_str("config");
+        self.write_to_space(&config_path, toml::to_string(&table)?.as_bytes())?;
+        Ok(())
+    }
+
+    /// Get the URL for a remote.
+    pub fn get_remote_url(&self, name: &str) -> SpaceResult<String> {
+        let full_table = self.get_table()?;
+
+        let url = full_table
+            .get("remote")
+            .and_then(|r| r.as_table())
+            .and_then(|table| table.get(name))
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("url"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DuhError::RemoteNotFound(name.to_string()))?;
+
+        Ok(url.to_string())
+    }
+
+    /// Set the URL for a remote.
+    pub fn set_remote_url(&self, name: &str, url: &str) -> SpaceResult<()> {
+        let mut table = self.get_table()?;
+
+        let remote_entry = table
+            .get_mut("remote")
+            .and_then(|r| r.as_table_mut())
+            .and_then(|table| table.get_mut(name))
+            .and_then(|v| v.as_table_mut())
+            .ok_or_else(|| DuhError::RemoteNotFound(name.to_string()))?;
+
+        remote_entry.insert(
+            "url".to_string(),
+            toml::Value::String(url.to_string()),
+        );
+
+        let config_path = self.get_path_in_space_str("config");
+        self.write_to_space(&config_path, toml::to_string(&table)?.as_bytes())?;
+        Ok(())
     }
 }
