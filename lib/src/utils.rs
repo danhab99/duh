@@ -4,12 +4,12 @@ use std::{
     fs::OpenOptions,
     io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 use crate::error::NoSpace;
 
-static LOG_WRITER: OnceLock<Option<BufWriter<std::fs::File>>> = OnceLock::new();
+static LOG_WRITER: OnceLock<Mutex<Option<BufWriter<std::fs::File>>>> = OnceLock::new();
 
 /// Initialize the diagnostic log file. Returns Ok(()) if successfully opened.
 /// Subsequent calls are no-ops (first writer wins).
@@ -19,21 +19,30 @@ pub fn init_log(path: &str) -> std::io::Result<()> {
         .append(true)
         .open(path)?;
     let writer = BufWriter::new(file);
-    let _ = LOG_WRITER.set(Some(writer));
+    let _ = LOG_WRITER.set(Mutex::new(Some(writer)));
     Ok(())
 }
 
 /// Write a line to the diagnostic log file (if initialized).
 pub fn log_to_file(line: &str) {
-    if let Some(ref mut writer) = LOG_WRITER.get().flatten() {
-        let _ = writeln!(writer, "{}", line);
-        let _ = writer.flush();
+    if let Some(writer) = LOG_WRITER.get() {
+        if let Ok(mut guard) = writer.lock() {
+            if let Some(ref mut w) = *guard {
+                let _ = writeln!(w, "{}", line);
+                let _ = w.flush();
+            }
+        }
     }
 }
 
 /// Check if diagnostic logging is active.
 pub fn log_active() -> bool {
-    LOG_WRITER.get().flatten().is_some()
+    if let Some(writer) = LOG_WRITER.get() {
+        if let Ok(guard) = writer.lock() {
+            return guard.is_some();
+        }
+    }
+    false
 }
 
 pub fn get_cwd() -> String {
@@ -66,10 +75,10 @@ macro_rules! vlog {
 }
 
 pub const SPACE_METADATA_DIR_NAME: &str = ".duh";
-pub fn getSpaceConfigFileName() -> String {
+pub fn get_space_config_file_name() -> String {
     return format!("{}/{}", SPACE_METADATA_DIR_NAME, "config");
 }
-pub fn getSpaceIgnoreFileName() -> String {
+pub fn get_space_ignore_file_name() -> String {
     return format!("{}/{}", SPACE_METADATA_DIR_NAME, "ignore");
 }
 
