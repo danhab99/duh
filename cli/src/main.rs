@@ -18,9 +18,9 @@ mod commit;
 mod config;
 mod init;
 mod log;
-mod pull;
-mod push;
+mod copy;
 mod reflog;
+mod remote;
 mod reset;
 mod show;
 mod stage;
@@ -81,11 +81,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Config(c) => {
             config::config(&space, c).expect("Unable to run config");
         }
-        Commands::Push(c) => {
-            push::push(&mut space, c).expect("Unable to push");
+        Commands::Copy(c) => {
+            copy::copy(&mut space, c).expect("Unable to copy");
         }
-        Commands::Pull(c) => {
-            pull::pull(&mut space, c).expect("Unable to pull");
+        Commands::Remote(c) => {
+            remote::remote(&mut space, c).expect("Unable to manage remote");
         }
         Commands::Tag(c) => {
             tag::tag(&mut space, c).expect("Unable to tag");

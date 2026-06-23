@@ -38,7 +38,8 @@ pub fn show<F: vfs::FileSystem>(space: &mut Space<F>, cmd: &ShowCommand) -> Resu
             );
             println!("\n    {}\n", c.message);
             println!("{}", crate::colors::bold("files:"));
-            for (path, h) in c.files.iter() {
+            let files = space.get_commit_files(head)?;
+            for (path, h) in files.iter() {
                 println!(
                     "  {} -> {}",
                     crate::colors::cyan(path),

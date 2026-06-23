@@ -22,7 +22,8 @@ pub fn status<F: vfs::FileSystem>(space: &mut Space<F>, _cmd: &StatusCommand) ->
     let head_hash = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
     if !head_hash.is_zero() {
         if let Some(Object::Commit(head)) = space.get_object(head_hash)? {
-            for (path, version_hash) in head.files.iter() {
+            let head_files = space.get_commit_files(head_hash)?;
+            for (path, version_hash) in head_files.iter() {
                 tracked.insert(path.clone(), *version_hash);
             }
         }
