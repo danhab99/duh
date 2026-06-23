@@ -82,6 +82,56 @@ pub fn get_space_ignore_file_name() -> String {
     return format!("{}/{}", SPACE_METADATA_DIR_NAME, "ignore");
 }
 
+/// Walk up from `start_path` looking for a `.duh` directory.
+///
+/// Returns `(metadata_dir, worktree_dir)`:
+/// - If `.duh` is a directory containing a `config` file, it's a normal repo:
+///   - `metadata_dir` = path to `.duh`
+///   - `worktree_dir` = parent directory (where `.duh` lives)
+/// - If `.duh` is a file, it's a bare repo pointing to a metadata directory:
+///   - `metadata_dir` = path read from the file
+///   - `worktree_dir` = `None` (bare repo, no working tree)
+///
+/// Returns `Err(NoSpace)` if no `.duh` is found before reaching `/`.
+pub fn find_duh_dir(start_path: &str) -> Result<(PathBuf, Option<PathBuf>), Box<dyn Error>> {
+    let mut path = PathBuf::from(start_path);
+
+    loop {
+        let mut p = path.clone();
+
+        if p.eq(&PathBuf::from("/")) {
+            return Err(Box::new(NoSpace {
+                details: String::from("not inside a duh spacesitory"),
+            }));
+        }
+
+        p.push(SPACE_METADATA_DIR_NAME);
+        vlog!("Checking path {}", p.display());
+
+        if p.exists() {
+            // Found .duh — determine if it's a file (bare) or directory (normal)
+            if p.is_file() {
+                // Bare repo: .duh is a file containing the path to the metadata directory
+                let metadata_path_str = std::fs::read_to_string(&p)?;
+                let metadata_path = PathBuf::from(metadata_path_str.trim());
+                return Ok((metadata_path, None));
+            } else {
+                // Normal repo: .duh is a directory
+                let worktree = path.clone();
+                return Ok((p, Some(worktree)));
+            }
+        }
+
+        if !path.pop() {
+            break;
+        }
+    }
+
+    Err(Box::new(NoSpace {
+        details: String::from("not inside a duh spacesitory"),
+    }))
+}
+
 pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error>> {
     let mut path = PathBuf::from(start_path);
 

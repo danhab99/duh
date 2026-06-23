@@ -21,6 +21,7 @@ pub enum DuhError {
     // State errors
     UncommittedChanges,
     DetachedHead { operation: String },
+    BareRepoNoWorktree,
 
     // Filesystem errors
     EditorExitedWithError(i32),
@@ -70,6 +71,9 @@ impl fmt::Display for DuhError {
                     "Cannot {} on a detached HEAD.\nCreate or switch to a branch first.",
                     operation
                 )
+            }
+            DuhError::BareRepoNoWorktree => {
+                write!(f, "This is a bare repository and has no working tree.")
             }
             DuhError::EditorExitedWithError(code) => {
                 write!(
