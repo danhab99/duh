@@ -2,7 +2,7 @@ use crate::{hash::Hash, utils::hash_bytes};
 use core::fmt;
 use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, convert::Infallible, error::Error, str::FromStr};
+use std::{convert::Infallible, error::Error, str::FromStr};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Fragment(#[serde(with = "serde_bytes")] pub Vec<u8>);
@@ -18,10 +18,23 @@ pub struct Person {
     pub email: String,
     pub timestamp: u64,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TreeEntry {
+    pub name: String,
+    pub mode: u32,
+    pub hash: Hash,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TreeStruct {
+    pub entries: Vec<TreeEntry>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommitStruct {
     pub parent: Hash,
-    pub files: HashMap<String, Hash>,
+    pub tree: Hash,
     pub message: String,
     pub comitter: Person,
     pub author: Person,
@@ -56,10 +69,10 @@ pub struct FileVersion {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Object {
     Commit(CommitStruct),
+    Tree(TreeStruct),
     File(FileStruct),
     Fragment(Fragment),
     StagedFileStruct(StagedFileStruct),
-    // FileVersion(FileVersion),
     FileDiffFragment(FileFragment),
 }
 
@@ -92,12 +105,12 @@ impl Object {
 
     pub fn get_classification(self) -> String {
         match self {
-            // Self::FileVersion(_) => "fileversion",
             Self::FileDiffFragment(_) => "filedifffragment",
             Self::Fragment(_) => "fragment",
             Self::Commit(_) => "commit",
             Self::StagedFileStruct(_) => "stagedfilestruct",
             Self::File(_) => "file",
+            Self::Tree(_) => "tree",
         }
         .into()
     }
