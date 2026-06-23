@@ -4,11 +4,8 @@ use std::{
 };
 
 use clap::Parser;
-use lib::space::Space;
-use vfs::PhysicalFS;
 
 use cli::{Cli, Commands};
-use opendal::{self, Builder};
 
 mod branch;
 mod checkout;
@@ -16,9 +13,9 @@ mod cli;
 mod colors;
 mod commit;
 mod config;
+mod copy;
 mod init;
 mod log;
-mod copy;
 mod reflog;
 mod remote;
 mod reset;
@@ -32,18 +29,53 @@ mod unstage;
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
+    // Handle copy/clone specially since it can work outside a duh space
+    if let Commands::Copy(c) = &cli.command {
+        let cwd = std::env::current_dir()?;
+        let root_dir = find_duh_dir(cwd.as_path());
+
+        if root_dir.is_none() {
+            // Outside a duh space: treat as clone
+            if let Some(ref url) = c.from {
+                let dest_dir = c.as_branch.as_deref().unwrap_or_else(|| {
+                    // Default to the last component of the URL
+                    url.split('/').last().unwrap_or("repo")
+                        .trim_end_matches(".duh")
+                });
+                copy::clone(url, dest_dir, c.branch.as_deref())?;
+                return Ok(());
+            } else {
+                return Err("must specify --from when cloning outside a duh space".into());
+            }
+        }
+
+        // Inside a duh space: normal copy behavior
+        let op =
+            opendal::services::Fs::default().root(root_dir.and_then(|x| x.to_str()).unwrap());
+
+        let afs = opendal::Operator::new(op)?.finish();
+        let fs = opendal::blocking::Operator::new(afs)?;
+
+        let mut space = lib::space::Space::at_root_path(fs)?;
+        copy::copy(&mut space, c)?;
+        space.save_index()?;
+        return Ok(());
+    }
+
     let mut space = match &cli.command {
         Commands::Init => {
             init::init()?;
             return Ok(());
         }
         _ => {
-            // Space::at_root_path()?
-            let root_dir = find_duh_dir(std::env::current_dir()?.as_path());
+            let cwd = std::env::current_dir()?;
+            let root_dir = find_duh_dir(cwd.as_path());
 
-            let op = opendal::services::Fs::default()
-                .root(root_dir.and_then(|x| x.as_os_str().to_str()).unwrap());
-            let fs = opendal::blocking::Operator::from(fs.build()?);
+            let op =
+                opendal::services::Fs::default().root(root_dir.and_then(|x| x.to_str()).unwrap());
+
+            let afs = opendal::Operator::new(op)?.finish();
+            let fs = opendal::blocking::Operator::new(afs)?;
 
             lib::space::Space::at_root_path(fs)?
         }
@@ -81,9 +113,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::Config(c) => {
             config::config(&space, c).expect("Unable to run config");
         }
-        Commands::Copy(c) => {
-            copy::copy(&mut space, c).expect("Unable to copy");
-        }
+        Commands::Copy(_) => unreachable!(),
         Commands::Remote(c) => {
             remote::remote(&mut space, c).expect("Unable to manage remote");
         }
@@ -104,8 +134,8 @@ pub fn find_duh_dir(current_dir: &Path) -> Option<&Path> {
     let mut duh_dir = PathBuf::from(current_dir);
     duh_dir.push(".duh");
 
-    if Path::from(duh_dir).is_dir() {
-        return Some(current_dir.as_path());
+    if duh_dir.is_dir() {
+        return Some(current_dir);
     } else {
         current_dir.parent().and_then(find_duh_dir)
     }
