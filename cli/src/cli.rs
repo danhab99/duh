@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    log::LogCommand, pull::PullCommand, push::PushCommand, reset::ResetCommand, show::ShowCommand,
+    copy::CopyCommand, log::LogCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
     stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
     unstage::UnstageCommand,
 };
@@ -52,11 +52,11 @@ pub enum Commands {
     /// Get or set spacesitory configuration values
     Config(ConfigCommand),
 
-    /// Push local changes to the remote
-    Push(PushCommand),
+    /// Copy commits between local and remote repositories
+    Copy(CopyCommand),
 
-    /// Pull changes from the remote
-    Pull(PullCommand),
+    /// Manage remote repository connections
+    Remote(RemoteCommand),
 
     /// Create, list, or delete lightweight tags
     Tag(TagCommand),
