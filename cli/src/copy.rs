@@ -20,21 +20,21 @@ pub struct CopyCommand {
     #[arg(
         short = 't',
         long = "to",
-        help = "Remote name to copy to (pushes commits to a remote branch)"
+        help = "Remote name to push to (defaults to 'origin')"
     )]
     pub to: Option<String>,
 
     #[arg(
         short = 'a',
         long = "as",
-        help = "Local branch name to receive/send commits (defaults to current HEAD branch), or destination directory name when cloning"
+        help = "Local branch name to receive commits (for --from), or destination directory name when cloning"
     )]
     pub as_branch: Option<String>,
 
     #[arg(
         short = 'b',
         long = "branch",
-        help = "Remote branch to copy (defaults to local HEAD branch name, or remote HEAD if not found)"
+        help = "Remote branch name (defaults to current HEAD branch)"
     )]
     pub branch: Option<String>,
 }
@@ -132,21 +132,22 @@ pub fn copy(
     cmd: &CopyCommand,
 ) -> Result<(), Box<dyn Error>> {
     let head_branch = space.get_head_branch_name().unwrap_or_else(|_| "HEAD".to_string());
-    let branch_name = cmd.as_branch.as_deref().unwrap_or(&head_branch);
 
     match (&cmd.from, &cmd.to) {
         (Some(remote_name), None) => {
-            copy_from(space, remote_name.as_str(), branch_name, cmd.branch.as_deref())?
+            let local_branch = cmd.as_branch.as_deref().unwrap_or(&head_branch);
+            copy_from(space, remote_name.as_str(), local_branch, cmd.branch.as_deref())?
         }
         (None, Some(remote_name)) => {
-            copy_to(space, remote_name.as_str(), branch_name, cmd.branch.as_deref())?
+            let target_branch = cmd.branch.as_deref().unwrap_or(&head_branch);
+            copy_to(space, remote_name.as_str(), target_branch)?
         }
         (Some(_), Some(_)) => {
             return Err("cannot specify both --from and --to".into());
         }
         (None, None) => {
-            // Default to copying from "origin"
-            copy_from(space, "origin", branch_name, cmd.branch.as_deref())?
+            let target_branch = cmd.branch.as_deref().unwrap_or(&head_branch);
+            copy_to(space, "origin", target_branch)?
         }
     }
 
@@ -213,8 +214,7 @@ fn copy_from(
 fn copy_to(
     space: &mut Space,
     remote_name: &str,
-    branch_name: &str,
-    remote_branch: Option<&str>,
+    target_branch: &str,
 ) -> Result<(), Box<dyn Error>> {
     let mut remote = space.get_remote_by_name(remote_name)?;
 
@@ -222,21 +222,18 @@ fn copy_to(
 
     lib::remote::copy_commits(space, &mut remote, head_hash, Some(|_| {}))?;
 
-    let head_name = space.get_head_branch_name().unwrap_or_else(|_| branch_name.to_string());
-    let target_branch = remote_branch.unwrap_or(&head_name);
-
     remote.set_ref(
-        &target_branch,
+        target_branch,
         ObjectReference::Hash(head_hash),
-        Some(&format!("copy to: {}", target_branch)),
+        Some(&format!("push: {}", target_branch)),
     )?;
 
     println!(
         "{} {} to {} -> {}",
-        crate::colors::cyan("Copied"),
-        head_hash.to_hex(),
-        remote_name,
-        crate::colors::green(&target_branch)
+        crate::colors::cyan("Pushed"),
+        crate::colors::yellow(&head_hash.to_hex()),
+        crate::colors::yellow(remote_name),
+        crate::colors::green(target_branch)
     );
 
     Ok(())
