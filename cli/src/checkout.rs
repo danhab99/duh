@@ -38,9 +38,18 @@ pub fn checkout(
     // Ensure the commit exists and the file is present in that commit
     match space.get_object(target_hash)? {
         Some(Object::Commit(_c)) => {
-            let fp = space.get_path_in_worktree_str(&cmd.file_path)?;
+            let logical_path = std::path::Path::new(&cmd.file_path)
+                .components()
+                .filter_map(|c| match c {
+                    std::path::Component::CurDir => None,
+                    std::path::Component::Normal(v) => Some(v.to_string_lossy().to_string()),
+                    _ => Some(c.as_os_str().to_string_lossy().to_string()),
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            let fp = space.get_path_in_worktree_str(&logical_path)?;
             let files = space.get_commit_files(target_hash)?;
-            if files.get(fp.as_str()).is_none() {
+            if files.get(logical_path.as_str()).is_none() && files.get(fp.as_str()).is_none() {
                 println!(
                     "{} {}",
                     crate::colors::red("file not found in commit:"),

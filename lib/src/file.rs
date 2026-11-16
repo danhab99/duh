@@ -6,7 +6,7 @@ use crate::{
     space::ReadSeek,
     vlog,
 };
-use std::{error::Error, fs::File, io::Seek};
+use std::{error::Error, fs::File, io::Seek, path::{Component, Path, PathBuf}};
 
 use std::io;
 
@@ -41,7 +41,8 @@ impl<'a> FileOps<'a> {
         E: FnMut(DiffFragment),
         P: FnMut(crate::dedup::DedupProgress),
     {
-        let fp = self.space.get_path_in_worktree_str(&file_path)?;
+        let repo_path = self.normalize_repo_path(&file_path)?;
+        let fp = self.space.get_path_in_worktree_str(&repo_path)?;
 
         let mut new = File::open(fp.clone())?;
 
@@ -64,7 +65,7 @@ impl<'a> FileOps<'a> {
                 "space::stage_file: opening parent version {}",
                 head_commit_hash.to_string()
             );
-            self.open_file(fp.clone(), head_commit_hash)?
+            self.open_file(repo_path.clone(), head_commit_hash)?
         };
 
         new.seek(io::SeekFrom::Start(0))?;
@@ -126,10 +127,10 @@ impl<'a> FileOps<'a> {
             fragments: file_fragments,
         }))?;
 
-        self.space.index.insert(fp.clone(), version_hash);
+        self.space.index.insert(repo_path.clone(), version_hash);
         vlog!(
             "space::stage_file: indexed '{}' -> {}",
-            fp,
+            repo_path,
             version_hash.to_string()
         );
 
@@ -137,8 +138,8 @@ impl<'a> FileOps<'a> {
     }
 
     pub fn unstage_file(&mut self, file_path: String) -> FileOpsResult<()> {
-        let fp = self.space.get_path_in_worktree_str(&file_path)?;
-        self.space.index.remove(fp.as_str());
+        let repo_path = self.normalize_repo_path(&file_path)?;
+        self.space.index.remove(repo_path.as_str());
         Ok(())
     }
 
@@ -214,7 +215,8 @@ impl<'a> FileOps<'a> {
             file_path,
             hash.to_string()
         );
-        let fp = self.space.get_path_in_worktree_str(&file_path)?;
+        let repo_path = self.normalize_repo_path(&file_path)?;
+        let fp = self.space.get_path_in_worktree_str(&repo_path)?;
 
         let commit = match self.space.get_object(hash)? {
             Some(Object::Commit(c)) => c,
@@ -233,16 +235,16 @@ impl<'a> FileOps<'a> {
         };
 
         let files = self.space.get_commit_files(hash)?;
-        let file_version_hash = match files.get(fp.as_str()) {
+        let file_version_hash = match files.get(repo_path.as_str()).or_else(|| files.get(fp.as_str())) {
             Some(x) => x,
             None => {
                 vlog!(
                     "space::open_file: file '{}' not in commit {}",
-                    fp,
+                    repo_path,
                     hash.to_string()
                 );
                 return Err(Box::new(crate::error::DuhError::file_not_in_commit(
-                    &fp,
+                    &repo_path,
                     &hash.to_string(),
                 )));
             }
@@ -274,7 +276,7 @@ impl<'a> FileOps<'a> {
         let parent_reader: Box<dyn ReadSeek> = if commit.parent.is_zero() {
             Box::new(io::Cursor::new(Vec::<u8>::new()))
         } else {
-            self.open_file(fp.clone(), commit.parent)?
+            self.open_file(repo_path.clone(), commit.parent)?
         };
 
         vlog!(
@@ -286,5 +288,42 @@ impl<'a> FileOps<'a> {
         let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
 
         Ok(Box::new(replay))
+    }
+
+    fn normalize_repo_path(&self, input: &str) -> FileOpsResult<String> {
+        let input_path = PathBuf::from(input);
+        let rel = if input_path.is_absolute() {
+            let worktree = self
+                .space
+                .worktree
+                .as_ref()
+                .ok_or_else(|| Box::new(crate::error::DuhError::BareRepoNoWorktree) as Box<dyn Error>)?;
+            input_path
+                .strip_prefix(worktree)
+                .map_err(|_| format!("path '{}' is outside this worktree", input))?
+                .to_path_buf()
+        } else {
+            input_path
+        };
+
+        let mut cleaned = PathBuf::new();
+        for component in Path::new(&rel).components() {
+            match component {
+                Component::CurDir => {}
+                Component::Normal(part) => cleaned.push(part),
+                Component::ParentDir => {
+                    return Err(format!("path '{}' cannot contain '..'", input).into())
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!("invalid repository path '{}'", input).into())
+                }
+            }
+        }
+
+        if cleaned.as_os_str().is_empty() {
+            return Err("empty file path".into());
+        }
+
+        Ok(cleaned.to_string_lossy().to_string())
     }
 }
