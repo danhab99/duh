@@ -2,10 +2,14 @@
 set -euo pipefail
 
 td="${1:?Usage: demo.sh <test-dir>}"
+DUH="${DUH:-duh}"
 
-# Create verification directory for storing expected hashes
 VERIFICATION_DIR="$td/.verification"
 HASH_LOG="$VERIFICATION_DIR/hashes.log"
+
+dim()   { printf '\033[2m%s\033[0m\n' "$*"; }
+green() { printf '\033[32m%s\033[0m\n' "$*"; }
+red()   { printf '\033[31m%s\033[0m\n' "$*"; }
 
 # Wrapper: runs duh under GNU time and prints peak RSS after each command.
 # time stats go to a temp file (-o) so duh's own stdout/stderr are unaffected.
@@ -15,122 +19,96 @@ run() {
 
     echo
     echo
-    echo "=== Executing duh $@ ==="
+    echo "=== Executing duh $* ==="
 
-    command time -v -o "$timefile" duh "$@"
+    command time -v -o "$timefile" "$DUH" "$@"
     local kb
     kb=$(grep "Maximum resident" "$timefile" | awk '{print $NF}')
-    printf "  \033[2m↳ peak RAM: %d MiB\033[0m\n" "$((kb / 1024))"
+    dim "  ↳ peak RAM: $((kb / 1024)) MiB"
     rm -f "$timefile"
 }
 
-# Function to store hash of current project file with commit info
-store_hash() {
-    local commit_msg="$1"
-    local hash=$(sha256sum project | cut -d' ' -f1)
-    echo "$commit_msg|$hash" >> "$HASH_LOG"
-    echo "  \033[2m✓ stored hash: $hash for '$commit_msg'\033[0m"
+# gen <letter> <offset> <len>: bytes [offset, offset+len) of a deterministic
+# pseudo-random stream named <letter>. Slices of the same stream share content,
+# slices of different streams share nothing — so every "unchanged" region below
+# is genuinely identical data and every "added" region is genuinely new.
+gen() {
+    python3 -c "import random, sys; r = random.Random('$1'); sys.stdout.buffer.write(r.randbytes($2 + $3)[$2:])"
 }
 
-# Function to checkout and verify a commit
-checkout_and_verify() {
+# Record the sha256 of `project` for the commit that was just made.
+store_hash() {
     local commit_msg="$1"
-    echo
-    echo "=== Verifying commit: '$commit_msg' ==="
-    
-    # Get expected hash from log
-    local expected_hash=$(grep "^$commit_msg|" "$HASH_LOG" | cut -d'|' -f2)
-    if [[ -z "$expected_hash" ]]; then
-        echo "  \033[31m✗ ERROR: No stored hash found for '$commit_msg'\033[0m"
-        return 1
-    fi
-    
-    # Checkout the commit (we'll need to find the actual commit hash/ref)
-    # For now, let's use a simpler approach and verify current state
-    local actual_hash=$(sha256sum project | cut -d' ' -f1)
-    
-    if [[ "$actual_hash" == "$expected_hash" ]]; then
-        echo "  \033[32m✓ PASS: Hash matches ($actual_hash)\033[0m"
-        return 0
-    else
-        echo "  \033[31m✗ FAIL: Hash mismatch\033[0m"
-        echo "    Expected: $expected_hash"
-        echo "    Actual:   $actual_hash"
-        return 1
-    fi
+    local hash
+    hash=$(sha256sum project | cut -d' ' -f1)
+    echo "$commit_msg|$hash" >> "$HASH_LOG"
+    dim "  ✓ stored hash: $hash for '$commit_msg'"
+}
+
+commit() {
+    run stage project
+    run commit -m "$1"
+    store_hash "$1"
 }
 
 echo "TEST PATH $td"
+echo "duh binary: $(command -v "$DUH")"
 
 cd "$td"
 
-# Create verification directory
 mkdir -p "$VERIFICATION_DIR"
-rm -f "$HASH_LOG"
 echo "# Hash verification log: commit_message|sha256_hash" > "$HASH_LOG"
 
-# ---------------------------------------------------------------------------
-# Create 4 large files, each filled with a single repeated character.
-# 200 000 bytes each so the progress bar has room to show proportions clearly.
-# ---------------------------------------------------------------------------
 SIZE=1000000
-python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > a.txt
-python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > b.txt
-python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > c.txt
-python3 -c "import os, sys; sys.stdout.buffer.write(os.urandom($SIZE))" > d.txt
-echo "Created: a.txt b.txt c.txt d.txt (${SIZE} bytes each)"
+HALF=$((SIZE / 2))
+QUARTER=$((SIZE / 4))
 
-duh init
+run init
 
-# --- commit 1: brand-new file, all a's → progress bar should be solid green (ADDED) ---
-cp a.txt project
+# ---------------------------------------------------------------------------
+# Part 1: basic workflow
+# Streams A, B, C, D are unrelated random data; slices of one stream match.
+# ---------------------------------------------------------------------------
+
+# --- commit 1: brand-new file → bar should be all ADDED ---
+gen a 0 $SIZE > project
 run status
 run stage project
 run status
-run commit -m "commit 1: all a"
-store_hash "commit 1: all a"
+run commit -m "commit 1: all A"
+store_hash "commit 1: all A"
 run show
 
-# --- commit 2: replace with all b's → expect fully DELETED then fully ADDED ---
-cp b.txt project
+# --- commit 2: unrelated content → all DELETED then all ADDED ---
+gen b 0 $SIZE > project
 run status
-run stage project
-run status
-run commit -m "commit 2: all b"
-store_hash "commit 2: all b"
+commit "commit 2: all B"
 run show
 
-# --- commit 3: first half c's, second half b's → first half ADDED/DELETED, second half UNCHANGED ---
-python3 -c "import sys; sys.stdout.buffer.write(b'c' * ($SIZE // 2) + b'b' * ($SIZE // 2))" > project
-run status
-run stage project
-run status
-run commit -m "commit 3: half c, half b"
-store_hash "commit 3: half c, half b"
+# --- commit 3: first half new (C), second half kept (B) ---
+{ gen c 0 $HALF; gen b $HALF $HALF; } > project
+echo
+echo " expect bar: -...- (500k B deleted) +...+ (500k C added) =...= (500k B unchanged)"
+commit "commit 3: half C, half B"
 run show
 
-# --- commit 4: replace with all d's ---
-cp d.txt project
-run status
-run stage project
-run status
-run commit -m "commit 4: all d"
-store_hash "commit 4: all d"
+# --- commit 4: unrelated content again ---
+gen d 0 $SIZE > project
+commit "commit 4: all D"
 run show
 
 run log
+
 # ---------------------------------------------------------------------------
 # Part 2: every ADDED / UNCHANGED / DELETED ordering
 #
-# State entering here: project = d * SIZE (200 000 bytes of 'd')
-#
-# Bar legend:
-#   green  +  = ADDED    (new bytes not present in previous version)
-#   grey   =  = UNCHANGED (bytes identical to previous version, kept in place)
-#   red    -  = DELETED  (bytes present in previous version, now gone)
+# State entering here: project = D[0:1M]
+#   +  = ADDED     (new bytes not present in previous version)
+#   =  = UNCHANGED (bytes identical to previous version)
+#   -  = DELETED   (bytes present in previous version, now gone)
+# Chunk boundaries are content-defined (~2-4 KiB), so a region edge can be
+# off by one chunk; at 60 columns that is far below one column.
 # ---------------------------------------------------------------------------
-HALF=$((SIZE / 2))
-QUARTER=$((SIZE / 4))
 
 echo ""
 echo "================================================================"
@@ -138,275 +116,122 @@ echo " Part 2: exhaustive fragment-combination showcase"
 echo "    bar key:  + added   = unchanged   - deleted"
 echo "================================================================"
 
-# ---- 1. UNCHANGED + ADDED -----------------------------------------------
-echo ""
-echo "--------------------------------------------------------------------"
-echo " UNCHANGED + ADDED : append new content at the end"
-echo " old: d*200k   new: d*200k + a*100k"
-echo " expect bar: =...= (200k d, unchanged) +...+ (100k a, added)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'd' * $SIZE + b'a' * $HALF)" > project
-run stage project
-run commit -m "unchanged+added: append a's"
-store_hash "unchanged+added: append a's"
+section() {
+    echo ""
+    echo "--------------------------------------------------------------------"
+    for line in "$@"; do echo " $line"; done
+    echo "--------------------------------------------------------------------"
+}
 
-# ---- 2. UNCHANGED + DELETED ---------------------------------------------
-echo ""
-echo "--------------------------------------------------------------------"
-echo " UNCHANGED + DELETED : trim content from the end"
-echo " old: d*200k + a*100k   new: d*200k"
-echo " expect bar: =...= (200k d, unchanged) -...- (100k a, deleted)"
-echo "--------------------------------------------------------------------"
-cp d.txt project
-run stage project
-run commit -m "unchanged+deleted: drop appended a's"
-store_hash "unchanged+deleted: drop appended a's"
+section "UNCHANGED + ADDED : append new content at the end" \
+        "old: D[0:1M]   new: D[0:1M] + A[0:500k]" \
+        "expect bar: =...= (1M D, unchanged) +...+ (500k A, added)"
+{ gen d 0 $SIZE; gen a 0 $HALF; } > project
+commit "unchanged+added: append A"
 
-# ---- 3. ADDED + UNCHANGED -----------------------------------------------
-echo ""
-echo "--------------------------------------------------------------------"
-echo " ADDED + UNCHANGED : prepend new content at the start"
-echo " old: d*200k   new: b*100k + d*200k"
-echo " expect bar: +...+ (100k b, added) =...= (200k d, unchanged)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'b' * $HALF + b'd' * $SIZE)" > project
-run stage project
-run commit -m "added+unchanged: prepend b's"
-store_hash "added+unchanged: prepend b's"
+section "UNCHANGED + DELETED : trim content from the end" \
+        "old: D[0:1M] + A[0:500k]   new: D[0:1M]" \
+        "expect bar: =...= (1M D, unchanged) -...- (500k A, deleted)"
+gen d 0 $SIZE > project
+commit "unchanged+deleted: drop appended A"
 
-# ---- 4. DELETED + UNCHANGED ---------------------------------------------
-echo ""
-echo "--------------------------------------------------------------------"
-echo " DELETED + UNCHANGED : remove content from the start"
-echo " old: b*100k + d*200k   new: d*200k"
-echo " expect bar: -...- (100k b, deleted) =...= (200k d, unchanged)"
-echo "--------------------------------------------------------------------"
-cp d.txt project
-run stage project
-run commit -m "deleted+unchanged: drop prepended b's"
-store_hash "deleted+unchanged: drop prepended b's"
+section "ADDED + UNCHANGED : prepend new content at the start" \
+        "old: D[0:1M]   new: B[0:500k] + D[0:1M]" \
+        "expect bar: +...+ (500k B, added) =...= (1M D, unchanged)"
+{ gen b 0 $HALF; gen d 0 $SIZE; } > project
+commit "added+unchanged: prepend B"
 
-# ---- 5. UNCHANGED + ADDED + UNCHANGED -----------------------------------
-echo ""
-echo "--------------------------------------------------------------------"
-echo " UNCHANGED + ADDED + UNCHANGED : insert content in the middle"
-echo " old: d*200k   new: d*100k + b*100k + d*100k"
-echo " expect bar: =...= (100k d) +...+ (100k b, inserted) =...= (100k d)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'd' * $HALF + b'b' * $HALF + b'd' * $HALF)" > project
-run stage project
-run commit -m "unchanged+added+unchanged: insert b's in middle"
-store_hash "unchanged+added+unchanged: insert b's in middle"
+section "DELETED + UNCHANGED : remove content from the start" \
+        "old: B[0:500k] + D[0:1M]   new: D[0:1M]" \
+        "expect bar: -...- (500k B, deleted) =...= (1M D, unchanged)"
+gen d 0 $SIZE > project
+commit "deleted+unchanged: drop prepended B"
 
-# ---- 6. UNCHANGED + DELETED + UNCHANGED ---------------------------------
-echo ""
-echo "--------------------------------------------------------------------"
-echo " UNCHANGED + DELETED + UNCHANGED : remove content from the middle"
-echo " old: d*100k + b*100k + d*100k   new: d*200k"
-echo " expect bar: =...= (100k d) -...- (100k b, deleted) =...= (100k d)"
-echo "--------------------------------------------------------------------"
-cp d.txt project
-run stage project
-run commit -m "unchanged+deleted+unchanged: remove inserted b's"
-store_hash "unchanged+deleted+unchanged: remove inserted b's"
+section "UNCHANGED + ADDED + UNCHANGED : insert content in the middle" \
+        "old: D[0:1M]   new: D[0:500k] + B[0:500k] + D[500k:1M]" \
+        "expect bar: =...= (500k D) +...+ (500k B, inserted) =...= (500k D)"
+{ gen d 0 $HALF; gen b 0 $HALF; gen d $HALF $HALF; } > project
+commit "unchanged+added+unchanged: insert B in middle"
 
-# ---- 7. DELETED + UNCHANGED + ADDED -------------------------------------
-# Setup: transition d*200k → a*100k + d*100k.
-# The diff finds the d-block at position 0 in old, so it sees ADDED(a*100k) + UNCHANGED(d*100k).
-# This also demonstrates ADDED + UNCHANGED a second time with different proportions.
-echo ""
-echo "--------------------------------------------------------------------"
-echo " Setup for DELETED+UNCHANGED+ADDED"
-echo " old: d*200k   new: a*100k + d*100k"
-echo " expect bar: +...+ (100k a, added) =...= (100k d, unchanged)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'a' * $HALF + b'd' * $HALF)" > project
-run stage project
-run commit -m "setup: a-prefix + d-block"
-store_hash "setup: a-prefix + d-block"
+section "UNCHANGED + DELETED + UNCHANGED : remove content from the middle" \
+        "old: D[0:500k] + B[0:500k] + D[500k:1M]   new: D[0:1M]" \
+        "expect bar: =...= (500k D) -...- (500k B, deleted) =...= (500k D)"
+gen d 0 $SIZE > project
+commit "unchanged+deleted+unchanged: remove inserted B"
 
-echo ""
-echo "--------------------------------------------------------------------"
-echo " DELETED + UNCHANGED + ADDED : remove prefix, keep core, add suffix"
-echo " old: a*100k + d*100k   new: d*100k + c*50k"
-echo " expect bar: -...- (100k a, deleted) =...= (100k d, unchanged) +...+ (50k c, added)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'd' * $HALF + b'c' * $QUARTER)" > project
-run stage project
-run commit -m "deleted+unchanged+added: drop a-prefix, keep d's, add c-suffix"
-store_hash "deleted+unchanged+added: drop a-prefix, keep d's, add c-suffix"
+section "DELETED + ADDED + UNCHANGED : replace the first half" \
+        "old: D[0:1M]   new: A[0:500k] + D[500k:1M]" \
+        "expect bar: -...- (500k D, deleted) +...+ (500k A, added) =...= (500k D)"
+{ gen a 0 $HALF; gen d $HALF $HALF; } > project
+commit "deleted+added+unchanged: replace first half with A"
 
-# ---- 8. UNCHANGED + DELETED + ADDED + UNCHANGED -------------------------
-# Setup: transition d*100k + c*50k → d*50k + a*50k + c*50k.
-# old has extra 50k d's that no longer exist → UNCHANGED(50k d) + DELETED(50k d) + ADDED(50k a) + UNCHANGED(50k c)
-# This is also a complete UNCHANGED+DELETED+ADDED+UNCHANGED in one shot.
-echo ""
-echo "--------------------------------------------------------------------"
-echo " Setup for clean UNCHANGED+DELETED+ADDED+UNCHANGED"
-echo " old: d*100k + c*50k   new: d*50k + a*50k + c*50k"
-echo " expect bar: =...= (50k d) -...- (50k d gone) +...+ (50k a added) =...= (50k c)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'd' * $QUARTER + b'a' * $QUARTER + b'c' * $QUARTER)" > project
-run stage project
-run commit -m "setup: d-a-c three sections"
-store_hash "setup: d-a-c three sections"
+section "DELETED + UNCHANGED + ADDED : remove prefix, keep core, add suffix" \
+        "old: A[0:500k] + D[500k:1M]   new: D[500k:1M] + C[0:250k]" \
+        "expect bar: -...- (500k A, deleted) =...= (500k D) +...+ (250k C, added)"
+{ gen d $HALF $HALF; gen c 0 $QUARTER; } > project
+commit "deleted+unchanged+added: drop A prefix, keep D, add C suffix"
 
-echo ""
-echo "--------------------------------------------------------------------"
-echo " UNCHANGED + DELETED + ADDED + UNCHANGED : replace the middle section"
-echo " old: d*50k + a*50k + c*50k   new: d*50k + b*50k + c*50k"
-echo " expect bar: =...= (50k d) -...- (50k a, deleted) +...+ (50k b, added) =...= (50k c)"
-echo "--------------------------------------------------------------------"
-python3 -c "import sys; sys.stdout.buffer.write(b'd' * $QUARTER + b'b' * $QUARTER + b'c' * $QUARTER)" > project
-run stage project
-run commit -m "unchanged+deleted+added+unchanged: replace a-section with b-section"
-store_hash "unchanged+deleted+added+unchanged: replace a-section with b-section"
+section "UNCHANGED + DELETED + ADDED + UNCHANGED : setup three sections" \
+        "old: D[500k:1M] + C[0:250k]   new: D[500k:750k] + A[0:250k] + C[0:250k]" \
+        "expect bar: =...= (250k D) -...- (250k D) +...+ (250k A) =...= (250k C)"
+{ gen d $HALF $QUARTER; gen a 0 $QUARTER; gen c 0 $QUARTER; } > project
+commit "setup: D-A-C three sections"
+
+section "UNCHANGED + DELETED + ADDED + UNCHANGED : replace the middle section" \
+        "old: D[500k:750k] + A[0:250k] + C[0:250k]   new: D[500k:750k] + B[0:250k] + C[0:250k]" \
+        "expect bar: =...= (250k D) -...- (250k A, deleted) +...+ (250k B, added) =...= (250k C)"
+{ gen d $HALF $QUARTER; gen b 0 $QUARTER; gen c 0 $QUARTER; } > project
+commit "unchanged+deleted+added+unchanged: replace A section with B"
 
 run log
 
-echo ""
-echo "================================================================"
-echo " All fragment orderings demonstrated."
-echo "================================================================"
+# ---------------------------------------------------------------------------
+# Verification: check out every commit from history and compare its sha256
+# with the hash recorded when it was committed.
+# ---------------------------------------------------------------------------
 
 echo ""
 echo "================================================================"
-echo " VERIFICATION: Testing file integrity across all commits"
+echo " VERIFICATION: checking out every commit and comparing sha256"
 echo "================================================================"
 
-# Enhanced checkout and verify function using duh log to find commit hashes
-checkout_and_verify_commit_v2() {
-    local commit_msg="$1"
-    
-    echo ""
-    echo "--- Verifying: '$commit_msg' ---"
-    
-    # Get expected hash from our log
-    local expected_hash=$(grep "^$commit_msg|" "$HASH_LOG" | cut -d'|' -f2)
-    if [[ -z "$expected_hash" ]]; then
-        echo "  \033[31m✗ ERROR: No stored hash found for '$commit_msg'\033[0m"
-        return 1
+pass=0
+fail=0
+out="$VERIFICATION_DIR/checkout.bin"
+
+# `duh log` prints "commit <hash>", "Author: ...", "    <message>" per entry.
+while IFS='|' read -r commit_hash commit_msg; do
+    expected=$(grep -F "$commit_msg|" "$HASH_LOG" | head -n1 | cut -d'|' -f2)
+    rm -f "$out"
+    if ! "$DUH" checkout -c "$commit_hash" --as "$out" project > /dev/null; then
+        red "  ✗ checkout failed: $commit_msg"
+        fail=$((fail + 1))
+        continue
     fi
-    
-    echo "  Expected hash: $expected_hash"
-    echo "  \033[33m⚠ Note: Full checkout verification requires duh checkout command\033[0m"
-    echo "  \033[32m✓ Hash recorded successfully during commit\033[0m"
-    return 0
-}
-
-# Simplified verification that focuses on what we can test
-verify_stored_hashes() {
-    echo "Verification Summary:"
-    echo "===================="
-    
-    local count=0
-    while IFS='|' read -r commit_msg expected_hash; do
-        # Skip comment lines and empty lines
-        [[ "$commit_msg" =~ ^#.*$ || -z "$commit_msg" ]] && continue
-        
-        ((count++))
-        echo "$count. $commit_msg"
-        echo "   SHA256: $expected_hash"
-    done < "$HASH_LOG"
-    
-    echo ""
-    echo "✓ Successfully stored $count commit hashes"
-    echo "✓ Each commit's file content was hashed before storage"
-    echo "✓ Deduplication algorithm processed all commits without errors"
-    
-    # Test that we can at least reconstruct the final state
-    echo ""
-    echo "--- Testing final state reconstruction ---"
-    local final_expected=$(tail -n1 "$HASH_LOG" | cut -d'|' -f2)
-    local final_actual=$(sha256sum project | cut -d' ' -f1)
-    
-    if [[ "$final_actual" == "$final_expected" ]]; then
-        echo "  \033[32m✓ Final state matches expected hash\033[0m"
-        return 0
+    actual=$(sha256sum "$out" | cut -d' ' -f1)
+    if [[ "$actual" == "$expected" ]]; then
+        green "  ✓ ${commit_hash:0:12}  $commit_msg"
+        pass=$((pass + 1))
     else
-        echo "  \033[31m✗ Final state hash mismatch\033[0m"
-        echo "    Expected: $final_expected"
-        echo "    Actual:   $final_actual"
-        return 1
+        red "  ✗ ${commit_hash:0:12}  $commit_msg"
+        echo "      expected $expected"
+        echo "      actual   $actual"
+        fail=$((fail + 1))
     fi
-}
+done < <("$DUH" log | sed 's/\x1b\[[0-9;]*m//g' |
+         awk '/^commit /{h=$2; getline; getline; sub(/^ +/, ""); print h "|" $0}')
 
-# Function to checkout a specific commit and verify its hash (legacy function, kept for compatibility)
-checkout_and_verify_commit() {
-    local commit_msg="$1"
-    local commit_num="$2"
-    
-    echo ""
-    echo "--- Verifying commit $commit_num: '$commit_msg' ---"
-    
-    # Get expected hash from log
-    local expected_hash=$(grep "^$commit_msg|" "$HASH_LOG" | cut -d'|' -f2)
-    if [[ -z "$expected_hash" ]]; then
-        echo "  \033[31m✗ ERROR: No stored hash found for '$commit_msg'\033[0m"
-        return 1
-    fi
-    
-    # Try to checkout the commit by walking backwards from current commit
-    # For a more complete implementation, you would use actual commit references
-    # For now, we'll recreate the expected file content and verify
-    
-    case "$commit_num" in
-        1) cp a.txt project ;;
-        2) cp b.txt project ;;
-        3) python3 -c "import sys; sys.stdout.buffer.write(b'c' * ($SIZE // 2) + b'b' * ($SIZE // 2))" > project ;;
-        4) cp d.txt project ;;
-        5) python3 -c "import sys; sys.stdout.buffer.write(b'd' * $SIZE + b'a' * $HALF)" > project ;;
-        6) cp d.txt project ;;
-        7) python3 -c "import sys; sys.stdout.buffer.write(b'b' * $HALF + b'd' * $SIZE)" > project ;;
-        8) cp d.txt project ;;
-        9) python3 -c "import sys; sys.stdout.buffer.write(b'd' * $HALF + b'b' * $HALF + b'd' * $HALF)" > project ;;
-        10) cp d.txt project ;;
-        11) python3 -c "import sys; sys.stdout.buffer.write(b'a' * $HALF + b'd' * $HALF)" > project ;;
-        12) python3 -c "import sys; sys.stdout.buffer.write(b'd' * $HALF + b'c' * $QUARTER)" > project ;;
-        13) python3 -c "import sys; sys.stdout.buffer.write(b'd' * $QUARTER + b'a' * $QUARTER + b'c' * $QUARTER)" > project ;;
-        14) python3 -c "import sys; sys.stdout.buffer.write(b'd' * $QUARTER + b'b' * $QUARTER + b'c' * $QUARTER)" > project ;;
-        *) echo "  \033[31m✗ ERROR: Unknown commit number $commit_num\033[0m"; return 1 ;;
-    esac
-    
-    local actual_hash=$(sha256sum project | cut -d' ' -f1)
-    
-    if [[ "$actual_hash" == "$expected_hash" ]]; then
-        echo "  \033[32m✓ PASS: Hash matches ($actual_hash)\033[0m"
-        return 0
-    else
-        echo "  \033[31m✗ FAIL: Hash mismatch\033[0m"
-        echo "    Expected: $expected_hash"
-        echo "    Actual:   $actual_hash"
-        return 1
-    fi
-}
+rm -f "$out"
 
-# Test all commits
-echo "Stored hashes:"
-cat "$HASH_LOG"
+stored=$(($(wc -l < "$HASH_LOG") - 1))
+echo ""
+echo "  commits verified: $pass/$stored"
+echo "  object store size: $(du -sh .duh/objects | cut -f1)"
 
 echo ""
-echo "Testing deduplication integrity..."
-
-if verify_stored_hashes; then
-    echo ""
-    echo "================================================================"
-    echo " VERIFICATION RESULTS"
-    echo "================================================================" 
-    echo "\033[32m🎉 SUCCESS: Hash verification completed!\033[0m"
-    echo "\033[32m   All commits were successfully processed and hashes stored.\033[0m"
-    echo "\033[32m   Deduplication algorithm appears to be working correctly.\033[0m"
-    echo ""
-    echo "\033[33m💡 To fully verify reconstruction, use:\033[0m"
-    echo "\033[33m   duh checkout <commit-hash>\033[0m"  
-    echo "\033[33m   sha256sum project\033[0m"
-    echo "\033[33m   # Compare with stored hash from $HASH_LOG\033[0m"
+if [[ $fail -eq 0 && $pass -eq $stored ]]; then
+    green "SUCCESS: every commit was reconstructed byte-for-byte from history."
 else
-    echo ""
-    echo "================================================================"
-    echo " VERIFICATION RESULTS"
-    echo "================================================================"
-    echo "\033[31m❌ FAILURE: Hash verification failed.\033[0m"
-    echo "\033[31m   Deduplication implementation may have issues.\033[0m"
+    red "FAILURE: $fail commit(s) failed verification ($pass/$stored passed)."
     exit 1
 fi
