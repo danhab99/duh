@@ -1,5 +1,6 @@
+# Build the release binary through the flake (deps come from cli/Cargo.lock via Nix).
 build:
-    cd cli && cargo build
+    nix build .#duh
 
 # Creates 4 large single-character files in outdir: a.txt b.txt c.txt d.txt
 generate-test-files outdir size="200000":
@@ -8,24 +9,17 @@ generate-test-files outdir size="200000":
     python3 -c "import sys; sys.stdout.buffer.write(b'c' * {{size}})" > {{ outdir }}/c.txt
     python3 -c "import sys; sys.stdout.buffer.write(b'd' * {{size}})" > {{ outdir }}/d.txt
 
-update-vendor-hash:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd cli
-    cargo vendor --versioned-dirs 2>&1 | head -n1
-    cd ..
-    hash=$(nix hash path cli/vendor)
-    echo ""
-    echo "Vendor hash for flake.nix:"
-    echo "  cargoVendorHash = \"$hash\";"
-
-tmpdir := `mktemp -d`
-
+# Run demo.sh in a directory of your choice against the Nix-built binary.
 demo_script td:
-    bash demo.sh {{ td }}
+    DUH="$(nix build .#duh --no-link --print-out-paths)/bin/duh" bash demo.sh {{ td }}
 
+# Run demo.sh in the Nix sandbox (the standard duh must meet).
 demo:
-    nix develop .#duh --command bash -c "bash demo.sh {{ tmpdir }}"
+    nix build .#checks.x86_64-linux.demo --no-link -L
+
+# Build, test and run the demo — everything the flake checks.
+check:
+    nix flake check -L
 
 v := `nix eval --raw .#version.x86_64-linux`
 
