@@ -1,5 +1,5 @@
 {
-  description = "A devShell example";
+  description = "duh — deduplicative update helper";
 
   inputs = {
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,43 +14,41 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        # rustToolchain = pkgs.rust-bin.beta.latest.default.override {
+
+        # One toolchain (pinned by flake.lock) for both the package and the dev shell.
         rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
           extensions = [ "rust-src" "rustfmt" "clippy" ];
+        };
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustToolchain;
+          rustc = rustToolchain;
         };
 
         cliToml = builtins.fromTOML (builtins.readFile ./cli/Cargo.toml);
 
-        # pinned vendor hash (computed locally with `cargo vendor` + `nix hash`)
-        cargoVendorHash = "sha256-3tBgsSofdwz6fU31+7IohiGPJZr8IcL0DBibucwXn5Q=";
+        src = builtins.path {
+          path = ./.;
+          name = "duh-source";
+          filter = path: type:
+            let base = builtins.baseNameOf path; in
+            base != "target" && base != ".git" && base != "result";
+        };
 
-        duh = pkgs.rustPlatform.buildRustPackage {
+        duh = rustPlatform.buildRustPackage {
           pname = "duh";
           version = cliToml.package.version;
           buildType = "release";
 
-          src = builtins.path {
-            path = ./.;
-            name = "duh-source";
-            filter = path: type:
-              let base = builtins.baseNameOf path; in
-              base != "target" && base != ".git" && base != "result";
-          };
-
+          inherit src;
+          # The `cli` crate lives in `cli/` and depends on `../lib`.
           setSourceRoot = "sourceRoot=$(echo */cli)";
+
+          # Every crate is fetched by Nix from the checksums in Cargo.lock;
+          # no vendoring step or hand-maintained hash.
           cargoLock.lockFile = ./cli/Cargo.lock;
-          cargoSha256 = cargoVendorHash;
 
           nativeBuildInputs = with pkgs; [
             pkg-config
-          ];
-
-          RUSTFLAGS = [
-            "-C target-cpu=native"
-            "-C opt-level=3"
-            "-C codegen-units=1"
-            "-C lto=fat"
-            "-C strip=symbols"
           ];
 
           env = {
@@ -65,6 +63,7 @@
             description = "deduplicative update helper";
             homepage = "https://github.com/danhab99/duh";
             license = licenses.mit;
+            mainProgram = "duh";
             maintainers = [{
               name = "Dan Habot";
               email = "dan.habot@gmail.com";
@@ -87,7 +86,6 @@
               pkg-config
               pkgs.rust-analyzer
               rustToolchain
-              rustup
               time
             ];
 
