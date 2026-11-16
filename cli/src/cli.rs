@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    copy::CopyCommand, log::LogCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
+    copy::CopyCommand, init::InitCommand, log::LogCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
     stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
     unstage::UnstageCommand,
 };
@@ -20,7 +20,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize a new spacesitory (create `.duh/` metadata)
-    Init,
+    Init(InitCommand),
 
     /// Stage a file (prepare fragments for later commit)
     Stage(StageCommand),

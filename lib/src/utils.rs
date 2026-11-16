@@ -116,7 +116,21 @@ pub fn find_duh_dir(start_path: &str) -> Result<(PathBuf, Option<PathBuf>), Box<
                 let metadata_path = PathBuf::from(metadata_path_str.trim());
                 return Ok((metadata_path, None));
             } else {
-                // Normal repo: .duh is a directory
+                // Directory repo: honor config core.bare=true if present.
+                let config_path = p.join("config");
+                let config_s = std::fs::read_to_string(&config_path).unwrap_or_default();
+                let is_bare = config_s
+                    .parse::<toml::Table>()
+                    .ok()
+                    .and_then(|t| t.get("core").and_then(|v| v.as_table()).cloned())
+                    .and_then(|t| t.get("bare").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
+
+                if is_bare {
+                    return Ok((p, None));
+                }
+
+                // Normal repo: .duh is a directory and worktree is parent.
                 let worktree = path.clone();
                 return Ok((p, Some(worktree)));
             }

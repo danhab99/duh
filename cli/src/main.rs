@@ -30,8 +30,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     let mut space = match &cli.command {
-        Commands::Init => {
-            init::init()?;
+        Commands::Init(c) => {
+            init::init(c)?;
             return Ok(());
         }
         Commands::Copy(c) => {
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .unwrap_or("repo")
                             .trim_end_matches(".duh")
                     });
-                    copy::clone(url, dest_dir, c.branch.as_deref())?;
+                    copy::clone(url, dest_dir, c.branch.as_deref(), c.bare)?;
                     return Ok(());
                 } else {
                     return Err("must specify --from when cloning outside a duh space".into());
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     match &cli.command {
-        Commands::Init => unreachable!(),
+        Commands::Init(_) => unreachable!(),
         Commands::Stage(c) => {
             stage::stage(&mut space, c).expect("Unable to stage");
         }

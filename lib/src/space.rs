@@ -127,6 +127,7 @@ pub struct Space {
     pub chunk_size: usize,
     pub max_size: usize,
     pub worktree: Option<PathBuf>,
+    pub metadata_root: PathBuf,
     fs: Operator,
 }
 
@@ -172,15 +173,24 @@ impl Space {
             .as_integer()
             .ok_or("chunk_size is not a number")? as usize;
 
+        let config_bare = config
+            .get("core")
+            .and_then(|c| c.as_table())
+            .and_then(|c| c.get("bare"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
+        let metadata_root = PathBuf::from(filesystem.info().root());
         let mut r = Space {
             fs: filesystem,
+            metadata_root,
             chunk_size,
             max_size,
-            worktree,
+            worktree: if config_bare { None } else { worktree },
             me: Person {
                 name: String::from(
                     user_config
@@ -237,47 +247,41 @@ impl Space {
 
     fn create_dir_all(&self, path: &str) -> Result<(), Box<dyn Error>> {
         use std::path::Path;
-        let path = Path::new(path);
-        if path.exists() {
+        if self.metadata_root.join(path).exists() {
             return Ok(());
         }
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                self.create_dir_all(parent.to_str().unwrap())?;
+        if let Some(parent) = Path::new(path).parent() {
+            let parent_str = parent.to_str().unwrap();
+            if !parent_str.is_empty() {
+                self.create_dir_all(parent_str)?;
             }
         }
-        let mut dir_path = path.to_string_lossy().to_string();
+        let mut dir_path = path.to_string();
         if !dir_path.ends_with('/') {
             dir_path.push('/');
         }
         self.fs.create_dir(dir_path.as_str())?;
-
         Ok(())
     }
 
     fn get_path_in_space(&self, p: &str) -> PathBuf {
         vlog!("space::get_path_in_space: p='{}'", p);
-        // Ensure parent directories exist for file paths.
-        let path = PathBuf::from(p);
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                self.create_dir_all(parent.to_str().unwrap()).unwrap();
+        // Ensure parent directories exist then return the absolute path.
+        if let Some(parent) = PathBuf::from(p).parent() {
+            let parent_str = parent.to_str().unwrap();
+            if !parent_str.is_empty() {
+                self.create_dir_all(parent_str).unwrap();
             }
         }
-        path
+        self.metadata_root.join(p)
     }
 
     fn get_path_in_space_str(&self, p: &str) -> String {
-        let b = self.get_path_in_space(p);
-        let s = b.into_os_string().into_string().unwrap();
-        return s;
+        // Ensure the directory structure exists (side-effect of get_path_in_space),
+        // then return the relative path string for OpenDAL.
+        let _ = self.get_path_in_space(p);
+        p.to_string()
     }
-
-    // fn get_path_in_space_str(&self, p: &str) -> String {
-    //     let b = self.get_path_in_space(p);
-    //     let s = b.into_os_string().into_string().unwrap();
-    //     return s;
-    // }
 
     pub fn get_path_in_worktree(&self, p: &str) -> SpaceResult<PathBuf> {
         vlog!("space::get_path_in_worktree: p='{}'", p);
@@ -308,8 +312,10 @@ impl Space {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
+        let metadata_root = PathBuf::from(filesystem.info().root());
         let r = Space {
             fs: filesystem,
+            metadata_root,
             chunk_size: DEFAULT_BLOCK_SIZE,
             max_size: DEFAULT_MAX_FRAGMENT_SIZE,
             worktree,
@@ -326,8 +332,10 @@ impl Space {
         r.create_dir_all("refs")?;
 
         let default_config = format!(
-            "chunk_size = {}\nmax_size = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
-            DEFAULT_BLOCK_SIZE, DEFAULT_MAX_FRAGMENT_SIZE
+            "chunk_size = {}\nmax_size = {}\n\n[core]\nbare = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
+            DEFAULT_BLOCK_SIZE,
+            DEFAULT_MAX_FRAGMENT_SIZE,
+            r.worktree.is_none()
         );
 
         r.write_to_space(
@@ -370,7 +378,7 @@ impl Space {
         self.create_dir_all(objects_dir)?;
 
         // Create a named temp file inside the objects dir so rename/persist is atomic
-        let mut tmp = NamedTempFile::new_in(&objects_dir)?;
+        let mut tmp = NamedTempFile::new_in(self.metadata_root.join(&objects_dir))?;
 
         // Hasher to compute hash of the *msgpack* bytes as they are written
         let mut hasher = Sha256::new();
@@ -411,14 +419,21 @@ impl Space {
         let hash = Hash::from_string(hex)?;
 
         // Persist temp file to final object path
-        let path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
-        if let Some(parent) = path.parent() {
-            self.create_dir_all(parent.as_os_str().to_str().unwrap())?;
+        // get_object_path returns an absolute path; strip root to get the
+        // relative path needed by create_dir_all (OpenDAL) while using the
+        // absolute path for the native-FS persist call.
+        let abs_path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
+        let rel_path = abs_path.strip_prefix(&self.metadata_root).unwrap();
+        if let Some(parent) = rel_path.parent() {
+            let parent_str = parent.to_str().unwrap();
+            if !parent_str.is_empty() {
+                self.create_dir_all(parent_str)?;
+            }
         }
-        tmp.persist(&path)
+        tmp.persist(&abs_path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        vlog!("space::save_obj: persisted object at {:?}", path);
+        vlog!("space::save_obj: persisted object at {:?}", abs_path);
         vlog!("space::save_obj: object hash={}", hash.to_string());
 
         // NOTE: `.raw` sidecars removed — fragment bytes are stored only inside the
@@ -437,9 +452,10 @@ impl Space {
     }
 
     fn read_object(&self, r: Hash) -> SpaceResult<Option<Vec<u8>>> {
-        let path = self.get_object_path(ObjectReference::Hash(r))?;
-        vlog!("space::read_object: path={:?}", path);
-        if !path.exists() {
+        let abs_path = self.get_object_path(ObjectReference::Hash(r))?;
+        let rel_path = abs_path.strip_prefix(&self.metadata_root).unwrap();
+        vlog!("space::read_object: path={:?}", abs_path);
+        if !abs_path.exists() {
             vlog!(
                 "space::read_object: object not found for hash={}",
                 r.to_string()
@@ -448,7 +464,7 @@ impl Space {
         }
         let mut content = Vec::<u8>::new();
         self.fs
-            .reader(path.as_os_str().to_str().unwrap())?
+            .reader(rel_path.to_str().unwrap())?
             .into_std_read(0..)?
             .read_to_end(&mut content)?;
         vlog!("space::read_object: read {} bytes", content.len());
@@ -738,6 +754,8 @@ impl Space {
             // Try to preserve integer type for known numeric keys.
             let parsed = if let Ok(n) = value.parse::<i64>() {
                 toml::Value::Integer(n)
+            } else if let Ok(b) = value.parse::<bool>() {
+                toml::Value::Boolean(b)
             } else {
                 toml::Value::String(value.to_string())
             };

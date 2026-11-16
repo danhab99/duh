@@ -37,6 +37,9 @@ pub struct CopyCommand {
         help = "Remote branch name (defaults to current HEAD branch)"
     )]
     pub branch: Option<String>,
+
+    #[arg(long = "bare", help = "Clone/copy without checking out a working tree")]
+    pub bare: bool,
 }
 
 /// Clone a remote repository into a new directory (git clone equivalent)
@@ -44,10 +47,12 @@ pub fn clone(
     url: &str,
     dest_dir: &str,
     remote_branch: Option<&str>,
+    bare: bool,
 ) -> Result<(), Box<dyn Error>> {
     use std::fs;
 
     let dest_path = PathBuf::from(dest_dir);
+    let metadata_path = dest_path.join(lib::utils::SPACE_METADATA_DIR_NAME);
 
     if dest_path.exists() {
         return Err(format!("destination '{}' already exists", dest_dir).into());
@@ -55,11 +60,13 @@ pub fn clone(
 
     // Create the destination directory
     fs::create_dir_all(&dest_path)?;
+    fs::create_dir_all(&metadata_path)?;
 
     // Initialize a new duh space
-    let op = Fs::default().root(dest_path.to_str().unwrap());
+    let op = Fs::default().root(metadata_path.to_str().unwrap());
     let fs = opendal::Operator::new(op)?.finish().blocking();
-    let mut space = Space::initialize_at(fs, Some(dest_path.clone()))?;
+    let worktree = if bare { None } else { Some(dest_path.clone()) };
+    let mut space = Space::initialize_at(fs, worktree)?;
 
     // Add the remote as "origin"
     space.add_remote("origin", url)?;
@@ -100,24 +107,26 @@ pub fn clone(
         Some("clone from remote"),
     )?;
 
-    // Checkout all files
-    let files = space.list_files(ObjectReference::Hash(remote_hash))?;
+    if !bare {
+        // Checkout all files
+        let files = space.list_files(ObjectReference::Hash(remote_hash))?;
 
-    for file_path in files {
-        checkout(
-            &mut space,
-            &crate::checkout::CheckoutCommand {
-                file_path,
-                commit: Some(ObjectReference::Hash(remote_hash)),
-                as_name: None,
-            },
-        )?;
+        for file_path in files {
+            checkout(
+                &mut space,
+                &crate::checkout::CheckoutCommand {
+                    file_path,
+                    commit: Some(ObjectReference::Hash(remote_hash)),
+                    as_name: None,
+                },
+            )?;
+        }
     }
 
     space.save_index()?;
 
     println!(
-        "{} cloned {} -> {}",
+        "{} {} -> {}",
         crate::colors::cyan("Cloned"),
         crate::colors::green(url),
         crate::colors::green(dest_dir)
@@ -135,7 +144,13 @@ pub fn copy(
     match (&cmd.from, &cmd.to) {
         (Some(remote_name), None) => {
             let local_branch = cmd.as_branch.as_deref().unwrap_or(&head_branch);
-            copy_from(space, remote_name.as_str(), local_branch, cmd.branch.as_deref())?
+            copy_from(
+                space,
+                remote_name.as_str(),
+                local_branch,
+                cmd.branch.as_deref(),
+                cmd.bare,
+            )?
         }
         (None, Some(remote_name)) => {
             let target_branch = cmd.branch.as_deref().unwrap_or(&head_branch);
@@ -158,6 +173,7 @@ fn copy_from(
     remote_name: &str,
     local_branch: &str,
     remote_branch: Option<&str>,
+    bare: bool,
 ) -> Result<(), Box<dyn Error>> {
     let mut remote = space.get_remote_by_name(remote_name)?;
 
@@ -186,17 +202,19 @@ fn copy_from(
         Some("copy from remote"),
     )?;
 
-    let files = space.list_files(ObjectReference::Hash(remote_hash))?;
+    if !bare {
+        let files = space.list_files(ObjectReference::Hash(remote_hash))?;
 
-    for file_path in files {
-        checkout(
-            space,
-            &crate::checkout::CheckoutCommand {
-                file_path,
-                commit: Some(ObjectReference::Hash(remote_hash)),
-                as_name: None,
-            },
-        )?;
+        for file_path in files {
+            checkout(
+                space,
+                &crate::checkout::CheckoutCommand {
+                    file_path,
+                    commit: Some(ObjectReference::Hash(remote_hash)),
+                    as_name: None,
+                },
+            )?;
+        }
     }
 
     println!(
