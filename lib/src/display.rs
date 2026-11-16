@@ -108,22 +108,25 @@ pub fn generate_diff_bar(frag_events: &[(u64, char, &'static str)]) -> String {
         return generate_bar_segment(MAX_COLS, '+', "32");
     }
 
-    let bpc = (total_bytes / MAX_COLS).max(1);
-    let mut s = String::new();
-    let mut accumulated: u64 = 0;
-    let mut emitted: u64 = 0;
-    for (len, symbol, color) in frag_events {
-        accumulated += len;
-        let target = (accumulated / bpc).min(MAX_COLS);
-        let new_chars = target - emitted;
-        emitted = target;
-        if new_chars > 0 {
-            s.push_str(&generate_bar_segment(new_chars, *symbol, *color));
-        }
+    // Round each fragment to columns on its own (fragments under half a column
+    // vanish), then give the rounding slack to the largest fragment so the bar
+    // is exactly MAX_COLS wide.
+    let mut widths: Vec<i64> = frag_events
+        .iter()
+        .map(|(len, _, _)| {
+            ((*len as u128 * MAX_COLS as u128 + total_bytes as u128 / 2) / total_bytes as u128)
+                as i64
+        })
+        .collect();
+    let slack = MAX_COLS as i64 - widths.iter().sum::<i64>();
+    if let Some((largest, _)) = frag_events.iter().enumerate().max_by_key(|(_, (len, _, _))| *len) {
+        widths[largest] = (widths[largest] + slack).max(0);
     }
-    if emitted < MAX_COLS {
-        if let Some((_, symbol, color)) = frag_events.last() {
-            s.push_str(&generate_bar_segment(MAX_COLS - emitted, *symbol, *color));
+
+    let mut s = String::new();
+    for ((_, symbol, color), width) in frag_events.iter().zip(widths) {
+        if width > 0 {
+            s.push_str(&generate_bar_segment(width as u64, *symbol, *color));
         }
     }
     s
