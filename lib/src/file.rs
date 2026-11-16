@@ -163,13 +163,31 @@ impl<'a> FileOps<'a> {
 
         let commit_hash = self.space.save_obj(Object::Commit(commit))?;
 
-        let head_ref_name = "HEAD".to_string();
-        self.space.set_ref(
-            head_ref_name.as_str(),
-            ObjectReference::Hash(commit_hash.clone()),
-            Some(format!("commit: {}", message.clone()).as_str()),
-        )?;
-        vlog!("space::commit: new HEAD = {}", commit_hash.to_string());
+        let head_ref = self.space.get_ref("HEAD".to_string())?;
+        match head_ref {
+            // Normal mode: HEAD points to a branch (e.g. main). Advance that branch.
+            ObjectReference::Ref(branch) => {
+                self.space.set_ref(
+                    branch.as_str(),
+                    ObjectReference::Hash(commit_hash.clone()),
+                    Some(format!("commit: {}", message.clone()).as_str()),
+                )?;
+                vlog!(
+                    "space::commit: advanced branch '{}' -> {}",
+                    branch,
+                    commit_hash.to_string()
+                );
+            }
+            // Detached HEAD mode: keep detached behavior and move HEAD directly.
+            _ => {
+                self.space.set_ref(
+                    "HEAD",
+                    ObjectReference::Hash(commit_hash.clone()),
+                    Some(format!("commit: {}", message.clone()).as_str()),
+                )?;
+                vlog!("space::commit: detached HEAD -> {}", commit_hash.to_string());
+            }
+        }
 
         if files_count > 0 {
             self.space.index.clear();
