@@ -75,7 +75,9 @@ impl<'a> FileOps<'a> {
             old,
             Box::new(new),
             self.space.chunk_size,
-            self.space.max_size as u64,
+            // Target average chunk size; max_size (10 MiB default) would make
+            // most files a single chunk and defeat deduplication.
+            self.space.chunk_size as u64,
             progress,
         )?;
 
