@@ -20,6 +20,102 @@ use serde::Serialize;
 
 use toml::{self};
 
+fn upsert_pair(pairs: &mut Vec<(String, String)>, key: &str, value: String) {
+    if let Some((_, v)) = pairs.iter_mut().find(|(k, _)| k == key) {
+        *v = value;
+    } else {
+        pairs.push((key.to_string(), value));
+    }
+}
+
+fn parse_uri_to_config_pairs(uri: &str) -> SpaceResult<(opendal::Scheme, Vec<(String, String)>)> {
+    // Fallback for local path remotes like `../source` that are not valid URLs.
+    let parsed = match url::Url::parse(uri) {
+        Ok(u) => u,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            let raw_path = std::path::PathBuf::from(uri);
+            let abs_path = if raw_path.is_absolute() {
+                raw_path
+            } else {
+                std::env::current_dir()?.join(raw_path)
+            };
+
+            // Accept either the worktree path (contains `.duh/`) or a direct metadata path.
+            let metadata_root = if abs_path
+                .join(crate::utils::SPACE_METADATA_DIR_NAME)
+                .is_dir()
+            {
+                abs_path.join(crate::utils::SPACE_METADATA_DIR_NAME)
+            } else {
+                abs_path
+            };
+
+            if !metadata_root.join("config").is_file() {
+                return Err(Box::new(DuhError::Generic(format!(
+                    "remote path '{}' is not a valid duh repo (missing config)",
+                    uri
+                ))));
+            }
+
+            let mut pairs: Vec<(String, String)> = Vec::new();
+            upsert_pair(
+                &mut pairs,
+                "root",
+                metadata_root.to_string_lossy().to_string(),
+            );
+            return Ok((opendal::Scheme::Fs, pairs));
+        }
+        Err(e) => return Err(Box::new(e)),
+    };
+
+    let scheme = if parsed.scheme() == "file" {
+        opendal::Scheme::Fs
+    } else {
+        opendal::Scheme::from_str(parsed.scheme())?
+    };
+
+    let mut pairs: Vec<(String, String)> = Vec::new();
+
+    if let Some(host) = parsed.host_str() {
+        let mut endpoint = format!("{}://{}", parsed.scheme(), host);
+        if let Some(port) = parsed.port() {
+            endpoint.push(':');
+            endpoint.push_str(port.to_string().as_str());
+        }
+
+        upsert_pair(&mut pairs, "endpoint", endpoint);
+        upsert_pair(&mut pairs, "host", host.to_string());
+
+        // Common URI shape for s3 is s3://bucket/root
+        if matches!(scheme, opendal::Scheme::S3) {
+            upsert_pair(&mut pairs, "bucket", host.to_string());
+        }
+    }
+
+    if !parsed.username().is_empty() {
+        upsert_pair(&mut pairs, "username", parsed.username().to_string());
+    }
+    if let Some(password) = parsed.password() {
+        upsert_pair(&mut pairs, "password", password.to_string());
+    }
+
+    let root = parsed.path();
+    if !root.is_empty() && root != "/" {
+        if matches!(scheme, opendal::Scheme::Fs) {
+            // file:// URI paths should be treated as filesystem roots.
+            upsert_pair(&mut pairs, "root", root.to_string());
+        } else {
+            upsert_pair(&mut pairs, "root", root.to_string());
+        }
+    }
+
+    for (k, v) in parsed.query_pairs() {
+        upsert_pair(&mut pairs, k.as_ref(), v.into_owned());
+    }
+
+    Ok((scheme, pairs))
+}
+
 // Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek + ?Sized> ReadSeek for T {}
@@ -679,38 +775,14 @@ impl Space {
             })
             .unwrap_or_default();
 
-        let parsed_url = url::Url::parse(url_s)?;
-        let scheme = opendal::Scheme::from_str(parsed_url.scheme())?;
+        let (scheme, mut merged_pairs) = parse_uri_to_config_pairs(url_s)?;
 
-        let mut config_pairs = config_pairs;
-
-        match scheme {
-            opendal::Scheme::S3 => {
-                if !config_pairs.iter().any(|(k, _)| k == "bucket") {
-                    if let Some(bucket) = parsed_url.host_str() {
-                        config_pairs.push(("bucket".to_string(), bucket.to_string()));
-                    }
-                }
-                if !config_pairs.iter().any(|(k, _)| k == "root") {
-                    let root = parsed_url.path();
-                    if !root.is_empty() && root != "/" {
-                        config_pairs.push(("root".to_string(), root.to_string()));
-                    }
-                }
-            }
-            opendal::Scheme::Webdav => {
-                if !config_pairs.iter().any(|(k, _)| k == "endpoint") {
-                    config_pairs.push(("endpoint".to_string(), url_s.to_string()));
-                }
-            }
-            _ => {
-                if !config_pairs.iter().any(|(k, _)| k == "endpoint") {
-                    config_pairs.push(("endpoint".to_string(), url_s.to_string()));
-                }
-            }
+        // Explicit remote.config values override URI-derived defaults.
+        for (k, v) in config_pairs {
+            upsert_pair(&mut merged_pairs, k.as_str(), v);
         }
 
-        let fs = opendal::Operator::via_iter(scheme, config_pairs)?.blocking();
+        let fs = opendal::Operator::via_iter(scheme, merged_pairs)?.blocking();
         let r: Space = Space::at_root_path(fs, None)?;
         Ok(r)
     }
