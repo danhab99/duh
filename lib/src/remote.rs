@@ -6,6 +6,74 @@ use crate::{
 };
 use std::error::Error;
 
+fn copy_file_version(
+    src: &mut Space,
+    dest: &mut Space,
+    file_hash: Hash,
+) -> Result<(), Box<dyn Error>> {
+    let file_obj = match src.get_object(file_hash)? {
+        Some(Object::File(obj)) => obj,
+        _ => {
+            return Err(Box::new(crate::error::DuhError::invalid_object(
+                "file",
+                "didn't receive a file",
+            )))
+        }
+    };
+
+    dest.save_obj(Object::File(file_obj.clone()))?;
+
+    for frag_hash in file_obj.fragments.iter() {
+        let frag = match src.get_object(*frag_hash)? {
+            Some(Object::FileDiffFragment(frag)) => frag,
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "file diff fragment",
+                    "didn't receive a file diff fragment",
+                )))
+            }
+        };
+
+        dest.save_obj(Object::FileDiffFragment(frag.clone()))?;
+
+        if let FileFragment::ADDED { body, len: _ } = frag {
+            if let Some(obj) = src.get_object(body)? {
+                dest.save_obj(obj)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn copy_tree_objects(
+    src: &mut Space,
+    dest: &mut Space,
+    tree_hash: Hash,
+) -> Result<(), Box<dyn Error>> {
+    let tree = match src.get_object(tree_hash)? {
+        Some(Object::Tree(t)) => t,
+        _ => {
+            return Err(Box::new(crate::error::DuhError::invalid_object(
+                "tree",
+                "didn't receive a tree",
+            )))
+        }
+    };
+
+    dest.save_obj(Object::Tree(tree.clone()))?;
+
+    for entry in tree.entries {
+        if entry.mode == 0o40000 {
+            copy_tree_objects(src, dest, entry.hash)?;
+        } else {
+            copy_file_version(src, dest, entry.hash)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn fetch_all_refs(
     local: &mut Space,
     remote: &mut Space,
@@ -59,38 +127,9 @@ where
 
         dest.save_obj(Object::Commit(commit.clone()))?;
 
-        let files = src.get_commit_files(hash)?;
-        for (_, hash) in files.iter() {
-            vlog!(
-                "remote::fetch_commit_from_remote transferred object {}",
-                hash.to_hex()
-            );
-
-            let obj = if let Some(Object::File(obj)) = src.get_object(*hash)? {
-                dest.save_obj(Object::File(obj.clone()))?;
-                obj
-            } else {
-                return Err(Box::new(crate::error::DuhError::invalid_object(
-                    "file",
-                    "didn't receive a file",
-                )));
-            };
-
-            for frag_hash in obj.fragments.iter() {
-                if let Some(Object::FileDiffFragment(frag)) = dest.get_object(*frag_hash)? {
-                    dest.save_obj(Object::FileDiffFragment(frag.clone()))?;
-
-                    match frag {
-                        FileFragment::ADDED { body, len: _ } => {
-                            if let Some(f) = dest.get_object(body)? {
-                                dest.save_obj(f)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+        // Preserve commit reachability by copying the full tree graph and
+        // all file/fragments referenced by that tree.
+        copy_tree_objects(src, dest, commit.tree)?;
 
         if let Some(p) = progress {
             p(CopyCommitsProgress::Commit(hash));
