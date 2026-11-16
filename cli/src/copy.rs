@@ -58,8 +58,7 @@ pub fn clone(
 
     // Initialize a new duh space
     let op = Fs::default().root(dest_path.to_str().unwrap());
-    let afs = opendal::Operator::new(op)?.finish();
-    let fs = opendal::blocking::Operator::new(afs)?;
+    let fs = opendal::Operator::new(op)?.finish().blocking();
     let mut space = Space::initialize_at(fs, Some(dest_path.clone()))?;
 
     // Add the remote as "origin"

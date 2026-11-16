@@ -60,8 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let op =
                 opendal::services::Fs::default().root(metadata_dir.to_str().unwrap());
 
-            let afs = opendal::Operator::new(op)?.finish();
-            let fs = opendal::blocking::Operator::new(afs)?;
+            let fs = opendal::Operator::new(op)?.finish().blocking();
 
             let mut space = lib::space::Space::at_root_path(fs, _worktree)?;
             copy::copy(&mut space, c)?;
@@ -75,8 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let op =
                 opendal::services::Fs::default().root(metadata_dir.to_str().unwrap());
 
-            let afs = opendal::Operator::new(op)?.finish();
-            let fs = opendal::blocking::Operator::new(afs)?;
+            let fs = opendal::Operator::new(op)?.finish().blocking();
 
             lib::space::Space::at_root_path(fs, worktree)?
         }

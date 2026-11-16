@@ -19,4 +19,4 @@ serde_bytes = "0.11.19"
 gearhash = "0.1.3"
 virtual-fs = "0.701.0"
 url = "2.5.8"
-opendal = { version = "0.57", features = ["services-fs", "services-s3", "services-gcs", "services-azblob", "services-webdav", "services-memory", "services-redis", "services-postgresql", "services-gdrive", "blocking"] }
+opendal = { version = "0.52.0", features = ["services-fs", "services-s3", "services-gcs", "services-azblob", "services-webdav", "services-memory", "services-redis", "services-postgresql", "services-gdrive", "layers-blocking"] }

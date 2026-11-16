@@ -15,7 +15,7 @@ use std::{
     time::SystemTime,
 };
 
-use opendal::blocking::Operator;
+use opendal::BlockingOperator as Operator;
 use serde::Serialize;
 
 use toml::{self};
@@ -55,10 +55,7 @@ impl Space {
 
         // let config_path = find_file(rp.as_str(), &getSpaceConfigFileName())?;
 
-        let mut content = String::new();
-        filesystem
-            .read("config.toml")?
-            .read_to_string(&mut content)?;
+        let content = String::from_utf8(filesystem.read("config")?.to_bytes().to_vec())?;
         let config = content.parse::<toml::Table>()?;
 
         let user_config = config
@@ -153,16 +150,25 @@ impl Space {
                 self.create_dir_all(parent.to_str().unwrap())?;
             }
         }
-        self.fs.create_dir(path.to_str().unwrap())?;
+        let mut dir_path = path.to_string_lossy().to_string();
+        if !dir_path.ends_with('/') {
+            dir_path.push('/');
+        }
+        self.fs.create_dir(dir_path.as_str())?;
 
         Ok(())
     }
 
     fn get_path_in_space(&self, p: &str) -> PathBuf {
         vlog!("space::get_path_in_space: p='{}'", p);
-        // returns `${root_path}/.duh/<p>` and ensures the metadata dir exists
-        self.create_dir_all(p).unwrap();
-        return PathBuf::from(p);
+        // Ensure parent directories exist for file paths.
+        let path = PathBuf::from(p);
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                self.create_dir_all(parent.to_str().unwrap()).unwrap();
+            }
+        }
+        path
     }
 
     fn get_path_in_space_str(&self, p: &str) -> String {
@@ -673,7 +679,38 @@ impl Space {
             })
             .unwrap_or_default();
 
-        let fs = Operator::from_uri((url_s, config_pairs))?;
+        let parsed_url = url::Url::parse(url_s)?;
+        let scheme = opendal::Scheme::from_str(parsed_url.scheme())?;
+
+        let mut config_pairs = config_pairs;
+
+        match scheme {
+            opendal::Scheme::S3 => {
+                if !config_pairs.iter().any(|(k, _)| k == "bucket") {
+                    if let Some(bucket) = parsed_url.host_str() {
+                        config_pairs.push(("bucket".to_string(), bucket.to_string()));
+                    }
+                }
+                if !config_pairs.iter().any(|(k, _)| k == "root") {
+                    let root = parsed_url.path();
+                    if !root.is_empty() && root != "/" {
+                        config_pairs.push(("root".to_string(), root.to_string()));
+                    }
+                }
+            }
+            opendal::Scheme::Webdav => {
+                if !config_pairs.iter().any(|(k, _)| k == "endpoint") {
+                    config_pairs.push(("endpoint".to_string(), url_s.to_string()));
+                }
+            }
+            _ => {
+                if !config_pairs.iter().any(|(k, _)| k == "endpoint") {
+                    config_pairs.push(("endpoint".to_string(), url_s.to_string()));
+                }
+            }
+        }
+
+        let fs = opendal::Operator::via_iter(scheme, config_pairs)?.blocking();
         let r: Space = Space::at_root_path(fs, None)?;
         Ok(r)
     }
