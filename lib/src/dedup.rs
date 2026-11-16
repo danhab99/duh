@@ -210,11 +210,30 @@ pub enum DedupProgress {
     },
 }
 
-// 1. Define a struct to hold the iterator's state
+/// One step of the edit script that turns the old stream into the new one.
+/// Steps are applied in order: UNCHANGED copies from the old stream, DELETED
+/// skips old bytes, ADDED emits new bytes (read lazily from the new stream).
+enum EditOp {
+    Deleted(usize),
+    Unchanged(usize),
+    Added { start: usize, len: usize },
+}
+
+fn push_op(ops: &mut VecDeque<EditOp>, op: EditOp) {
+    match (ops.back_mut(), &op) {
+        (Some(EditOp::Deleted(a)), EditOp::Deleted(b)) => *a += b,
+        (Some(EditOp::Unchanged(a)), EditOp::Unchanged(b)) => *a += b,
+        (Some(EditOp::Added { start, len }), EditOp::Added { start: s, len: l })
+            if *start + *len == *s =>
+        {
+            *len += l
+        }
+        _ => ops.push_back(op),
+    }
+}
+
 pub struct DedupeFragIterator<R: Read + Seek> {
-    deleted: VecDeque<Position>,
-    unchanged: VecDeque<Position>,
-    added: VecDeque<Position>,
+    ops: VecDeque<EditOp>,
     new: R,
 }
 
@@ -229,20 +248,17 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
         let hash_mod = normalize_hash_mod(hash_mod);
 
         // ── Phase 1: index the old (baseline) stream ──────────────────────
-        let mut old_map = HashMap::<Hash, Position>::new();
+        // Maps hash → every start offset of that chunk in old (ascending).
+        let mut old_starts = HashMap::<Hash, Vec<usize>>::new();
         // Maps hash → sequential discovery index for matched-color spacerting.
         let mut old_index_map = HashMap::<Hash, usize>::new();
         let mut old_chunk_idx = 0usize;
+        let mut old_len = 0usize;
 
         iterate_cdc_rewind(&mut old, window, hash_mod, |position, hash| {
-            let should_insert = match old_map.get(&hash) {
-                Some(existing) => (existing.start + existing.length) > position.start,
-                None => true,
-            };
-            if should_insert {
-                old_map.insert(hash, position);
-                old_index_map.insert(hash, old_chunk_idx);
-            }
+            old_starts.entry(hash).or_default().push(position.start);
+            old_index_map.entry(hash).or_insert(old_chunk_idx);
+            old_len = position.start + position.length;
             if let Some(ref mut p) = progress {
                 p(DedupProgress::OldChunk {
                     index: old_chunk_idx,
@@ -254,17 +270,11 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
         })?;
 
         // ── Phase 2: index the new stream ─────────────────────────────────
-        let mut new_map = HashMap::<Hash, Position>::new();
+        let mut new_chunks = Vec::<(Position, Hash)>::new();
         let mut new_chunk_idx = 0usize;
 
         iterate_cdc_rewind(&mut new, window, hash_mod, |position, hash| {
-            let should_insert = match new_map.get(&hash) {
-                Some(existing) => (existing.start + existing.length) > position.start,
-                None => true,
-            };
-            if should_insert {
-                new_map.insert(hash, position);
-            }
+            new_chunks.push((position, hash));
             let old_index = old_index_map.get(&hash).copied();
             if let Some(ref mut p) = progress {
                 p(DedupProgress::NewChunk {
@@ -277,98 +287,76 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
             Some(())
         })?;
 
-        // ── Phase 3: categorise chunks into deleted / unchanged / added ────
-        let mut deleted = VecDeque::<Position>::new();
-        let mut unchanged = VecDeque::<Position>::new();
-        let mut added = VecDeque::<Position>::new();
+        // ── Phase 3: build an ordered edit script ──────────────────────────
+        // Walk new chunks in order, matching each against the earliest old
+        // chunk at or after the old cursor. Skipped old bytes are DELETED,
+        // unmatched new chunks are ADDED. Within a replaced region the
+        // deletion is emitted before the addition.
+        let mut ops = VecDeque::<EditOp>::new();
+        let mut old_cursor = 0usize;
+        let mut pending_added = VecDeque::<EditOp>::new();
 
-        for (key, value) in &old_map {
-            if new_map.get(key).is_none() {
-                deleted.push_back(*value);
-            } else {
-                unchanged.push_back(*value);
+        for (position, hash) in &new_chunks {
+            let matched = old_starts.get(hash).and_then(|starts| {
+                let i = starts.partition_point(|&s| s < old_cursor);
+                starts.get(i).copied()
+            });
+
+            match matched {
+                Some(old_start) => {
+                    if old_start > old_cursor {
+                        push_op(&mut ops, EditOp::Deleted(old_start - old_cursor));
+                    }
+                    for op in pending_added.drain(..) {
+                        push_op(&mut ops, op);
+                    }
+                    push_op(&mut ops, EditOp::Unchanged(position.length));
+                    old_cursor = old_start + position.length;
+                }
+                None => push_op(
+                    &mut pending_added,
+                    EditOp::Added {
+                        start: position.start,
+                        len: position.length,
+                    },
+                ),
             }
         }
 
-        for (key, value) in &new_map {
-            if old_map.get(key).is_none() {
-                added.push_back(*value);
-            }
+        if old_len > old_cursor {
+            push_op(&mut ops, EditOp::Deleted(old_len - old_cursor));
+        }
+        for op in pending_added.drain(..) {
+            push_op(&mut ops, op);
         }
 
-        vlog!(
-            "dedup::build: all positions categorized deleted={} unchanged={} added={}",
-            deleted.len(),
-            unchanged.len(),
-            added.len(),
-        );
+        vlog!("dedup::build: edit script has {} ops", ops.len());
 
-        Ok(Self {
-            deleted,
-            unchanged,
-            added,
-            new,
-        })
+        Ok(Self { ops, new })
     }
 }
 
-// 2. Implement the Iterator trait
 impl<R: Read + Seek> Iterator for DedupeFragIterator<R> {
-    // Specify the type of items the iterator produces
     type Item = DiffFragment;
 
-    // The next() method is where the lazy logic resides
     fn next(&mut self) -> Option<Self::Item> {
-        enum SelectedSet {
-            Deleted,
-            Unchanged,
-            Added,
-        }
-
-        // Find which VecDeque has the earliest position at the front,
-        // returning the position and the id of the VecDeque set
-        let mut earliest: Option<(SelectedSet, &Position)> = None;
-
-        for (set_id, deq) in [
-            (SelectedSet::Deleted, &self.deleted),
-            (SelectedSet::Unchanged, &self.unchanged),
-            (SelectedSet::Added, &self.added),
-        ] {
-            if let Some(pos) = deq.front() {
-                match earliest {
-                    None => earliest = Some((set_id, pos)),
-                    Some((_, best_pos)) if pos.start < best_pos.start => {
-                        earliest = Some((set_id, pos))
-                    }
-                    _ => {}
-                }
+        Some(match self.ops.pop_front()? {
+            EditOp::Deleted(len) => {
+                vlog!("dedup::next: yielding deleted {}", len);
+                DiffFragment::DELETED { len }
             }
-        }
-
-        match earliest {
-            Some((selected, _)) => Some(match selected {
-                SelectedSet::Deleted => {
-                    let d = self.deleted.pop_front().unwrap();
-                    vlog!("dedup::next: yielding deleted {}", d.length);
-                    DiffFragment::DELETED { len: d.length }
-                }
-
-                SelectedSet::Unchanged => {
-                    let d = self.unchanged.pop_front().unwrap();
-                    vlog!("dedup::next: yielding unchanged {}", d.length);
-                    DiffFragment::UNCHANGED { len: d.length }
-                }
-                SelectedSet::Added => {
-                    let d = self.added.pop_front().unwrap();
-                    self.new.seek(io::SeekFrom::Start(d.start as u64)).unwrap();
-                    let (body, _) = read_chunk(&mut self.new, d.length).unwrap();
-
-                    vlog!("dedup::next: yielding added {}", d.length);
-                    DiffFragment::ADDED { body }
-                }
-            }),
-            None => None,
-        }
+            EditOp::Unchanged(len) => {
+                vlog!("dedup::next: yielding unchanged {}", len);
+                DiffFragment::UNCHANGED { len }
+            }
+            EditOp::Added { start, len } => {
+                self.new.seek(io::SeekFrom::Start(start as u64)).unwrap();
+                let mut body = vec![0u8; len];
+                self.new.read_exact(&mut body).unwrap();
+                vlog!("dedup::next: yielding added {}", len);
+                DiffFragment::ADDED { body }
+            }
+        })
     }
 }
 
