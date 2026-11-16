@@ -70,11 +70,32 @@
             }];
           };
         };
-        # (the `cli` crate lives in the `cli/` subdirectory).
+
+        # demo.sh sets the standard: it must pass against the Nix-built binary.
+        demo = pkgs.runCommand "duh-demo" {
+          nativeBuildInputs = with pkgs; [
+            bash
+            coreutils
+            gawk
+            gnugrep
+            gnused
+            python3
+            time
+          ];
+        } ''
+          mkdir work
+          DUH=${duh}/bin/duh bash ${src}/demo.sh "$PWD/work" > $out || { cat $out; exit 1; }
+          cat $out
+        '';
       in
       {
         packages = {
           inherit duh;
+          default = duh;
+        };
+
+        checks = {
+          inherit duh demo;
         };
 
         devShells = {
