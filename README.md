@@ -26,20 +26,35 @@ This is the same approach rsync uses to efficiently synchronize files over a net
 
 ## Project Status
 
-duh covers the everyday git workflow for a single project directory.
-Everything below is exercised end to end by [`demo.sh`](demo.sh), which
-`nix flake check` runs on every build:
+duh has its own vocabulary, chosen to read naturally to artists rather than
+to programmers; if you know git, every git command name works too. Everything
+below is exercised end to end by [`demo.sh`](demo.sh), which
+`nix flake check` runs on every build.
 
-- ✅ `init`, `clone`
-- ✅ `add` (files, directories, globs, `-A`, `-u`), `rm` (`--cached`), `mv`
-- ✅ `status` (staged / modified / missing / untracked), `diff` (`--staged`)
-- ✅ `commit` (`-a`, `--allow-empty`), `log` (`--oneline`), `show`, `reflog`
-- ✅ `restore` (`--staged`, `--source`), `checkout <file>`
-- ✅ `branch`, `switch` (`-c`), `tag`, `reset` (`--soft` / `--mixed` / `--hard`)
-- ✅ Commits named by branch, tag, short hash, `HEAD~N` or `X^`
-- ✅ `.duhignore`
-- ✅ Remotes on 34 storage backends (S3, GCS, Azure, WebDAV, SFTP, Google Drive, …): `remote`, `copy` (fast-forward push / pull), `clone`
-- ❌ Merging, rebasing, stashing — out of scope for now
+| duh | what it does | git |
+|---|---|---|
+| `start` | start a space in this folder | `init` |
+| `get <url> [folder]` | copy a space into a new folder | `clone` |
+| `look` | what's changed, picked, missing or new | `status` |
+| `compare [--picked]` | how much of each file changed (a diff bar per file) | `diff` |
+| `pick <files>` / `pick -A` / `pick -u` | choose what goes into the next save | `add` |
+| `unpick <files>` | leave files out of the next save, keeping edits | `restore --staged` |
+| `save -m "…"` / `save -a` | save a new version | `commit` |
+| `bring-back <file> [--from v] [--as path]` | a file as it was in your picks, the last save, or any version | `restore`, `checkout` |
+| `rename`, `delete`, `forget` | move, delete, or stop tracking files | `mv`, `rm`, `rm --cached` |
+| `history [--oneline]`, `inspect [v]` | your saves; one version in detail | `log`, `show` |
+| `journal` | everywhere a draft has pointed, to recover lost work | `reflog` |
+| `label <name> [v]` | name a version, e.g. `final-v2` | `tag` |
+| `rewind <v> [--keep-picked \| --discard]` | move your draft to another version | `reset` |
+| `drafts [name]`, `open <draft>` / `open --new <draft>` | alternative lines of work | `branch`, `switch` |
+| `send [place]`, `receive [place]` | share saves with a place (never merges) | `push`, `pull` |
+| `places` | folders, buckets and drives your space is shared to | `remote` |
+| `settings` | view or change settings | `config` |
+
+Versions can be named by label, draft, short hash, `HEAD~N` or `X^`.
+`.duhignore` keeps files out of `look` and `pick`. Places work on 34 storage
+backends (S3, GCS, Azure, WebDAV, SFTP, Google Drive, …). Merging, rebasing
+and stashing are out of scope for now.
 
 ## Architecture
 
@@ -101,39 +116,40 @@ nix run .# -- --help
 
 ### Basic Usage
 
-The workflow is git's:
-
 ```bash
-duh init                       # create a space in the current directory
-duh add .                      # stage every file
-duh commit -m "Initial commit"
+duh start                        # start a space in this folder
+duh pick .                       # pick every file
+duh save -m "First sketch"
 
-# ...edit files...
-duh status                     # what changed?
-duh diff                       # how much of each file changed (a diff bar per file)
-duh add -A                     # stage new, modified and deleted files
-duh commit -m "Update assets"  # or: duh commit -a -m "..." for tracked files
+# ...work on your files...
+duh look                         # what changed?
+duh compare                      # how much of each file changed
+duh pick -A                      # pick new, changed and deleted files
+duh save -m "Lighting pass"      # or: duh save -a -m "..." for tracked files
 
-duh log --oneline              # history
-duh restore --source HEAD~1 big.bin   # bring back an older version
-duh switch -c experiment       # branch off
-duh clone ../project copy      # clone a space
+duh history --oneline            # your saves
+duh label final-v1               # name this version
+duh bring-back scene.blend --from final-v1   # bring back an older version
+duh open --new experiment        # try something on a new draft
+duh get ../project my-copy       # copy a space
 ```
 
-### Remotes and storage backends
+### Places and storage backends
 
 A space keeps its history in a *store*: any filesystem-like opendal backend.
-A remote is a URL plus whatever options that backend needs, stored in plain
-text in `.duh/config` (secrets-manager integration is planned):
+A place is a URL plus whatever options that backend needs, stored in plain
+text in the space's settings (secrets-manager integration is planned):
 
 ```bash
-duh remote add origin ../shared-hub          # a local directory (absolute path saved)
-duh remote add warehouse s3://my-bucket/game \
+duh places add origin ../shared-hub          # a folder (absolute path saved)
+duh places add warehouse s3://my-bucket/game \
     -o region=eu-west-1 -o access_key_id=AKIA… -o secret_access_key=…
-duh copy --to warehouse        # push; the first copy creates the space in an empty prefix
-duh copy --from warehouse      # pull (fast-forward only — duh doesn't merge)
-duh clone s3://my-bucket/game game -o region=eu-west-1 -o access_key_id=… -o secret_access_key=…
+duh send warehouse        # the first send creates the space in an empty prefix
+duh receive warehouse     # never merges: only takes saves that lose nothing
+duh get s3://my-bucket/game game -o region=eu-west-1 -o access_key_id=… -o secret_access_key=…
 ```
+
+In `.duh/config` that looks like:
 
 ```toml
 [remote.warehouse]
@@ -147,26 +163,26 @@ secret_access_key = "…"
 
 The URL scheme picks the backend and the options use
 [opendal's names for that service](https://docs.rs/opendal/0.52.0/opendal/services/index.html);
-`duh config set remote.NAME.config.KEY VALUE` changes one later. Included:
+`duh settings set remote.NAME.config.KEY VALUE` changes one later. Included:
 
 - **Object storage:** `s3`, `gcs`, `azblob`, `oss`, `obs`, `cos`, `b2`, `swift`, `upyun`, `supabase`, `vercel-blob`, `lakefs`
 - **File protocols:** local paths / `file://`, `ftp`, `sftp`, `webdav`, `webhdfs`, `hdfs`, `azfile`, `azdls`, `dbfs`, `alluxio`, `ipmfs`
 - **Cloud drives:** `gdrive`, `onedrive`, `dropbox`, `pcloud`, `koofr`, `yandex-disk`, `aliyun-drive`, `seafile`, `icloud`
-- **Read-only:** `http`/`https` — clone a `.duh/` directory served by any static web server
+- **Read-only:** `http`/`https` — `duh get` a `.duh/` folder served by any static web server
 - **Testing:** `memory`
 
 Databases and caches aren't offered: caches evict data and databases cap
-value sizes, neither of which a repository can survive. Copying refuses to
-drop commits (`--force` overrides when pushing), refuses to run over
-uncommitted changes, and won't move the branch a non-bare remote has
-checked out.
+value sizes, neither of which a repository can survive. `send` and `receive`
+refuse to drop anyone's saves (`send --force` overrides), `receive` refuses to
+run over unsaved changes, and `send` won't move the draft another space has
+open.
 
 Run `duh <command> --help` for every option.
 
 ### Configuration
 
-Each space's configuration lives in `.duh/config` (TOML), editable with
-`duh config get <key>` and `duh config set <key> <value>`:
+Each space's settings live in `.duh/config` (TOML), editable with
+`duh settings get <key>` and `duh settings set <key> <value>`:
 
 ```toml
 chunk_size = 4096          # target chunk size for content-defined chunking
@@ -180,8 +196,8 @@ name = "Your Name"
 email = "your.email@example.com"
 ```
 
-Patterns in a `.duhignore` file at the top of the worktree keep files out of
-`status` and `add`; lines starting with `!` re-include them.
+Patterns in a `.duhignore` file at the top of the space keep files out of
+`look` and `pick`; lines starting with `!` re-include them.
 
 ## Build & development (Nix + justfile) 🔧
 
