@@ -101,7 +101,7 @@ pub fn find_duh_dir(start_path: &str) -> Result<(PathBuf, Option<PathBuf>), Box<
 
         if p.eq(&PathBuf::from("/")) {
             return Err(Box::new(NoSpace {
-                details: String::from("not inside a duh spacesitory"),
+                details: String::from("not inside a duh space"),
             }));
         }
 
@@ -142,7 +142,7 @@ pub fn find_duh_dir(start_path: &str) -> Result<(PathBuf, Option<PathBuf>), Box<
     }
 
     Err(Box::new(NoSpace {
-        details: String::from("not inside a duh spacesitory"),
+        details: String::from("not inside a duh space"),
     }))
 }
 
@@ -154,7 +154,7 @@ pub fn find_file(start_path: &str, target: &str) -> Result<String, Box<dyn Error
 
         if p.eq(&PathBuf::from("/")) {
             return Err(Box::new(NoSpace {
-                details: String::from("not inside a duh spacesitory"),
+                details: String::from("not inside a duh space"),
             }));
         }
 

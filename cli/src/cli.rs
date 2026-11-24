@@ -19,7 +19,7 @@ pub struct Cli {
 /// Top-level subcommands for the `duh` CLI.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize a new spacesitory (create `.duh/` metadata)
+    /// Initialize a new space (create `.duh/` metadata)
     Init(InitCommand),
 
     /// Stage a file (prepare fragments for later commit)
@@ -49,7 +49,7 @@ pub enum Commands {
     /// Create delete and manage branches
     Branch(BranchCommand),
 
-    /// Get or set spacesitory configuration values
+    /// Get or set space configuration values
     Config(ConfigCommand),
 
     /// Copy commits between local and remote repositories

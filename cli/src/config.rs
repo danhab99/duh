@@ -4,7 +4,7 @@ use clap::{clap_derive::Args, Subcommand};
 use lib::space::Space;
 
 #[derive(Args)]
-#[command(about = "Get or set spacesitory configuration values")]
+#[command(about = "Get or set space configuration values")]
 pub struct ConfigCommand {
     #[command(subcommand)]
     pub action: ConfigAction,
