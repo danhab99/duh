@@ -13,6 +13,7 @@ mod config;
 mod copy;
 mod init;
 mod log;
+mod mv;
 mod reflog;
 mod remote;
 mod reset;
@@ -105,6 +106,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Rm(c) => {
             rm::rm(&mut space, c)?;
+        }
+        Commands::Mv(c) => {
+            mv::mv(&mut space, c)?;
         }
         Commands::Reflog(c) => {
             reflog::reflog(&mut space, c)?;

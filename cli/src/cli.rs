@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    copy::CopyCommand, init::InitCommand, log::LogCommand, reflog::ReflogCommand, rm::RmCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
+    copy::CopyCommand, init::InitCommand, log::LogCommand, reflog::ReflogCommand, rm::RmCommand, mv::MvCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
     stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
     unstage::UnstageCommand,
 };
@@ -28,6 +28,9 @@ pub enum Commands {
 
     /// Remove files from the working tree and the index
     Rm(RmCommand),
+
+    /// Move or rename a tracked file
+    Mv(MvCommand),
 
     /// Unstage a file (remove the file from being comitted)
     Unstage(UnstageCommand),
