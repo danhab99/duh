@@ -43,9 +43,43 @@ fn upsert_pair(pairs: &mut Vec<(String, String)>, key: &str, value: String) {
     }
 }
 
+/// Opendal fs config for a local repo given either its worktree path
+/// (containing `.duh/`) or its metadata directory.
+fn local_fs_pairs(uri: &str, abs_path: PathBuf) -> SpaceResult<(opendal::Scheme, Vec<(String, String)>)> {
+    let metadata_root = if abs_path
+        .join(crate::utils::SPACE_METADATA_DIR_NAME)
+        .is_dir()
+    {
+        abs_path.join(crate::utils::SPACE_METADATA_DIR_NAME)
+    } else {
+        abs_path
+    };
+
+    if !metadata_root.join("config").is_file() {
+        return Err(Box::new(DuhError::Generic(format!(
+            "remote path '{}' is not a valid duh repo (missing config)",
+            uri
+        ))));
+    }
+
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    upsert_pair(
+        &mut pairs,
+        "root",
+        metadata_root.to_string_lossy().to_string(),
+    );
+    Ok((opendal::Scheme::Fs, pairs))
+}
+
 fn parse_uri_to_config_pairs(uri: &str) -> SpaceResult<(opendal::Scheme, Vec<(String, String)>)> {
     // Fallback for local path remotes like `../source` that are not valid URLs.
     let parsed = match url::Url::parse(uri) {
+        Ok(u) if u.scheme() == "file" => {
+            let path = u
+                .to_file_path()
+                .map_err(|_| format!("invalid file URL '{}'", uri))?;
+            return local_fs_pairs(uri, path);
+        }
         Ok(u) => u,
         Err(url::ParseError::RelativeUrlWithoutBase) => {
             let raw_path = std::path::PathBuf::from(uri);
@@ -54,40 +88,12 @@ fn parse_uri_to_config_pairs(uri: &str) -> SpaceResult<(opendal::Scheme, Vec<(St
             } else {
                 std::env::current_dir()?.join(raw_path)
             };
-
-            // Accept either the worktree path (contains `.duh/`) or a direct metadata path.
-            let metadata_root = if abs_path
-                .join(crate::utils::SPACE_METADATA_DIR_NAME)
-                .is_dir()
-            {
-                abs_path.join(crate::utils::SPACE_METADATA_DIR_NAME)
-            } else {
-                abs_path
-            };
-
-            if !metadata_root.join("config").is_file() {
-                return Err(Box::new(DuhError::Generic(format!(
-                    "remote path '{}' is not a valid duh repo (missing config)",
-                    uri
-                ))));
-            }
-
-            let mut pairs: Vec<(String, String)> = Vec::new();
-            upsert_pair(
-                &mut pairs,
-                "root",
-                metadata_root.to_string_lossy().to_string(),
-            );
-            return Ok((opendal::Scheme::Fs, pairs));
+            return local_fs_pairs(uri, abs_path);
         }
         Err(e) => return Err(Box::new(e)),
     };
 
-    let scheme = if parsed.scheme() == "file" {
-        opendal::Scheme::Fs
-    } else {
-        opendal::Scheme::from_str(parsed.scheme())?
-    };
+    let scheme = opendal::Scheme::from_str(parsed.scheme())?;
 
     let mut pairs: Vec<(String, String)> = Vec::new();
 
@@ -116,12 +122,7 @@ fn parse_uri_to_config_pairs(uri: &str) -> SpaceResult<(opendal::Scheme, Vec<(St
 
     let root = parsed.path();
     if !root.is_empty() && root != "/" {
-        if matches!(scheme, opendal::Scheme::Fs) {
-            // file:// URI paths should be treated as filesystem roots.
-            upsert_pair(&mut pairs, "root", root.to_string());
-        } else {
-            upsert_pair(&mut pairs, "root", root.to_string());
-        }
+        upsert_pair(&mut pairs, "root", root.to_string());
     }
 
     for (k, v) in parsed.query_pairs() {
