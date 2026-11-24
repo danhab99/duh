@@ -46,9 +46,14 @@ fn stage_file(
 
     printer.finish();
 
-    let bar = display::generate_diff_bar(&frag_events);
-    println!("{}", display::format_diff_bar(&bar));
-    println!("{}", crate::colors::green(&h.to_string()));
+    match h {
+        Some(h) => {
+            let bar = display::generate_diff_bar(&frag_events);
+            println!("{}", display::format_diff_bar(&bar));
+            println!("{}", crate::colors::green(&h.to_string()));
+        }
+        None => println!("{} is unchanged", file_path),
+    }
 
     Ok(())
 }

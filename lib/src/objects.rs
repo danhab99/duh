@@ -43,6 +43,12 @@ pub struct CommitStruct {
 pub struct FileStruct {
     pub content_hash: Hash,
     pub fragments: Vec<Hash>,
+    /// Path whose version in the base commit these fragments diff against,
+    /// when it isn't this file's own path (e.g. after a rename). Omitted
+    /// from the encoding when `None`, so ordinary versions keep their
+    /// original bytes and hashes, and older objects still decode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StagedFileStruct(Vec<u8>);
@@ -165,5 +171,44 @@ impl fmt::Display for ObjectReference {
             Self::Ref(name) => write!(out, "{}", name)?,
         };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_struct_without_base_path_keeps_its_encoding() {
+        #[derive(Serialize)]
+        struct OldFileStruct {
+            content_hash: Hash,
+            fragments: Vec<Hash>,
+        }
+        let old = OldFileStruct { content_hash: Hash::new(), fragments: vec![Hash::new()] };
+        let mut old_bytes = Vec::new();
+        old.serialize(&mut Serializer::new(&mut old_bytes)).unwrap();
+
+        let new = FileStruct { content_hash: Hash::new(), fragments: vec![Hash::new()], base_path: None };
+        let mut new_bytes = Vec::new();
+        new.serialize(&mut Serializer::new(&mut new_bytes)).unwrap();
+        assert_eq!(old_bytes, new_bytes);
+
+        let decoded = FileStruct::deserialize(&mut Deserializer::new(old_bytes.as_slice())).unwrap();
+        assert_eq!(decoded.base_path, None);
+    }
+
+    #[test]
+    fn file_struct_base_path_round_trips() {
+        let f = FileStruct {
+            content_hash: Hash::new(),
+            fragments: vec![],
+            base_path: Some("old/name.bin".into()),
+        };
+        let bytes = Object::File(f).to_msgpack();
+        match Object::from_msgpack(bytes).unwrap() {
+            Object::File(f) => assert_eq!(f.base_path.as_deref(), Some("old/name.bin")),
+            _ => panic!("expected a file object"),
+        }
     }
 }

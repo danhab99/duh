@@ -17,6 +17,8 @@ pub type FileOpsResult<T> = Result<T, FileOpsError>;
 
 pub struct FileStagedSummary {
     pub path: String,
+    /// Staged for deletion (the byte counts are then zero).
+    pub removed: bool,
     pub added_bytes: usize,
     pub deleted_bytes: usize,
     pub unchanged_bytes: usize,
@@ -36,7 +38,7 @@ impl<'a> FileOps<'a> {
         file_path: String,
         event: Option<E>,
         progress: Option<P>,
-    ) -> FileOpsResult<Hash>
+    ) -> FileOpsResult<Option<Hash>>
     where
         E: FnMut(DiffFragment),
         P: FnMut(crate::dedup::DedupProgress),
@@ -49,18 +51,42 @@ impl<'a> FileOps<'a> {
 
     /// Stage `new` as the content of `repo_path`, diffed against HEAD's
     /// version of that file (or against nothing if HEAD lacks it).
+    /// Returns the staged version, or `None` when the content is identical
+    /// to HEAD's (any staged change to the path is then dropped, as in git).
     pub fn stage_reader<E, P>(
         &mut self,
         repo_path: String,
+        new: Box<dyn ReadSeek>,
+        event: Option<E>,
+        progress: Option<P>,
+    ) -> FileOpsResult<Option<Hash>>
+    where
+        E: FnMut(DiffFragment),
+        P: FnMut(crate::dedup::DedupProgress),
+    {
+        self.stage_reader_from(repo_path, None, new, event, progress)
+    }
+
+    /// Like `stage_reader`, but diff against HEAD's version of `base_path`
+    /// (e.g. a file's name before a rename) instead of `repo_path`'s own.
+    pub fn stage_reader_from<E, P>(
+        &mut self,
+        repo_path: String,
+        base_path: Option<String>,
         mut new: Box<dyn ReadSeek>,
         mut event: Option<E>,
         progress: Option<P>,
-    ) -> FileOpsResult<Hash>
+    ) -> FileOpsResult<Option<Hash>>
     where
         E: FnMut(DiffFragment),
         P: FnMut(crate::dedup::DedupProgress),
     {
         let repo_path = self.normalize_repo_path(&repo_path)?;
+        let base_path = match base_path {
+            Some(b) => Some(self.normalize_repo_path(&b)?).filter(|b| *b != repo_path),
+            None => None,
+        };
+        let diff_against = base_path.clone().unwrap_or_else(|| repo_path.clone());
 
         vlog!("space::stage_file: computing hash for entire file");
         let content_hash = Hash::digest_file_stream(&mut new)?;
@@ -73,15 +99,31 @@ impl<'a> FileOps<'a> {
             .space
             .resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
 
-        let old: Box<dyn ReadSeek> = if self.version_in_commit(head_commit_hash, &repo_path)?.is_none() {
-            vlog!("space::stage_file: '{}' not in HEAD, using empty cursor", repo_path);
+        if base_path.is_none() {
+            if let Some(head_version) = self.version_in_commit(head_commit_hash, &repo_path)? {
+                if let Some(Object::File(f)) = self.space.get_object(head_version)? {
+                    if f.content_hash == content_hash {
+                        vlog!("space::stage_file: '{}' unchanged from HEAD", repo_path);
+                        self.space.index.remove(&repo_path);
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        let in_head = self.version_in_commit(head_commit_hash, &diff_against)?.is_some();
+        if base_path.is_some() && !in_head {
+            return Err(format!("rename source '{}' is not in HEAD", diff_against).into());
+        }
+        let old: Box<dyn ReadSeek> = if !in_head {
+            vlog!("space::stage_file: '{}' not in HEAD, using empty cursor", diff_against);
             Box::new(io::Cursor::new(Vec::new()))
         } else {
             vlog!(
                 "space::stage_file: opening parent version {}",
                 head_commit_hash.to_string()
             );
-            self.open_file(repo_path.clone(), head_commit_hash)?
+            self.open_file(diff_against.clone(), head_commit_hash)?
         };
 
         new.seek(io::SeekFrom::Start(0))?;
@@ -143,6 +185,7 @@ impl<'a> FileOps<'a> {
         let version_hash = self.space.save_obj(Object::File(FileStruct {
             content_hash: content_hash,
             fragments: file_fragments,
+            base_path,
         }))?;
 
         self.space.index.insert(repo_path.clone(), version_hash);
@@ -152,7 +195,20 @@ impl<'a> FileOps<'a> {
             version_hash.to_string()
         );
 
-        Ok(version_hash)
+        Ok(Some(version_hash))
+    }
+
+    /// Stage the removal of `file_path` from the next commit. A file that
+    /// was only staged (never committed) is simply dropped from the index.
+    pub fn stage_deletion(&mut self, file_path: String) -> FileOpsResult<()> {
+        let repo_path = self.normalize_repo_path(&file_path)?;
+        let head = self.space.get_head_commit_hash()?;
+        if self.version_in_commit(head, &repo_path)?.is_some() {
+            self.space.index.insert(repo_path, Hash::new());
+        } else if self.space.index.remove(&repo_path).is_none() {
+            return Err(format!("'{}' is not tracked", repo_path).into());
+        }
+        Ok(())
     }
 
     pub fn unstage_file(&mut self, file_path: String) -> FileOpsResult<()> {
@@ -173,6 +229,8 @@ impl<'a> FileOps<'a> {
             self.space.get_commit_files(head_commit)?
         };
         files.extend(self.space.index.iter().map(|(k, v)| (k.clone(), *v)));
+        // A zero hash in the index marks a staged deletion.
+        files.retain(|_, v| !v.is_zero());
         let tree_hash = self.space.build_tree(&files)?;
 
         let commit = CommitStruct {
@@ -244,6 +302,7 @@ impl<'a> FileOps<'a> {
             }
             result.push(FileStagedSummary {
                 path: path.clone(),
+                removed: version_hash.is_zero(),
                 added_bytes: added,
                 deleted_bytes: deleted,
                 unchanged_bytes: unchanged,
@@ -302,6 +361,7 @@ impl<'a> FileOps<'a> {
                 )))
             }
         };
+        let base_path = file_version.base_path.clone();
 
         let mut fragments = Vec::with_capacity(file_version.fragments.len());
         for frag_hash in file_version.fragments {
@@ -333,12 +393,15 @@ impl<'a> FileOps<'a> {
             };
         }
 
+        // The diff base is the same path unless the version was staged
+        // against another one (a rename).
+        let base_path = base_path.unwrap_or_else(|| repo_path.clone());
         let parent_reader: Box<dyn ReadSeek> =
-            if self.version_in_commit(base_commit, &repo_path)?.is_none() {
+            if self.version_in_commit(base_commit, &base_path)?.is_none() {
                 // File was added by the introducing commit: diff against nothing.
                 Box::new(io::Cursor::new(Vec::<u8>::new()))
             } else {
-                self.open_file(repo_path.clone(), base_commit)?
+                self.open_file(base_path, base_commit)?
             };
 
         vlog!(
