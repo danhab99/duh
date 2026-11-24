@@ -5,16 +5,16 @@ use lib::objects::{Object, ObjectReference};
 use lib::space::Space;
 
 #[derive(Args)]
-#[command(about = "Show commit history starting at HEAD")]
+#[command(about = "Show your saves, newest first")]
 pub struct LogCommand {
     /// Maximum number of commits to show
-    #[arg(short = 'n', long = "max", help = "Limit the number of commits displayed")]
+    #[arg(short = 'n', long = "max", help = "Show at most this many saves")]
     pub max: Option<usize>,
 
-    #[arg(help = "commit to show")]
+    #[arg(value_name = "VERSION", help = "Start from this version instead of the last save")]
     pub commit: Option<ObjectReference>,
 
-    /// One line per commit: abbreviated hash and subject
+    /// One line per save: short hash and message
     #[arg(long = "oneline")]
     pub oneline: bool,
 }
@@ -27,7 +27,7 @@ pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
     )?;
 
     if cur.is_zero() {
-        println!("No commits yet");
+        println!("No saves yet");
         return Ok(());
     }
 
@@ -42,8 +42,8 @@ pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
                         c.message.lines().next().unwrap_or("")
                     );
                 } else {
-                    println!("commit {}", crate::colors::cyan(&cur.to_string()));
-                    println!("Author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
+                    println!("version {}", crate::colors::cyan(&cur.to_string()));
+                    println!("Saved by: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
                     println!();
                     for line in c.message.lines() {
                         println!("    {}", line);
@@ -61,7 +61,7 @@ pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
                 cur = c.parent;
             }
             _ => {
-                println!("HEAD does not point to a commit");
+                println!("{} isn't a version", cur.to_string());
                 break;
             }
         }

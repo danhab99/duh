@@ -8,7 +8,7 @@ use lib::{
 };
 
 #[derive(Args)]
-#[command(about = "Show status of tracked files (compare working copy -> index / HEAD)")]
+#[command(about = "See what's changed, picked and new")]
 pub struct StatusCommand {}
 
 /// What a staged index entry will do to a file in the next commit.
@@ -67,7 +67,7 @@ fn content_hash(space: &mut Space, version: Hash) -> Result<Option<Hash>, Box<dy
 
 pub fn collect(space: &mut Space) -> Result<StatusReport, Box<dyn Error>> {
     if space.worktree.is_none() {
-        return Err("status needs a working tree (this space is bare)".into());
+        return Err("this space has no working files (it's bare)".into());
     }
 
     // Expected content for each tracked file: the staged version if any,
@@ -132,10 +132,10 @@ pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<(), Box<dyn Err
 
     let head_ref_name = match space.get_ref("HEAD".into())? {
         ObjectReference::Ref(name) => name,
-        ObjectReference::Hash(hash) => format!("(detached at {})", hash.to_string()),
+        ObjectReference::Hash(hash) => format!("none (looking at version {})", &hash.to_string()[..12]),
         ObjectReference::AbbrevHash(s) => s,
     };
-    println!("On branch {}", crate::colors::green(head_ref_name.as_str()));
+    println!("On draft {}", crate::colors::green(head_ref_name.as_str()));
 
     let staged: Vec<String> = report
         .staged
@@ -153,11 +153,11 @@ pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<(), Box<dyn Err
         paths.iter().map(|p| space.display_path(&cwd, p)).collect()
     };
     let sections: [(&str, Vec<String>, fn(&str) -> String); 5] = [
-        ("Staged for commit:", staged, crate::colors::green),
-        ("Modified (not staged):", rel(&report.modified), crate::colors::yellow),
-        ("Deleted / missing:", rel(&report.missing), crate::colors::red),
-        ("Untracked:", rel(&report.untracked), crate::colors::red),
-        ("Up to date:", rel(&report.clean), crate::colors::dim),
+        ("Picked for the next save:", staged, crate::colors::green),
+        ("Changed, not picked:", rel(&report.modified), crate::colors::yellow),
+        ("Missing:", rel(&report.missing), crate::colors::red),
+        ("New, not tracked yet:", rel(&report.untracked), crate::colors::red),
+        ("Saved, unchanged:", rel(&report.clean), crate::colors::dim),
     ];
     let mut any = false;
     for (title, paths, color) in sections {
@@ -176,7 +176,7 @@ pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<(), Box<dyn Err
         println!();
         println!(
             "{}",
-            crate::colors::dim("Nothing here yet. Use `duh add <file>` to start tracking files.")
+            crate::colors::dim("Nothing here yet. Use `duh pick <file>` to start tracking files.")
         );
     }
 

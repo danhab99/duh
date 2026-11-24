@@ -4,9 +4,9 @@ use clap::clap_derive::Args;
 use lib::space::Space;
 
 #[derive(Args)]
-#[command(about = "Initialize a new space")]
+#[command(about = "Start a new space in this folder")]
 pub struct InitCommand {
-    #[arg(long = "bare", help = "Initialize a bare space (no working tree)")]
+    #[arg(long = "bare", help = "Only history, no working files (for sharing)")]
     pub bare: bool,
 }
 
@@ -17,9 +17,9 @@ pub fn init(cmd: &InitCommand) -> Result<(), Box<dyn Error>> {
     let _ = Space::init(lib::store::local(&duh_dir)?, worktree)?;
 
     if cmd.bare {
-        println!("{}", crate::colors::green("Initialized new bare DUH directory"));
+        println!("{}", crate::colors::green("Started a bare space here (history only, for sharing)"));
     } else {
-        println!("{}", crate::colors::green("Initialized new DUH directory"));
+        println!("{}", crate::colors::green("Started a new space here. `duh pick <file>` to begin tracking files."));
     }
     Ok(())
 }

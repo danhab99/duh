@@ -4,11 +4,11 @@ use clap::clap_derive::Args;
 use lib::objects::{Object, ObjectReference};
 use lib::space::Space;
 
-/// Show the commit currently referenced by HEAD
+/// Inspect a version
 #[derive(Args)]
-#[command(about = "Display the HEAD commit (hash, author, message, files)")]
+#[command(about = "Inspect one version: who saved it, when, and its files")]
 pub struct ShowCommand {
-    #[arg(help = "commit to show")]
+    #[arg(value_name = "VERSION", help = "Version to inspect: a label, short hash, HEAD~1, … (default: the last save)")]
     pub commit: Option<ObjectReference>,
 }
 
@@ -20,23 +20,19 @@ pub fn show(space: &mut Space, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> 
     )?;
 
     if head.is_zero() {
-        println!("No commits yet");
+        println!("No saves yet");
         return Ok(());
     }
 
     match space.get_object(head)? {
         Some(Object::Commit(c)) => {
-            println!("{}", crate::colors::cyan(&head.to_string()));
+            println!("version {}", crate::colors::cyan(&head.to_string()));
             if !c.parent.is_zero() {
-                println!("parent: {}", crate::colors::dim(&c.parent.to_string()));
+                println!("previous: {}", crate::colors::dim(&c.parent.to_string()));
             }
             println!(
-                "author: {} <{}> {}",
+                "saved by: {} <{}> {}",
                 c.author.name, c.author.email, c.author.timestamp
-            );
-            println!(
-                "committer: {} <{}> {}",
-                c.comitter.name, c.comitter.email, c.comitter.timestamp
             );
             println!("\n    {}\n", c.message);
             println!("{}", crate::colors::bold("files:"));
@@ -49,7 +45,7 @@ pub fn show(space: &mut Space, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> 
                 );
             }
         }
-        _ => println!("HEAD does not point to a commit"),
+        _ => return Err(format!("{} isn't a version", head.to_string()).into()),
     }
 
     Ok(())

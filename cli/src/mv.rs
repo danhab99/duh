@@ -28,7 +28,7 @@ pub fn mv(space: &mut Space, cmd: &MvCommand) -> Result<(), Box<dyn Error>> {
     }
     let src_full = space.get_path_in_worktree(&src)?;
     if !src_full.is_file() {
-        return Err(format!("'{}' is missing from the working tree", cmd.source).into());
+        return Err(format!("'{}' is missing from your files", cmd.source).into());
     }
 
     // Moving into an existing directory keeps the file name.

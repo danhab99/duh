@@ -10,20 +10,20 @@ use lib::{dedup::DedupProgress, diff::DiffFragment, space::Space};
 use crate::status;
 
 #[derive(Args)]
-#[command(about = "Add file contents to the index (stage them for the next commit)")]
+#[command(about = "Pick files to go into the next save")]
 pub struct StageCommand {
-    /// Files, directories or glob patterns, relative to the current directory
+    /// Files, folders or patterns like *.psd, relative to where you are
     #[arg(
         required_unless_present_any = ["all", "update"],
-        help = "Files, directories or glob patterns to stage (relative to the current directory)"
+        help = "Files, folders or patterns like *.psd (relative to where you are)"
     )]
     pub file_paths: Vec<String>,
 
-    /// Stage every change in the worktree: new, modified and deleted files
+    /// Pick every change: new, changed and deleted files
     #[arg(short = 'A', long = "all", conflicts_with = "update")]
     pub all: bool,
 
-    /// Stage modified and deleted tracked files only (no new files)
+    /// Pick changed and deleted tracked files only (no new files)
     #[arg(short = 'u', long = "update")]
     pub update: bool,
 }
@@ -38,7 +38,7 @@ pub fn stage_repo_path(space: &mut Space, repo_path: &str) -> Result<(), Box<dyn
     let mut printer = ProgressPrinter::new(bytes_per_col);
     let mut frag_events: Vec<(u64, char, &'static str)> = Vec::new();
 
-    println!("-- Staging file {}", repo_path);
+    println!("-- Picking {}", repo_path);
     let staged = FileOps::from_space(space).stage_file(
         repo_path.to_string(),
         Some(|fragment: DiffFragment| {
@@ -54,14 +54,14 @@ pub fn stage_repo_path(space: &mut Space, repo_path: &str) -> Result<(), Box<dyn
             println!("{}", display::format_diff_bar(&bar));
             println!("{}", crate::colors::green(&h.to_string()));
         }
-        None => println!("{}", crate::colors::dim(&format!("{} is unchanged", repo_path))),
+        None => println!("{}", crate::colors::dim(&format!("{} hasn't changed since the last save", repo_path))),
     }
     Ok(())
 }
 
 fn stage_deletion(space: &mut Space, repo_path: &str) -> Result<(), Box<dyn Error>> {
     FileOps::from_space(space).stage_deletion(repo_path.to_string())?;
-    println!("-- Staging deletion of {}", repo_path);
+    println!("-- Picking the deletion of {}", repo_path);
     Ok(())
 }
 
@@ -98,15 +98,17 @@ pub fn stage(space: &mut Space, cmd: &StageCommand) -> Result<(), Box<dyn Error>
 
     if cmd.file_paths.is_empty() {
         if stage_tree(space, &report, "", cmd.update)? == 0 {
-            println!("{}", crate::colors::dim("Nothing to stage"));
+            println!("{}", crate::colors::dim("Nothing to pick"));
         }
         return Ok(());
     }
 
     let tracked = report.tracked();
     for pattern in &cmd.file_paths {
-        println!("{} {}", crate::colors::cyan("Staging"), pattern);
         let path = Path::new(pattern);
+        if !path.is_file() {
+            println!("{} {}", crate::colors::cyan("Picking"), pattern);
+        }
 
         if path.is_file() {
             let repo_path = space.repo_path_from(&cwd, pattern)?;
@@ -122,7 +124,7 @@ pub fn stage(space: &mut Space, cmd: &StageCommand) -> Result<(), Box<dyn Error>
                 space.repo_path_from(&cwd, pattern)?
             };
             if stage_tree(space, &report, &prefix, cmd.update)? == 0 {
-                println!("{}", crate::colors::dim("Nothing to stage"));
+                println!("{}", crate::colors::dim("Nothing to pick"));
             }
             continue;
         }
@@ -152,7 +154,7 @@ pub fn stage(space: &mut Space, cmd: &StageCommand) -> Result<(), Box<dyn Error>
             matched += 1;
         }
         if matched == 0 {
-            return Err(format!("pathspec '{}' did not match any files", pattern).into());
+            return Err(format!("no files match '{}'", pattern).into());
         }
     }
 

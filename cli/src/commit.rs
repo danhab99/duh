@@ -4,34 +4,33 @@ use clap::clap_derive::Args;
 use lib::{file::FileOps, space::Space};
 
 #[derive(Args)]
-#[command(about = "Record the staged changes as a new commit")]
+#[command(about = "Save a new version of your picked files")]
 pub struct CommitCommand {
-    /// Optional path to the file to snapshot and include in the commit. If
-    /// omitted the command will commit the current index (all staged files).
-    #[arg(help = "Optional path to a file to stage and commit")]
+    /// A file to pick and save in one go (otherwise saves what you picked)
+    #[arg(help = "A file to pick and save in one go")]
     pub file_path: Option<String>,
 
     /// Commit message
     #[arg(
         short = 'm',
         long = "message",
-        help = "Message to store with the new commit"
+        help = "What changed, in a sentence"
     )]
     pub message: Option<String>,
 
-    /// Auto-generate a commit message from the staged diff
+    /// Write the message for me from what changed
     #[arg(
         short = 'g',
         long = "generate",
-        help = "Generate a commit message from staged changes instead of prompting"
+        help = "Write the message for me from what changed"
     )]
     pub generate: bool,
 
-    /// Stage modified and deleted tracked files before committing
+    /// Pick every changed or deleted tracked file first
     #[arg(short = 'a', long = "all")]
     pub all: bool,
 
-    /// Allow a commit that changes nothing
+    /// Save even if nothing changed
     #[arg(long = "allow-empty")]
     pub allow_empty: bool,
 }
@@ -51,12 +50,12 @@ pub fn commit(
         }
         for p in &report.missing {
             FileOps::from_space(space).stage_deletion(p.clone())?;
-            println!("-- Staging deletion of {}", p);
+            println!("-- Picking the deletion of {}", p);
         }
     }
 
     if space.index.is_empty() && !cmd.allow_empty {
-        return Err("nothing to commit (use `duh add` to stage changes, or --allow-empty)".into());
+        return Err("nothing to save: pick some changes first (`duh pick <file>`), or use --allow-empty".into());
     }
 
     let message = match cmd.message.clone() {
@@ -79,7 +78,7 @@ pub fn commit(
     };
     let branch = space
         .get_head_branch_name()
-        .unwrap_or_else(|_| "detached HEAD".to_string());
+        .unwrap_or_else(|_| "no draft".to_string());
     println!(
         "[{} {}] {}",
         crate::colors::green(&branch),
@@ -93,7 +92,7 @@ fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
     let fileops = FileOps::from_space(space);
     let summaries = fileops.staged_summary()?;
     if summaries.is_empty() {
-        return Ok("Empty commit".to_string());
+        return Ok("Nothing changed".to_string());
     }
 
     let cwd = std::env::current_dir()?;

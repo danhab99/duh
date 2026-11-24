@@ -4,7 +4,7 @@ use clap::{clap_derive::Args, Subcommand};
 use lib::space::Space;
 
 #[derive(Args)]
-#[command(about = "Manage remote repository connections")]
+#[command(about = "Manage places your space is shared to (folders, S3, Drive, …)")]
 pub struct RemoteCommand {
     #[command(subcommand)]
     pub action: RemoteAction,
@@ -12,48 +12,48 @@ pub struct RemoteCommand {
 
 #[derive(Subcommand)]
 pub enum RemoteAction {
-    /// List configured remotes
+    /// List places
     #[command(name = "list", visible_alias = "ls")]
     List {
         /// Show URLs alongside names
         #[arg(short = 'v', long = "verbose")]
         verbose: bool,
     },
-    /// Add a new remote: a path, file:// URL, or any opendal backend URL
+    /// Add a place: a folder, file:// URL, or storage URL
     /// (s3://bucket/path, gcs://bucket/path, webdav://host/path, …)
     Add {
-        /// Remote name
+        /// Name for the place, e.g. origin or studio-drive
         name: String,
-        /// Remote URL
+        /// Where it is
         url: String,
-        /// Backend option or credential, stored in plain text in the config
+        /// Storage option or credential, stored in plain text in the settings
         /// (e.g. -o region=eu-west-1 -o access_key_id=… -o secret_access_key=…)
         #[arg(short = 'o', long = "option", value_name = "KEY=VALUE")]
         options: Vec<String>,
     },
-    /// Remove a remote
+    /// Remove a place (nothing stored there is deleted)
     #[command(name = "remove", visible_alias = "rm")]
     Remove {
-        /// Remote name to remove
+        /// Place to remove
         name: String,
     },
-    /// Rename a remote
+    /// Rename a place
     Rename {
-        /// Old remote name
+        /// Current name
         old_name: String,
-        /// New remote name
+        /// New name
         new_name: String,
     },
-    /// Get the URL for a remote
+    /// Show where a place is
     #[command(name = "get-url")]
     GetUrl {
-        /// Remote name
+        /// Place name
         name: String,
     },
-    /// Set the URL for a remote
+    /// Change where a place is
     #[command(name = "set-url")]
     SetUrl {
-        /// Remote name
+        /// Place name
         name: String,
         /// New URL
         url: String,
@@ -68,19 +68,19 @@ pub fn remote(
         RemoteAction::List { verbose } => {
             let remotes = space.list_remotes()?;
             if remotes.is_empty() {
-                println!("No remotes configured.");
+                println!("No places yet (`duh places add <name> <url>`).");
                 return Ok(());
             }
 
             if *verbose {
                 for (name, url) in remotes {
                     println!(
-                        "{}\t{} (fetch)",
+                        "{}\t{} (receive)",
                         crate::colors::cyan(&name),
                         url
                     );
                     println!(
-                        "{}\t{} (push)",
+                        "{}\t{} (send)",
                         crate::colors::cyan(&name),
                         url
                     );
@@ -98,7 +98,7 @@ pub fn remote(
                 .collect::<Result<Vec<_>, _>>()?;
             space.add_remote_with_options(name, url, &options)?;
             println!(
-                "{} remote '{}' -> {}",
+                "{} place '{}' -> {}",
                 crate::colors::green("added"),
                 crate::colors::cyan(name),
                 url
@@ -107,7 +107,7 @@ pub fn remote(
         RemoteAction::Remove { name } => {
             space.remove_remote(name)?;
             println!(
-                "{} remote '{}'",
+                "{} place '{}'",
                 crate::colors::green("removed"),
                 crate::colors::cyan(name)
             );
@@ -115,7 +115,7 @@ pub fn remote(
         RemoteAction::Rename { old_name, new_name } => {
             space.rename_remote(old_name, new_name)?;
             println!(
-                "{} remote '{}' -> '{}'",
+                "{} place '{}' -> '{}'",
                 crate::colors::green("renamed"),
                 crate::colors::cyan(old_name),
                 crate::colors::cyan(new_name)
@@ -129,7 +129,7 @@ pub fn remote(
             lib::store::validate_url(url)?;
             space.set_remote_url(name, &lib::store::normalize_url(url)?)?;
             println!(
-                "{} remote '{}' -> {}",
+                "{} place '{}' -> {}",
                 crate::colors::green("set url"),
                 crate::colors::cyan(name),
                 url
