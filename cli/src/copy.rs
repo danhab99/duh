@@ -275,3 +275,31 @@ fn copy_to(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::default_clone_dir;
+
+    #[test]
+    fn clone_dir_from_url() {
+        for (url, want) in [
+            ("/srv/repos/proj", "proj"),
+            ("/srv/repos/proj/", "proj"),
+            ("/srv/repos/proj/.duh", "proj"),
+            ("/srv/repos/proj/.duh/", "proj"),
+            ("file:///srv/repos/proj", "proj"),
+            ("../proj", "proj"),
+            ("s3://bucket/proj.duh", "proj"),
+            ("proj", "proj"),
+        ] {
+            assert_eq!(default_clone_dir(url).unwrap(), want, "url {}", url);
+        }
+    }
+
+    #[test]
+    fn clone_dir_needs_a_name() {
+        for url in ["/", ".duh", "./", "..", "file:///"] {
+            assert!(default_clone_dir(url).is_err(), "url {}", url);
+        }
+    }
+}
