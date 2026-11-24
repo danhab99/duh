@@ -897,7 +897,7 @@ impl Space {
             .create(true)
             .open(self.get_path_in_space(&format!("reflog/{}", r)))?;
 
-        file.write_all(format!("{} | {}", hash.to_string(), message).as_bytes())?;
+        writeln!(file, "{} | {}", hash.to_string(), message)?;
 
         Ok(())
     }
