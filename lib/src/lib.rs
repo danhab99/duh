@@ -9,3 +9,4 @@ pub mod dedup;
 pub mod remote;
 pub mod file;
 pub mod display;
+pub mod store;
