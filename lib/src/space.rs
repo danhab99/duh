@@ -634,9 +634,53 @@ impl Space {
                 return Ok(resolved);
             }
             ObjectReference::AbbrevHash(a) => {
-                let r = self.get_ref(a.clone())?;
-                return self.resolve_ref_name(r);
+                // A hex-looking name may still be a branch or tag.
+                if let Ok(h) = self.resolve_ref_name(ObjectReference::Ref(a.clone())) {
+                    return Ok(h);
+                }
+                self.resolve_commit_prefix(&a)
             }
+        }
+    }
+
+    /// The unique commit whose hash starts with `prefix` (at least 4 hex
+    /// digits). Errors if none or several match.
+    pub fn resolve_commit_prefix(&self, prefix: &str) -> SpaceResult<Hash> {
+        let prefix = prefix.to_lowercase();
+        if prefix.len() < 4 || prefix.len() > 64 || !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("'{}' is not a valid abbreviated hash", prefix).into());
+        }
+
+        // Objects live at objects/<3>/<3>/<3>/<rest>; walk only the
+        // directories that can match the prefix.
+        let segments = [(0usize, 3usize), (3, 6), (6, 9), (9, 64)];
+        let mut dirs = vec![(self.metadata_root.join("objects"), String::new())];
+        for (start, end) in segments {
+            let want = prefix.get(start..end.min(prefix.len())).unwrap_or("");
+            let mut next = Vec::new();
+            for (dir, so_far) in dirs {
+                let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.len() == end - start && name.starts_with(want) {
+                        next.push((entry.path(), format!("{}{}", so_far, name)));
+                    }
+                }
+            }
+            dirs = next;
+        }
+
+        let mut matches = Vec::new();
+        for (_, hex) in dirs {
+            let h = Hash::from_string(hex)?;
+            if let Some(Object::Commit(_)) = self.get_object(h)? {
+                matches.push(h);
+            }
+        }
+        match matches.as_slice() {
+            [h] => Ok(*h),
+            [] => Err(format!("no commit or ref matches '{}'", prefix).into()),
+            _ => Err(format!("'{}' is ambiguous ({} commits match)", prefix, matches.len()).into()),
         }
     }
 

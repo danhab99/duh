@@ -592,6 +592,13 @@ mod tests {
         }
 
         assert!(read_at(&mut space, "sub/b.bin", history[0].0).is_none());
+
+        // Abbreviated hashes resolve to the unique matching commit.
+        for (hash, _) in &history {
+            let short = ObjectReference::from(hash.to_string()[..10].to_string());
+            assert_eq!(space.resolve_ref_name(short).unwrap(), *hash);
+        }
+        assert!(space.resolve_commit_prefix("zzzz").is_err());
     }
 
     fn read_all(mut r: Box<dyn ReadSeek>) -> Vec<u8> {
