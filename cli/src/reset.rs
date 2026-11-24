@@ -7,7 +7,7 @@ use lib::space::Space;
 
 use crate::checkout::checkout_tree;
 
-#[derive(clap::ValueEnum, Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ResetMode {
     /// Move the branch only; the old commits' changes become staged.
     Soft,
@@ -19,14 +19,35 @@ pub enum ResetMode {
 
 #[derive(Args)]
 #[command(about = "Reset the current branch to a specified commit")]
+#[command(group(clap::ArgGroup::new("mode").args(["soft", "mixed", "hard"])))]
 pub struct ResetCommand {
-    /// Reset mode
-    #[arg(short = 'm', long = "mode", default_value = "mixed")]
-    pub mode: ResetMode,
+    /// Keep the index and working tree; the undone changes become staged
+    #[arg(long)]
+    pub soft: bool,
+
+    /// Clear the index, keep the working tree (default)
+    #[arg(long)]
+    pub mixed: bool,
+
+    /// Discard the index and make the working tree match the commit
+    #[arg(long)]
+    pub hard: bool,
 
     /// Commit to reset to. Defaults to HEAD.
     #[arg(help = "Commit hash or ref to reset to (defaults to HEAD)")]
     pub commit: Option<ObjectReference>,
+}
+
+impl ResetCommand {
+    fn mode(&self) -> ResetMode {
+        if self.soft {
+            ResetMode::Soft
+        } else if self.hard {
+            ResetMode::Hard
+        } else {
+            ResetMode::Mixed
+        }
+    }
 }
 
 pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>> {
@@ -39,7 +60,7 @@ pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>
         return Err(format!("{} is not a commit", target.to_string()).into());
     }
 
-    if matches!(cmd.mode, ResetMode::Soft) && !space.index.is_empty() {
+    if matches!(cmd.mode(), ResetMode::Soft) && !space.index.is_empty() {
         // Staged versions are diffs against the old HEAD; they can't be
         // carried onto a different parent.
         return Err("soft reset needs an empty index; commit or unstage first".into());
@@ -54,7 +75,7 @@ pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>
         _ => space.set_ref("HEAD", ObjectReference::Hash(target), Some(&msg))?,
     }
 
-    match cmd.mode {
+    match cmd.mode() {
         ResetMode::Soft => stage_differences(space, old_head, target)?,
         ResetMode::Mixed => space.index.clear(),
         ResetMode::Hard => {
@@ -67,13 +88,14 @@ pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>
         "{} to {} ({:?})",
         crate::colors::green("Reset"),
         crate::colors::cyan(&target.to_string()),
-        cmd.mode
+        cmd.mode()
     );
     Ok(())
 }
 
-/// After HEAD moved from `old_head` to `target`, stage every file whose
-/// `old_head` version differs, so committing reproduces `old_head`'s tree.
+/// After HEAD moved from `old_head` to `target`, stage every difference
+/// (changed, added and removed files) so committing reproduces `old_head`'s
+/// tree.
 fn stage_differences(
     space: &mut Space,
     old_head: lib::hash::Hash,
@@ -84,14 +106,6 @@ fn stage_differences(
     }
     let old_files = space.get_commit_files(old_head)?;
     let new_files = space.get_commit_files(target)?;
-
-    if let Some(path) = new_files.keys().find(|p| !old_files.contains_key(*p)) {
-        return Err(format!(
-            "soft reset would need to stage the deletion of '{}', which duh can't do yet",
-            path
-        )
-        .into());
-    }
 
     let mut paths: Vec<&String> = old_files
         .iter()
@@ -104,6 +118,10 @@ fn stage_differences(
     for path in paths {
         let content = fileops.open_file(path.clone(), old_head)?;
         fileops.stage_reader(path.clone(), content, None::<fn(_)>, None::<fn(_)>)?;
+    }
+    // Files the target has but the old HEAD didn't: stage their removal.
+    for path in new_files.keys().filter(|p| !old_files.contains_key(*p)) {
+        fileops.stage_deletion(path.clone())?;
     }
     Ok(())
 }
