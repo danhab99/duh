@@ -57,8 +57,8 @@ impl<'a> FileOps<'a> {
             .space
             .resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
 
-        let old: Box<dyn ReadSeek> = if head_commit_hash.is_zero() {
-            vlog!("space::stage_file: no parent hash, using empty cursor");
+        let old: Box<dyn ReadSeek> = if self.version_in_commit(head_commit_hash, &repo_path)?.is_none() {
+            vlog!("space::stage_file: '{}' not in HEAD, using empty cursor", repo_path);
             Box::new(io::Cursor::new(Vec::new()))
         } else {
             vlog!(
@@ -293,7 +293,11 @@ impl<'a> FileOps<'a> {
             }
         }
 
-        let parent_reader: Box<dyn ReadSeek> = if commit.parent.is_zero() {
+        let parent_reader: Box<dyn ReadSeek> = if self
+            .version_in_commit(commit.parent, &repo_path)?
+            .is_none()
+        {
+            // File was added in this commit: its fragments diff against nothing.
             Box::new(io::Cursor::new(Vec::<u8>::new()))
         } else {
             self.open_file(repo_path.clone(), commit.parent)?
@@ -308,6 +312,14 @@ impl<'a> FileOps<'a> {
         let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
 
         Ok(Box::new(replay))
+    }
+
+    /// The file version recorded for `repo_path` in `commit`, if any.
+    fn version_in_commit(&self, commit: Hash, repo_path: &str) -> FileOpsResult<Option<Hash>> {
+        if commit.is_zero() {
+            return Ok(None);
+        }
+        Ok(self.space.get_commit_files(commit)?.get(repo_path).copied())
     }
 
     fn normalize_repo_path(&self, input: &str) -> FileOpsResult<String> {
