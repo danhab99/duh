@@ -13,6 +13,10 @@ pub struct LogCommand {
 
     #[arg(help = "commit to show")]
     pub commit: Option<ObjectReference>,
+
+    /// One line per commit: abbreviated hash and subject
+    #[arg(long = "oneline")]
+    pub oneline: bool,
 }
 
 pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
@@ -31,13 +35,21 @@ pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
     while !cur.is_zero() {
         match space.get_object(cur)? {
             Some(Object::Commit(c)) => {
-                println!("commit {}", crate::colors::cyan(&cur.to_string()));
-                println!("Author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
-                // show only first line of message as summary
-                if let Some(summary) = c.message.lines().next() {
-                    println!("    {}", summary);
+                if cmd.oneline {
+                    println!(
+                        "{} {}",
+                        crate::colors::cyan(&cur.to_string()[..12]),
+                        c.message.lines().next().unwrap_or("")
+                    );
+                } else {
+                    println!("commit {}", crate::colors::cyan(&cur.to_string()));
+                    println!("Author: {} <{}> {}", c.author.name, c.author.email, c.author.timestamp);
+                    println!();
+                    for line in c.message.lines() {
+                        println!("    {}", line);
+                    }
+                    println!();
                 }
-                println!();
 
                 shown += 1;
                 if let Some(max) = cmd.max {
