@@ -101,6 +101,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Log(c) => {
             log::log(&mut space, c)?;
         }
+        Commands::Reflog(c) => {
+            reflog::reflog(&mut space, c)?;
+        }
         Commands::Status(c) => {
             status::status(&mut space, c)?;
         }

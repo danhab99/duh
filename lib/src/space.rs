@@ -2,7 +2,6 @@ use crate::{
     error::DuhError,
     hash::Hash,
     objects::{CommitStruct, Object, ObjectReference, Person, TreeEntry, TreeStruct},
-    utils::{self},
     vlog,
 };
 use std::{

@@ -6,25 +6,24 @@ use lib::space::Space;
 
 /// Show the commit currently referenced by HEAD
 #[derive(Args)]
-#[command(about = "")]
+#[command(about = "Show the history of updates to a branch")]
 pub struct ReflogCommand {
     #[arg(
         short,
         long = "branch",
-        help = "the branche's reflog to read"
+        help = "Branch whose reflog to read (defaults to the current branch)"
     )]
     pub branch: Option<String>,
 }
 
 pub fn reflog(space: &mut Space, cmd: &ReflogCommand) -> Result<(), Box<dyn Error>> {
-    let branch_name = cmd.branch.clone().unwrap_or_else(|| {
-        let head = space.get_ref("HEAD".to_string()).unwrap();
-
-        match head {
+    let branch_name = match cmd.branch.clone() {
+        Some(b) => b,
+        None => match space.get_ref("HEAD".to_string())? {
             ObjectReference::Ref(r) => r,
-            _ => panic!("on a detached head"),
-        }
-    });
+            _ => return Err("HEAD is detached; pass --branch".into()),
+        },
+    };
 
     let reflog = space.get_reflog(&branch_name)?;
     print!("{}", reflog);

@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    copy::CopyCommand, init::InitCommand, log::LogCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
+    copy::CopyCommand, init::InitCommand, log::LogCommand, reflog::ReflogCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
     stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
     unstage::UnstageCommand,
 };
@@ -39,6 +39,9 @@ pub enum Commands {
 
     /// Show the commit log (history) starting at HEAD
     Log(LogCommand),
+
+    /// Show the history of updates to a branch
+    Reflog(ReflogCommand),
 
     /// Show which tracked files have changed compared to the index
     Status(StatusCommand),
