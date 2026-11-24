@@ -22,6 +22,7 @@ mod status;
 mod switch;
 mod tag;
 mod unstage;
+mod worktree;
 
 fn main() {
     if let Err(e) = run() {
