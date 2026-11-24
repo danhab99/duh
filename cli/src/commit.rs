@@ -4,7 +4,7 @@ use clap::clap_derive::Args;
 use lib::{file::FileOps, space::Space};
 
 #[derive(Args)]
-#[command(about = "Stage the given file and create a commit with the provided message")]
+#[command(about = "Record the staged changes as a new commit")]
 pub struct CommitCommand {
     /// Optional path to the file to snapshot and include in the commit. If
     /// omitted the command will commit the current index (all staged files).
@@ -26,27 +26,39 @@ pub struct CommitCommand {
         help = "Generate a commit message from staged changes instead of prompting"
     )]
     pub generate: bool,
+
+    /// Stage modified and deleted tracked files before committing
+    #[arg(short = 'a', long = "all")]
+    pub all: bool,
+
+    /// Allow a commit that changes nothing
+    #[arg(long = "allow-empty")]
+    pub allow_empty: bool,
 }
 
 pub fn commit(
     space: &mut Space,
     cmd: &CommitCommand,
 ) -> Result<(), Box<dyn Error>> {
-    {
-        if let Some(fp) = &cmd.file_path {
-            println!("{} {}", crate::colors::cyan("Staging file"), fp);
-            let repo_path = space.repo_path_from(&std::env::current_dir()?, fp)?;
-            let mut fileops = FileOps::from_space(space);
-            fileops.stage_file(repo_path, None::<fn(_)>, None::<fn(_)>)?;
-        } else {
-            println!(
-                "{}",
-                crate::colors::dim("No file provided — committing staged files in index")
-            );
+    if let Some(fp) = &cmd.file_path {
+        let repo_path = space.repo_path_from(&std::env::current_dir()?, fp)?;
+        crate::stage::stage_repo_path(space, &repo_path)?;
+    }
+    if cmd.all {
+        let report = crate::status::collect(space)?;
+        for p in &report.modified {
+            crate::stage::stage_repo_path(space, p)?;
+        }
+        for p in &report.missing {
+            FileOps::from_space(space).stage_deletion(p.clone())?;
+            println!("-- Staging deletion of {}", p);
         }
     }
 
-    println!("{}", crate::colors::cyan("Committing"));
+    if space.index.is_empty() && !cmd.allow_empty {
+        return Err("nothing to commit (use `duh add` to stage changes, or --allow-empty)".into());
+    }
+
     let message = match cmd.message.clone() {
         Some(ref x) if !x.is_empty() => x.clone(),
         _ if cmd.generate || std::env::var("EDITOR").is_err() => {
@@ -63,12 +75,16 @@ pub fn commit(
 
     let h = {
         let mut fileops = FileOps::from_space(space);
-        fileops.commit(message)?
+        fileops.commit(message.clone())?
     };
+    let branch = space
+        .get_head_branch_name()
+        .unwrap_or_else(|_| "detached HEAD".to_string());
     println!(
-        "{} {} — index cleared. Run `duh status` to inspect.",
-        crate::colors::green(&h.to_string()),
-        crate::colors::bold("Committed")
+        "[{} {}] {}",
+        crate::colors::green(&branch),
+        crate::colors::cyan(&h.to_string()[..12]),
+        message.lines().next().unwrap_or("")
     );
     Ok(())
 }
@@ -92,6 +108,10 @@ fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
 
     for s in &sorted {
         let display = space.display_path(&cwd, &s.path);
+        if s.removed {
+            lines.push(format!("  {}  (deleted)", display));
+            continue;
+        }
         let is_new = s.unchanged_bytes == 0 && s.deleted_bytes == 0;
         if is_new {
             lines.push(format!(
