@@ -5,7 +5,7 @@ use clap::clap_derive::Args;
 use lib::{hash::Hash, objects::ObjectReference, space::Space};
 use opendal::services::Fs;
 
-use crate::checkout::checkout;
+use crate::checkout::restore;
 
 #[derive(Args)]
 #[command(about = "Copy commits between local and remote repositories, or clone a remote")]
@@ -112,14 +112,7 @@ pub fn clone(
         let files = space.list_files(ObjectReference::Hash(remote_hash))?;
 
         for file_path in files {
-            checkout(
-                &mut space,
-                &crate::checkout::CheckoutCommand {
-                    file_path,
-                    commit: Some(ObjectReference::Hash(remote_hash)),
-                    as_name: None,
-                },
-            )?;
+            restore(&mut space, &file_path, remote_hash, None)?;
         }
     }
 
@@ -206,14 +199,7 @@ fn copy_from(
         let files = space.list_files(ObjectReference::Hash(remote_hash))?;
 
         for file_path in files {
-            checkout(
-                space,
-                &crate::checkout::CheckoutCommand {
-                    file_path,
-                    commit: Some(ObjectReference::Hash(remote_hash)),
-                    as_name: None,
-                },
-            )?;
+            restore(space, &file_path, remote_hash, None)?;
         }
     }
 

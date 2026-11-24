@@ -1,6 +1,8 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
+use std::path::Path;
+
 use globwalk::GlobWalkerBuilder;
 use lib::display::{self, ProgressPrinter};
 use lib::file::FileOps;
@@ -17,10 +19,15 @@ pub struct StageCommand {
     pub file_paths: Vec<String>,
 }
 
+/// Stage `file_path` (absolute, or relative to `cwd`).
 fn stage_file(
     file_path: &str,
     space: &mut Space,
+    cwd: &Path,
 ) -> Result<(), Box<dyn Error>> {
+    let repo_path = space.repo_path_from(cwd, file_path)?;
+    println!("-- Staging file {}", repo_path);
+
     let file_size = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
     let bytes_per_col = (file_size / display::MAX_COLS).max(1);
 
@@ -30,7 +37,7 @@ fn stage_file(
     let mut fileops = FileOps::from_space(space);
 
     let h = fileops.stage_file(
-        file_path.to_string(),
+        repo_path,
         Some(|fragment: DiffFragment| {
             frag_events.push(display::fragment_to_entry(fragment));
         }),
@@ -50,9 +57,11 @@ pub fn stage(
     space: &mut Space,
     cmd: &StageCommand,
 ) -> Result<(), Box<dyn Error>> {
-    // Load .duhignore from the space root if it exists. Each non-blank,
+    let cwd = std::env::current_dir()?;
+
+    // Load .duhignore from the worktree root if it exists. Each non-blank,
     // non-comment line becomes a negated glob pattern passed to GlobWalkerBuilder.
-    let ignore_path = std::env::current_dir()?.join(".duhignore");
+    let ignore_path = space.get_path_in_worktree(".duhignore")?;
     let mut ignore_patterns: Vec<String> = Vec::new();
     if ignore_path.exists() {
         let contents = std::fs::read_to_string(&ignore_path)?;
@@ -73,6 +82,12 @@ pub fn stage(
     for pattern in &cmd.file_paths {
         println!("{} {}", crate::colors::cyan("Staging"), pattern);
 
+        // A path to an existing file (relative or absolute) is staged as-is.
+        if Path::new(pattern).is_file() {
+            stage_file(pattern, space, &cwd)?;
+            continue;
+        }
+
         // Determine walk base and the glob pattern relative to it.
         let (base, main_pattern) = if std::path::Path::new(pattern).is_dir() {
             (pattern.as_str(), "**/*".to_string())
@@ -86,6 +101,7 @@ pub fn stage(
 
         let walker = GlobWalkerBuilder::from_patterns(base, &patterns).build()?;
 
+        let mut matched = 0usize;
         for f in walker {
             if let Ok(file) = f {
                 let p = file.path();
@@ -101,9 +117,13 @@ pub fn stage(
                     continue;
                 }
                 let path = p.to_string_lossy().into_owned();
-                println!("-- Staging file {}", path);
-                stage_file(&path, space)?;
+                stage_file(&path, space, &cwd)?;
+                matched += 1;
             }
+        }
+
+        if matched == 0 {
+            return Err(format!("pathspec '{}' did not match any files", pattern).into());
         }
     }
 

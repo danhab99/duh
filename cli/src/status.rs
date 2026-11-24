@@ -12,8 +12,10 @@ use lib::{
 pub struct StatusCommand {}
 
 pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
+    if space.worktree.is_none() {
+        return Err("status needs a working tree (this space is bare)".into());
+    }
     let cwd = std::env::current_dir()?;
-    let cwd_str = cwd.to_str().unwrap_or("").to_string();
 
     // Build the set of tracked files using HEAD as the base and letting staged
     // entries in the index override when present.
@@ -40,22 +42,15 @@ pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<bool, Box<dyn E
     let mut missing: Vec<String> = Vec::new();
 
     for (path, version_hash) in tracked.iter() {
-        // make path nicer for display (relative to CWD when possible)
-        let display = if path.starts_with(&cwd_str) {
-            // skip leading separator if present
-            let rel = path.strip_prefix(&format!("{}/", cwd_str)).unwrap_or(&path);
-            rel.to_string()
-        } else {
-            path.clone()
-        };
+        let display = space.display_path(&cwd, path);
 
-        let p = std::path::Path::new(&path);
-        if !p.exists() {
+        let full_path = space.get_path_in_worktree(path)?;
+        if !full_path.exists() {
             missing.push(display);
             continue;
         }
 
-        let mut f = std::fs::File::open(&path)?;
+        let mut f = std::fs::File::open(&full_path)?;
         let working_hash = Hash::digest_file_stream(&mut f)?;
 
         match space.get_object(*version_hash)? {
@@ -69,6 +64,10 @@ pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<bool, Box<dyn E
             _ => changed.push(display),
         }
     }
+
+    changed.sort();
+    unchanged.sort();
+    missing.sort();
 
     let head_ref_name = match space.get_ref("HEAD".into())? {
         ObjectReference::Ref(name) => name,

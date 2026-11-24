@@ -5,7 +5,7 @@ use lib::hash::Hash;
 use lib::objects::ObjectReference;
 use lib::space::Space;
 
-use crate::checkout::checkout;
+use crate::checkout::restore;
 use crate::status::status;
 
 #[derive(Args)]
@@ -51,14 +51,7 @@ pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Erro
     let files = space.list_files(ObjectReference::Hash(commit_hash))?;
 
     for file_path in files {
-        checkout(
-            space,
-            &crate::checkout::CheckoutCommand {
-                file_path,
-                commit: Some(ObjectReference::Hash(commit_hash)),
-                as_name: None,
-            },
-        )?;
+        restore(space, &file_path, commit_hash, None)?;
     }
 
     Ok(())

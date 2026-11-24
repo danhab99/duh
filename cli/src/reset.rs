@@ -4,7 +4,7 @@ use clap::clap_derive::Args;
 use lib::objects::{Object, ObjectReference};
 use lib::space::Space;
 
-use crate::checkout::checkout;
+use crate::checkout::restore;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum ResetMode {
@@ -49,14 +49,7 @@ pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>
                     let files = space.list_files(ObjectReference::Hash(target_hash))?;
 
                     for file_path in files {
-                        checkout(
-                            space,
-                            &crate::checkout::CheckoutCommand {
-                                file_path,
-                                commit: Some(ObjectReference::Hash(target_hash)),
-                                as_name: None,
-                            },
-                        )?;
+                        restore(space, &file_path, target_hash, None)?;
                     }
 
                     println!(

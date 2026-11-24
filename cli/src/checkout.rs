@@ -2,7 +2,10 @@ use std::error::Error;
 use std::fs;
 
 use clap::clap_derive::Args;
+use std::path::PathBuf;
+
 use lib::file::FileOps;
+use lib::hash::Hash;
 use lib::objects::{Object, ObjectReference};
 use lib::space::Space;
 
@@ -35,52 +38,22 @@ pub fn checkout(
         None => space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?,
     };
 
+    let cwd = std::env::current_dir()?;
+    let repo_path = space.repo_path_from(&cwd, &cmd.file_path)?;
+
     // Ensure the commit exists and the file is present in that commit
     match space.get_object(target_hash)? {
         Some(Object::Commit(_c)) => {
-            let logical_path = std::path::Path::new(&cmd.file_path)
-                .components()
-                .filter_map(|c| match c {
-                    std::path::Component::CurDir => None,
-                    std::path::Component::Normal(v) => Some(v.to_string_lossy().to_string()),
-                    _ => Some(c.as_os_str().to_string_lossy().to_string()),
-                })
-                .collect::<Vec<_>>()
-                .join("/");
-            let fp = space.get_path_in_worktree_str(&logical_path)?;
-            let files = space.get_commit_files(target_hash)?;
-            if files.get(logical_path.as_str()).is_none() && files.get(fp.as_str()).is_none() {
-                println!(
-                    "{} {}",
-                    crate::colors::red("file not found in commit:"),
-                    crate::colors::yellow(&cmd.file_path)
-                );
-                return Ok(());
+            if !space.get_commit_files(target_hash)?.contains_key(&repo_path) {
+                return Err(format!("file not found in commit: {}", cmd.file_path).into());
             }
         }
         _ => {
-            println!(
-                "{} {}",
-                crate::colors::red("commit not found:"),
-                crate::colors::cyan(&target_hash.to_string())
-            );
-            return Ok(());
+            return Err(format!("commit not found: {}", target_hash.to_string()).into());
         }
     }
 
-    // Reconstruct and write the file to working directory without
-    // materializing the whole contents in memory.
-    let mut fileops = FileOps::from_space(space);
-    let mut reader = fileops.open_file(cmd.file_path.clone(), target_hash)?;
-
-    let out_path = cmd
-        .as_name
-        .clone()
-        .or_else(|| space.get_path_in_worktree_str(&cmd.file_path).ok());
-    let mut out_file = fs::File::create(out_path.unwrap())?;
-
-    // copy stream directly from the space reader to the output file
-    std::io::copy(&mut reader, &mut out_file)?;
+    restore(space, &repo_path, target_hash, cmd.as_name.as_deref())?;
 
     println!(
         "{} {} @ {}",
@@ -88,5 +61,31 @@ pub fn checkout(
         crate::colors::cyan(&cmd.file_path),
         crate::colors::cyan(&target_hash.to_string())
     );
+    Ok(())
+}
+
+/// Write `repo_path` as of `commit` to `out` (relative to the current
+/// directory), or to its place in the worktree when `out` is `None`.
+/// Streams the reconstruction without materializing it in memory.
+pub fn restore(
+    space: &mut Space,
+    repo_path: &str,
+    commit: Hash,
+    out: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let out_path = match out {
+        Some(p) => PathBuf::from(p),
+        None => space.get_path_in_worktree(repo_path)?,
+    };
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let mut fileops = FileOps::from_space(space);
+    let mut reader = fileops.open_file(repo_path.to_string(), commit)?;
+    let mut out_file = fs::File::create(out_path)?;
+    std::io::copy(&mut reader, &mut out_file)?;
     Ok(())
 }

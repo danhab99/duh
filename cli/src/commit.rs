@@ -33,11 +33,11 @@ pub fn commit(
     cmd: &CommitCommand,
 ) -> Result<(), Box<dyn Error>> {
     {
-        let mut fileops = FileOps::from_space(space);
-
         if let Some(fp) = &cmd.file_path {
             println!("{} {}", crate::colors::cyan("Staging file"), fp);
-            fileops.stage_file(fp.clone(), None::<fn(_)>, None::<fn(_)>)?;
+            let repo_path = space.repo_path_from(&std::env::current_dir()?, fp)?;
+            let mut fileops = FileOps::from_space(space);
+            fileops.stage_file(repo_path, None::<fn(_)>, None::<fn(_)>)?;
         } else {
             println!(
                 "{}",
@@ -81,7 +81,6 @@ fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
     }
 
     let cwd = std::env::current_dir()?;
-    let cwd_str = format!("{}/", cwd.to_str().unwrap_or(""));
 
     let file_count = summaries.len();
     let noun = if file_count == 1 { "file" } else { "files" };
@@ -92,7 +91,7 @@ fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
     sorted.sort_by(|a, b| a.path.cmp(&b.path));
 
     for s in &sorted {
-        let display = s.path.strip_prefix(&cwd_str).unwrap_or(&s.path);
+        let display = space.display_path(&cwd, &s.path);
         let is_new = s.unchanged_bytes == 0 && s.deleted_bytes == 0;
         if is_new {
             lines.push(format!(
