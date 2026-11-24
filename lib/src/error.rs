@@ -48,7 +48,7 @@ impl fmt::Display for DuhError {
                 write!(f, "{} object not found: {}", object_type, hash)
             }
             DuhError::FileNotInCommit { file, commit } => {
-                write!(f, "File '{}' not found in commit {}", file, commit)
+                write!(f, "'{}' isn't in version {}", file, commit)
             }
             DuhError::RefNotFound(r) => {
                 write!(f, "Reference '{}' does not exist", r)
@@ -57,23 +57,23 @@ impl fmt::Display for DuhError {
                 write!(f, "Invalid reference format: {}", r)
             }
             DuhError::UnsupportedRemoteScheme { scheme, reason } => {
-                write!(f, "Unsupported remote scheme '{}': {}", scheme, reason)
+                write!(f, "unsupported storage '{}': {}", scheme, reason)
             }
             DuhError::RemoteOperationNotImplemented(op) => {
                 write!(f, "Remote operation not yet implemented: {}", op)
             }
             DuhError::UncommittedChanges => {
-                write!(f, "cannot switch branches with uncommitted changes; commit, unstage or discard them first")
+                write!(f, "you have unsaved changes; save them, un-pick them or bring back your files before opening another draft")
             }
             DuhError::DetachedHead { operation } => {
                 write!(
                     f,
-                    "Cannot {} on a detached HEAD.\nCreate or switch to a branch first.",
+                    "can't {} while not on a draft; open one first",
                     operation
                 )
             }
             DuhError::BareRepoNoWorktree => {
-                write!(f, "This is a bare repository and has no working tree.")
+                write!(f, "this space has no working files (it's bare)")
             }
             DuhError::EditorExitedWithError(code) => {
                 write!(
@@ -92,7 +92,7 @@ impl fmt::Display for DuhError {
                 write!(f, "{}", msg)
             }
             DuhError::RemoteNotFound(name) => {
-                write!(f, "remote not found: {} (to clone a repository, use `duh clone <url>`)", name)
+                write!(f, "no place called '{}' (`duh places add` sets one up; `duh get <url>` copies a space)", name)
             }
         }
     }

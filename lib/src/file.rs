@@ -253,7 +253,7 @@ impl<'a> FileOps<'a> {
                 self.space.set_ref(
                     branch.as_str(),
                     ObjectReference::Hash(commit_hash.clone()),
-                    Some(format!("commit: {}", message.clone()).as_str()),
+                    Some(format!("save: {}", message.clone()).as_str()),
                 )?;
                 vlog!(
                     "space::commit: advanced branch '{}' -> {}",
@@ -266,7 +266,7 @@ impl<'a> FileOps<'a> {
                 self.space.set_ref(
                     "HEAD",
                     ObjectReference::Hash(commit_hash.clone()),
-                    Some(format!("commit: {}", message.clone()).as_str()),
+                    Some(format!("save: {}", message.clone()).as_str()),
                 )?;
                 vlog!("space::commit: detached HEAD -> {}", commit_hash.to_string());
             }
@@ -473,7 +473,7 @@ impl<'a> FileOps<'a> {
                 .ok_or_else(|| Box::new(crate::error::DuhError::BareRepoNoWorktree) as Box<dyn Error>)?;
             input_path
                 .strip_prefix(worktree)
-                .map_err(|_| format!("path '{}' is outside this worktree", input))?
+                .map_err(|_| format!("'{}' is outside this space", input))?
                 .to_path_buf()
         } else {
             input_path

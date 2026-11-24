@@ -186,7 +186,7 @@ impl Space {
                 .ok()
                 .zip(std::fs::canonicalize(worktree).ok())
                 .and_then(|(a, w)| a.strip_prefix(w).ok().map(Path::to_path_buf))
-                .ok_or_else(|| format!("path '{}' is outside the worktree", input))?,
+                .ok_or_else(|| format!("'{}' is outside this space", input))?,
         };
 
         let parts: Vec<String> = rel
@@ -194,10 +194,10 @@ impl Space {
             .map(|c| c.as_os_str().to_string_lossy().to_string())
             .collect();
         if parts.is_empty() {
-            return Err(format!("path '{}' is the worktree root, not a file", input).into());
+            return Err(format!("'{}' is the space's own folder, not a file", input).into());
         }
         if parts[0] == crate::utils::SPACE_METADATA_DIR_NAME {
-            return Err(format!("path '{}' is inside the metadata directory", input).into());
+            return Err(format!("'{}' is inside duh's own .duh folder", input).into());
         }
         Ok(parts.join("/"))
     }
@@ -424,7 +424,7 @@ impl Space {
                 for _ in 0..steps {
                     h = match self.get_object(h)? {
                         Some(Object::Commit(c)) if !c.parent.is_zero() => c.parent,
-                        _ => return Err(format!("'{}' goes past the first commit", r).into()),
+                        _ => return Err(format!("'{}' goes back past the first save", r).into()),
                     };
                 }
                 Ok(h)
@@ -493,8 +493,8 @@ impl Space {
         }
         match matches.as_slice() {
             [h] => Ok(*h),
-            [] => Err(format!("no commit or ref matches '{}'", prefix).into()),
-            _ => Err(format!("'{}' is ambiguous ({} commits match)", prefix, matches.len()).into()),
+            [] => Err(format!("no version, draft or label matches '{}'", prefix).into()),
+            _ => Err(format!("'{}' matches {} versions; use more of the hash", prefix, matches.len()).into()),
         }
     }
 
@@ -525,7 +525,7 @@ impl Space {
         let head_ref = self.get_ref("HEAD".to_string())?;
         match head_ref {
             ObjectReference::Ref(branch) => Ok(branch),
-            _ => Err("HEAD does not point to a branch".into()),
+            _ => Err("not on a draft".into()),
         }
     }
 
