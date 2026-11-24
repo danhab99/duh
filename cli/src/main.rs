@@ -48,7 +48,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                 Some(d) => d.clone(),
                 None => copy::default_clone_dir(&c.url)?,
             };
-            copy::clone(&c.url, &dest, c.branch.as_deref(), c.bare)?;
+            let options = c
+                .options
+                .iter()
+                .map(|o| lib::store::parse_option(o))
+                .collect::<Result<Vec<_>, _>>()?;
+            copy::clone(&c.url, &dest, c.branch.as_deref(), c.bare, &options)?;
             return Ok(());
         }
         Commands::Copy(c) => {
@@ -62,7 +67,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                         Some(d) => d.to_string(),
                         None => copy::default_clone_dir(url)?,
                     };
-                    copy::clone(url, &dest_dir, c.branch.as_deref(), c.bare)?;
+                    copy::clone(url, &dest_dir, c.branch.as_deref(), false, &[])?;
                     return Ok(());
                 } else {
                     return Err("must specify --from when cloning outside a duh space".into());

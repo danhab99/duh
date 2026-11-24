@@ -6,7 +6,7 @@ pub mod objects;
 pub mod space;
 pub mod replay;
 pub mod dedup;
-pub mod remote;
 pub mod file;
 pub mod display;
 pub mod store;
+pub mod transfer;
