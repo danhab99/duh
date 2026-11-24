@@ -27,7 +27,9 @@ pub fn show(space: &mut Space, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> 
     match space.get_object(head)? {
         Some(Object::Commit(c)) => {
             println!("{}", crate::colors::cyan(&head.to_string()));
-            println!("parent: {}", crate::colors::dim(&c.parent.to_string()));
+            if !c.parent.is_zero() {
+                println!("parent: {}", crate::colors::dim(&c.parent.to_string()));
+            }
             println!(
                 "author: {} <{}> {}",
                 c.author.name, c.author.email, c.author.timestamp
