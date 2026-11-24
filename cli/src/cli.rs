@@ -22,7 +22,8 @@ pub enum Commands {
     /// Initialize a new space (create `.duh/` metadata)
     Init(InitCommand),
 
-    /// Stage a file (prepare fragments for later commit)
+    /// Add file contents to the index (alias: stage)
+    #[command(name = "add", visible_alias = "stage")]
     Stage(StageCommand),
 
     /// Unstage a file (remove the file from being comitted)
