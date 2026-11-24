@@ -14,8 +14,9 @@ pub struct SwitchCommand {
     #[arg(help = "Name of branch to switch to")]
     pub name: String,
 
-    #[arg(help = "Create the branch at the current commit first")]
-    pub create: Option<bool>,
+    /// Create the branch at the current commit first
+    #[arg(short = 'c', long = "create")]
+    pub create: bool,
 }
 
 pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>> {
@@ -27,7 +28,7 @@ pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Erro
     let from = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
     let exists = space.list_branches()?.contains(&name);
 
-    let to: Hash = match (exists, cmd.create == Some(true)) {
+    let to: Hash = match (exists, cmd.create) {
         (true, false) => space.resolve_ref_name(ObjectReference::Ref(name.clone()))?,
         (true, true) => return Err(format!("branch '{}' already exists", name).into()),
         (false, true) => {
@@ -36,7 +37,7 @@ pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Erro
         }
         (false, false) => {
             return Err(format!(
-                "branch '{}' does not exist (use `duh switch {} true` to create it)",
+                "branch '{}' does not exist (use `duh switch -c {}` to create it)",
                 name, name
             )
             .into())
