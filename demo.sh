@@ -592,6 +592,101 @@ done
 (cd "$CLONE" && status_is "clean: media/texture.bin new-a.bin project")
 
 # ===========================================================================
+part "Part 7: remotes — a shared hub and real S3"
+# A remote is any store opendal can reach. Here: a bare space in a local
+# directory, then an S3 bucket served over the real S3 protocol by rclone.
+# Copying only ever fast-forwards: duh never merges.
+# ===========================================================================
+
+head_of() { (cd "$1" && "$DUH" log -n 1 | plain | awk '/^commit /{print $2; exit}'); }
+
+HUB="${td%/}-hub"
+MATE="${td%/}-teammate"
+
+section "PUSH : copy your branch to a bare hub"
+mkdir -p "$HUB"
+(cd "$HUB" && run init --bare)
+run remote add origin "$HUB"
+run copy
+[[ "$(head_of "$HUB")" == "$(head_commit)" ]] || fail "hub's main isn't at our HEAD"
+ok "hub's main is at our HEAD"
+
+section "PULL : a teammate's commit comes back with copy --from"
+run clone "$HUB" "$MATE"
+(cd "$MATE" && gen t1 0 1000 >> project && "$DUH" commit -a -m "teammate edit" > /dev/null && run copy)
+run copy --from origin
+same_file project "$MATE/project" "the teammate's edit arrived"
+record
+
+section "DIVERGE : duh refuses to drop anyone's commits"
+gen l1 0 1000 >> project
+"$DUH" commit -a -m "our edit" > /dev/null
+record
+(cd "$MATE" && gen t2 0 1000 >> project && "$DUH" commit -a -m "teammate edit 2" > /dev/null && run copy)
+expect_fail "has commits you don't" copy
+expect_fail "only fast-forwards" copy --from origin
+run copy --force
+[[ "$(head_of "$HUB")" == "$(head_commit)" ]] || fail "--force didn't move the hub"
+ok "copy --force overwrote the hub"
+(cd "$MATE" && expect_fail "only fast-forwards" copy --from origin)
+(cd "$MATE" && run reset --hard HEAD~1 && echo "dirty" >> project &&
+    expect_fail "uncommitted changes" copy --from origin &&
+    run restore project && run copy --from origin)
+same_file "$MATE/project" project "teammate caught up after dropping their commit"
+
+section "CREDENTIALS : backend options live in the config, in plain text"
+expect_fail "isn't a backend duh supports" remote add cache redis://localhost:6379
+
+command -v rclone > /dev/null || fail "this part needs rclone (nix flake check and \`just demo_script\` provide it)"
+S3_DATA="${td%/}-s3"
+mkdir -p "$S3_DATA/duh-bucket"
+S3_PORT=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+HOME="$S3_DATA" rclone serve s3 --addr "127.0.0.1:$S3_PORT" --auth-key duh-key,duh-secret \
+    "$S3_DATA" > "$VERIFICATION_DIR/rclone.log" 2>&1 &
+RCLONE_PID=$!
+trap 'kill $RCLONE_PID 2> /dev/null || true' EXIT
+python3 - "$S3_PORT" <<'PY' || fail "S3 server didn't start"
+import socket, sys, time
+for _ in range(100):
+    try:
+        socket.create_connection(("127.0.0.1", int(sys.argv[1])), 0.2).close(); sys.exit(0)
+    except OSError:
+        time.sleep(0.1)
+sys.exit(1)
+PY
+S3_OPTS=(-o "endpoint=http://127.0.0.1:$S3_PORT" -o region=us-east-1
+         -o access_key_id=duh-key -o secret_access_key=duh-secret)
+run remote add warehouse s3://duh-bucket/game "${S3_OPTS[@]}"
+[[ "$("$DUH" config get remote.warehouse.config.secret_access_key)" == "duh-secret" ]] ||
+    fail "secret not stored"
+ok "credentials stored under [remote.warehouse.config]"
+
+section "S3 PUSH : the first copy to an empty bucket prefix creates the space"
+run copy --to warehouse
+[[ -f "$S3_DATA/duh-bucket/game/config" ]] || fail "no space created in the bucket"
+ok "a bare space now lives at s3://duh-bucket/game"
+
+S3_CLONE="${td%/}-from-s3"
+section "S3 CLONE : clone straight from the bucket"
+run clone s3://duh-bucket/game "$S3_CLONE" "${S3_OPTS[@]}"
+for f in project new-a.bin media/texture.bin; do
+    same_file "$S3_CLONE/$f" "$f" "S3 clone has the same $f"
+done
+
+section "S3 ROUND TRIP : a small edit moves only what changed"
+s3_bytes() { find "$S3_DATA/duh-bucket" -type f -printf '%s\n' | awk '{s += $1} END {print s + 0}'; }
+before=$(s3_bytes)
+(cd "$S3_CLONE" && python3 -c "f = open('media/texture.bin', 'r+b'); f.seek(300000); f.write(b'edit' * 1000)" &&
+    "$DUH" commit -a -m "edit texture via S3 clone" > /dev/null && run copy)
+growth=$(( $(s3_bytes) - before ))
+size=$(stat -c %s media/texture.bin)
+(( growth * 20 < size )) || fail "a 4 KB edit to a ${size}-byte file added $growth bytes to the bucket"
+ok "a 4 KB edit to a ${size}-byte file added only $growth bytes to the bucket"
+run copy --from warehouse
+same_file media/texture.bin "$S3_CLONE/media/texture.bin" "the edit came back from S3"
+record
+
+# ===========================================================================
 part "VERIFICATION: every file at every commit, byte for byte"
 # ===========================================================================
 
@@ -622,6 +717,10 @@ verify_commits "$td" "${all_commits[@]}"
 mapfile -t clone_commits < <(cd "$CLONE" && "$DUH" log | plain | awk '/^commit /{print $2}')
 echo "In the clone (its history):"
 verify_commits "$CLONE" "${clone_commits[@]}"
+
+mapfile -t s3_commits < <(cd "$S3_CLONE" && "$DUH" log | plain | awk '/^commit /{print $2}')
+echo "In the clone fetched from S3 (its history):"
+verify_commits "$S3_CLONE" "${s3_commits[@]}"
 
 rm -f "$out"
 echo ""

@@ -83,6 +83,7 @@
             gnugrep
             gnused
             python3
+            rclone  # serves S3 for the demo's remote section
             time
           ];
         } ''
@@ -116,8 +117,9 @@
             RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           };
 
+          # What demo.sh needs, with the Nix-built duh.
           duh = pkgs.mkShell {
-            buildInputs = [ duh pkgs.time ];
+            buildInputs = with pkgs; [ duh python3 rclone time ];
           };
         };
 

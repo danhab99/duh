@@ -9,9 +9,10 @@ generate-test-files outdir size="200000":
     python3 -c "import sys; sys.stdout.buffer.write(b'c' * {{size}})" > {{ outdir }}/c.txt
     python3 -c "import sys; sys.stdout.buffer.write(b'd' * {{size}})" > {{ outdir }}/d.txt
 
-# Run demo.sh in a directory of your choice against the Nix-built binary.
+# Run demo.sh in a directory of your choice against the Nix-built binary
+# (in a shell that also provides rclone for the S3 part).
 demo_script td:
-    DUH="$(nix build .#duh --no-link --print-out-paths)/bin/duh" bash demo.sh {{ td }}
+    nix develop .#duh --command bash demo.sh {{ td }}
 
 # Run demo.sh in the Nix sandbox (the standard duh must meet).
 demo:
