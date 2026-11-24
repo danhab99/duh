@@ -47,6 +47,9 @@
           # no vendoring step or hand-maintained hash.
           cargoLock.lockFile = ./cli/Cargo.lock;
 
+          # Run the lib's tests as well as the CLI's.
+          cargoTestFlags = [ "--package" "duh" "--package" "lib" ];
+
           nativeBuildInputs = with pkgs; [
             pkg-config
           ];
