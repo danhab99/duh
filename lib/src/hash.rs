@@ -64,10 +64,11 @@ impl Serialize for Hash {
     }
 }
 
+const ZERO_HEX: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
 impl std::string::ToString for Hash {
     fn to_string(&self) -> String {
-        let v = &self.0;
-        String::from_utf8(v.to_vec()).unwrap()
+        self.to_hex()
     }
 }
 
@@ -81,6 +82,11 @@ impl Hash {
 
         // Validate that it's valid hex (but don't decode — we store the ASCII).
         hex::decode(&s).map_err(|e| format!("invalid hex in hash string: {}", e))?;
+
+        // The zero hash ("no commit" / staged deletion) is stored as NUL bytes.
+        if s == ZERO_HEX {
+            return Ok(Hash::new());
+        }
 
         let mut h = [0u8; 64];
         h.copy_from_slice(s.as_bytes());
@@ -136,7 +142,29 @@ impl Hash {
         self.0.iter().all(|x| *x == 0)
     }
 
+    /// The 64-character hex form; the zero hash renders as all '0's.
     pub fn to_hex(&self) -> String {
+        if self.is_zero() {
+            return ZERO_HEX.to_string();
+        }
         String::from_utf8_lossy(&self.0).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_hash_round_trips_as_hex() {
+        let zero = Hash::new();
+        assert_eq!(zero.to_string(), "0".repeat(64));
+        assert!(Hash::from_string(zero.to_string()).unwrap().is_zero());
+    }
+
+    #[test]
+    fn hash_round_trips_as_hex() {
+        let h = Hash::digest_slice(b"duh").unwrap();
+        assert_eq!(Hash::from_string(h.to_string()).unwrap(), h);
     }
 }
