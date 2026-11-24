@@ -369,3 +369,129 @@ pub fn build_diff_fragments<R: Read + Seek, P: FnMut(DedupProgress)>(
 ) -> Result<DedupeFragIterator<R>, Box<dyn Error>> {
     Ok(DedupeFragIterator::<R>::build(old, new, window, hash_mod, progress)?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    /// Deterministic pseudo-random bytes; equal seeds give equal streams.
+    fn noise(seed: u64, len: usize) -> Vec<u8> {
+        let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    /// Diff old → new, then replay the fragments onto old the way
+    /// LazyFileReplay does (sequentially). Returns (rebuilt, unchanged bytes).
+    fn round_trip(old: &[u8], new: &[u8]) -> (Vec<u8>, usize) {
+        let frags = build_diff_fragments(
+            Cursor::new(old.to_vec()),
+            Cursor::new(new.to_vec()),
+            4096,
+            4096,
+            None::<fn(DedupProgress)>,
+        )
+        .unwrap();
+
+        let mut out = Vec::new();
+        let mut cursor = 0usize;
+        let mut unchanged = 0usize;
+        for frag in frags {
+            match frag {
+                DiffFragment::UNCHANGED { len } => {
+                    out.extend_from_slice(&old[cursor..cursor + len]);
+                    cursor += len;
+                    unchanged += len;
+                }
+                DiffFragment::DELETED { len } => cursor += len,
+                DiffFragment::ADDED { body } => out.extend_from_slice(&body),
+            }
+        }
+        assert!(cursor <= old.len(), "fragments ran past the end of old");
+        (out, unchanged)
+    }
+
+    fn cat(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    /// Rebuilds `new` exactly and reuses at least 90% of `shared` bytes.
+    fn check(old: &[u8], new: &[u8], shared: usize) {
+        let (rebuilt, unchanged) = round_trip(old, new);
+        assert!(rebuilt == new, "rebuilt file differs from new");
+        assert!(
+            unchanged * 10 >= shared * 9,
+            "only {} of {} shared bytes were deduplicated",
+            unchanged,
+            shared
+        );
+    }
+
+    const N: usize = 200_000;
+
+    #[test]
+    fn identical() {
+        let a = noise(1, N);
+        check(&a, &a, N);
+    }
+
+    #[test]
+    fn from_and_to_empty() {
+        let a = noise(1, N);
+        check(&[], &a, 0);
+        check(&a, &[], 0);
+        check(&[], &[], 0);
+    }
+
+    #[test]
+    fn append_and_trim() {
+        let (a, b) = (noise(1, N), noise(2, N / 2));
+        check(&a, &cat(&[&a, &b]), N);
+        check(&cat(&[&a, &b]), &a, N);
+    }
+
+    #[test]
+    fn prepend_and_drop_prefix() {
+        let (a, b) = (noise(1, N), noise(2, N / 2));
+        check(&a, &cat(&[&b, &a]), N);
+        check(&cat(&[&b, &a]), &a, N);
+    }
+
+    #[test]
+    fn insert_and_remove_middle() {
+        let (a, b) = (noise(1, N), noise(2, N / 2));
+        let (head, tail) = a.split_at(N / 2);
+        check(&a, &cat(&[head, &b, tail]), N);
+        check(&cat(&[head, &b, tail]), &a, N);
+    }
+
+    #[test]
+    fn replace_middle() {
+        let (a, b) = (noise(1, N), noise(2, N / 3));
+        let (head, rest) = a.split_at(N / 3);
+        let (_, tail) = rest.split_at(N / 3);
+        check(&a, &cat(&[head, &b, tail]), head.len() + tail.len());
+    }
+
+    #[test]
+    fn unrelated() {
+        check(&noise(1, N), &noise(2, N), 0);
+    }
+
+    #[test]
+    fn moved_block_still_rebuilds() {
+        // Swapping halves can't be expressed as forward matches only; the
+        // result must still be exact even if part is re-added.
+        let a = noise(1, N);
+        let (x, y) = a.split_at(N / 2);
+        let (rebuilt, _) = round_trip(&a, &cat(&[y, x]));
+        assert!(rebuilt == cat(&[y, x]));
+    }
+}
