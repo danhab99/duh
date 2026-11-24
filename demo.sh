@@ -352,7 +352,9 @@ same_file project "$VERIFICATION_DIR/expected-first" "project matches the first 
 section "MISTAKES : duh refuses and explains"
 expect_fail "did not match any files" stage no-such-file
 expect_fail "file not found in commit" checkout no-such-file
-expect_fail "outside the worktree" stage /etc/hostname
+OUTSIDE="${td%/}-outside.bin"
+echo "not in the space" > "$OUTSIDE"
+expect_fail "outside the worktree" stage "$OUTSIDE"
 expect_fail "outside the worktree" checkout ../escape.bin
 
 # ===========================================================================
