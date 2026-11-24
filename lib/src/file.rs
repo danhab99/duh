@@ -381,3 +381,102 @@ impl<'a> FileOps<'a> {
         Ok(cleaned.to_string_lossy().to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use tempfile::TempDir;
+
+    fn space_with_worktree() -> (TempDir, Space) {
+        let dir = TempDir::new().unwrap();
+        let meta = dir.path().join(crate::utils::SPACE_METADATA_DIR_NAME);
+        std::fs::create_dir_all(&meta).unwrap();
+        let op = opendal::services::Fs::default().root(meta.to_str().unwrap());
+        let fs = opendal::Operator::new(op).unwrap().finish().blocking();
+        let space = Space::initialize_at(fs, Some(dir.path().to_path_buf())).unwrap();
+        (dir, space)
+    }
+
+    fn write(dir: &TempDir, path: &str, data: &[u8]) {
+        let p = dir.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, data).unwrap();
+    }
+
+    fn stage(space: &mut Space, path: &str) {
+        FileOps::from_space(space)
+            .stage_file(path.to_string(), None::<fn(DiffFragment)>, None::<fn(_)>)
+            .unwrap();
+    }
+
+    fn commit(space: &mut Space) -> Hash {
+        FileOps::from_space(space).commit("test".to_string()).unwrap()
+    }
+
+    fn read_at(space: &mut Space, path: &str, commit: Hash) -> Option<Vec<u8>> {
+        let mut reader = FileOps::from_space(space)
+            .open_file(path.to_string(), commit)
+            .ok()?;
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).unwrap();
+        Some(out)
+    }
+
+    /// Interleaved edits to two files: every file must read back exactly as
+    /// it was at every commit, whether it was edited, added later, carried
+    /// forward untouched, or reverted.
+    #[test]
+    fn multi_file_history_round_trips() {
+        let (dir, mut space) = space_with_worktree();
+        // Non-repeating data, so replaying a diff onto the wrong base can't
+        // reproduce the right bytes by coincidence.
+        let noise = |seed: u64, len: usize| -> Vec<u8> {
+            let mut x = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            (0..len)
+                .map(|_| {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    (x >> 24) as u8
+                })
+                .collect()
+        };
+        let a1 = noise(1, 50_000);
+        let mut a2 = a1.clone();
+        a2.splice(20_000..20_000, noise(2, 5_000));
+        let b1 = noise(3, 40_000);
+        let mut b2 = b1.clone();
+        b2.extend_from_slice(&noise(4, 3_000));
+
+        // Each step: (files to write and stage, expected state after commit).
+        let steps: Vec<(Vec<(&str, &Vec<u8>)>, Vec<(&str, &Vec<u8>)>)> = vec![
+            (vec![("a.bin", &a1)], vec![("a.bin", &a1)]),
+            (vec![("sub/b.bin", &b1)], vec![("a.bin", &a1), ("sub/b.bin", &b1)]),
+            (vec![("a.bin", &a2)], vec![("a.bin", &a2), ("sub/b.bin", &b1)]),
+            (vec![("sub/b.bin", &b2)], vec![("a.bin", &a2), ("sub/b.bin", &b2)]),
+            (vec![], vec![("a.bin", &a2), ("sub/b.bin", &b2)]),
+            (vec![("a.bin", &a1)], vec![("a.bin", &a1), ("sub/b.bin", &b2)]),
+        ];
+
+        let mut history = Vec::new();
+        for (writes, expected) in &steps {
+            for (path, data) in writes {
+                write(&dir, path, data);
+                stage(&mut space, path);
+            }
+            history.push((commit(&mut space), expected));
+        }
+
+        for (i, (hash, expected)) in history.iter().enumerate() {
+            assert_eq!(space.get_commit_files(*hash).unwrap().len(), expected.len());
+            for (path, data) in expected.iter() {
+                let got = read_at(&mut space, path, *hash)
+                    .unwrap_or_else(|| panic!("commit {}: {} missing", i + 1, path));
+                assert!(got == **data, "commit {}: {} differs", i + 1, path);
+            }
+        }
+
+        assert!(read_at(&mut space, "sub/b.bin", history[0].0).is_none());
+    }
+}
