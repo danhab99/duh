@@ -661,54 +661,55 @@ impl Space {
         return Ok(table);
     }
 
-    /// Read a value from the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
+    /// Read a value from the config file by dot-separated key, at any depth
+    /// (e.g. `user.name`, `chunk_size`, `remote.origin.config.region`).
     pub fn get_config_value(&self, key: &str) -> SpaceResult<String> {
         let table = self.get_table()?;
-
-        let parts: Vec<&str> = key.splitn(2, '.').collect();
-        let value = if parts.len() == 2 {
-            table
-                .get(parts[0])
-                .and_then(|v| v.as_table())
-                .and_then(|t| t.get(parts[1]))
-        } else {
-            table.get(parts[0])
-        };
-
+        let mut value: Option<&toml::Value> = None;
+        let mut current = Some(&table);
+        for part in key.split('.') {
+            value = current.and_then(|t| t.get(part));
+            current = value.and_then(|v| v.as_table());
+        }
         match value {
-            Some(v) => Ok(v.to_string().trim_matches('"').to_string()),
+            Some(toml::Value::String(s)) => Ok(s.clone()),
+            Some(toml::Value::Table(_)) => Err(format!("config key '{}' is a section", key).into()),
+            Some(v) => Ok(v.to_string()),
             None => Err(format!("config key '{}' not found", key).into()),
         }
     }
 
-    /// Write a value to the config file by dot-separated key (e.g. `user.name`, `chunk_size`).
+    /// Write a value to the config file by dot-separated key, at any depth,
+    /// creating sections as needed. Numbers and booleans are stored typed,
+    /// except under `remote.` (credentials and backend options), where every
+    /// value stays a string so e.g. a key like "007" keeps its zeros.
     pub fn set_config_value(&self, key: &str, value: &str) -> SpaceResult<()> {
-        let mut table = self.get_table()?;
-
-        let parts: Vec<&str> = key.splitn(2, '.').collect();
-        if parts.len() == 2 {
-            let section = table
-                .entry(parts[0])
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
-            let section_table = section
-                .as_table_mut()
-                .ok_or_else(|| format!("'{}' is not a table", parts[0]))?;
-            section_table.insert(parts[1].to_string(), toml::Value::String(value.to_string()));
-        } else {
-            // Try to preserve integer type for known numeric keys.
-            let parsed = if let Ok(n) = value.parse::<i64>() {
-                toml::Value::Integer(n)
-            } else if let Ok(b) = value.parse::<bool>() {
-                toml::Value::Boolean(b)
-            } else {
-                toml::Value::String(value.to_string())
-            };
-            table.insert(parts[0].to_string(), parsed);
+        let parts: Vec<&str> = key.split('.').collect();
+        if parts.iter().any(|p| p.is_empty()) {
+            return Err(format!("invalid config key '{}'", key).into());
         }
+        let parsed = if key.starts_with("remote.") {
+            toml::Value::String(value.to_string())
+        } else if let Ok(n) = value.parse::<i64>() {
+            toml::Value::Integer(n)
+        } else if let Ok(b) = value.parse::<bool>() {
+            toml::Value::Boolean(b)
+        } else {
+            toml::Value::String(value.to_string())
+        };
 
-        let config_path = self.get_path_in_space_str("config");
+        let mut table = self.get_table()?;
+        let mut section = &mut table;
+        for part in &parts[..parts.len() - 1] {
+            section = section
+                .entry(part.to_string())
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| format!("config key '{}' is not a section", part))?;
+        }
+        section.insert(parts[parts.len() - 1].to_string(), parsed);
 
-        self.write_to_space(&config_path, toml::to_string(&table)?.as_bytes())?;
+        self.write_to_space("config", toml::to_string(&table)?.as_bytes())?;
         Ok(())
     }
 
