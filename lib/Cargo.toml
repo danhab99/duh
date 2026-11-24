@@ -20,4 +20,47 @@ gearhash = "0.1.3"
 virtual-fs = "0.701.0"
 url = "2.5.8"
 tokio = { version = "1", features = ["rt-multi-thread"] }
-opendal = { version = "0.52.0", features = ["services-fs", "services-s3", "services-gcs", "services-azblob", "services-webdav", "services-memory", "services-redis", "services-postgresql", "services-gdrive", "layers-blocking"] }
+# opendal 0.52's FTP backend breaks with suppaftp >= 6.1 (TLS connector API
+# change); pin until opendal is upgraded.
+suppaftp = { version = "=6.0.7", default-features = false }
+# Every opendal backend that behaves like a filesystem (object stores, file
+# protocols, cloud drives; http for read-only clones; memory for tests).
+# Databases and caches are deliberately left out: caches evict objects and
+# databases cap value sizes, neither of which a repository can survive.
+opendal = { version = "0.52.0", features = [
+    "layers-blocking",
+    "services-s3",
+    "services-gcs",
+    "services-azblob",
+    "services-oss",
+    "services-obs",
+    "services-cos",
+    "services-b2",
+    "services-swift",
+    "services-upyun",
+    "services-supabase",
+    "services-vercel-blob",
+    "services-lakefs",
+    "services-fs",
+    "services-ftp",
+    "services-sftp",
+    "services-webdav",
+    "services-webhdfs",
+    "services-hdfs-native",
+    "services-azfile",
+    "services-azdls",
+    "services-dbfs",
+    "services-alluxio",
+    "services-ipmfs",
+    "services-gdrive",
+    "services-onedrive",
+    "services-dropbox",
+    "services-pcloud",
+    "services-koofr",
+    "services-yandex-disk",
+    "services-aliyun-drive",
+    "services-seafile",
+    "services-icloud",
+    "services-http",
+    "services-memory",
+] }
