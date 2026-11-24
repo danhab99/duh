@@ -6,10 +6,16 @@ use lib::{objects::ObjectReference, space::Space};
 #[derive(Args)]
 #[command(about = "List, delete, rename and move branches")]
 pub struct BranchCommand {
+    /// Create a branch with this name (lists branches when omitted)
+    name: Option<String>,
+
+    /// Commit to start the new branch at (default: HEAD)
+    start: Option<String>,
+
     #[arg(short = 'd', long = "delete", help = "Delete a branch")]
     delete: Option<String>,
 
-    #[arg(short = 'r', long = "rename", help = "Rename the current branch")]
+    #[arg(short = 'm', long = "move", visible_alias = "rename", help = "Rename the current branch")]
     rename: Option<String>,
 
     #[arg(
@@ -23,7 +29,18 @@ pub struct BranchCommand {
 pub fn branch(space: &mut Space, cmd: &BranchCommand) -> Result<(), Box<dyn Error>> {
     let head_ref = space.get_ref("HEAD".into())?;
 
-    if let Some(name) = cmd.delete.clone() {
+    if let Some(name) = cmd.name.clone() {
+        if space.list_branches()?.contains(&name) {
+            return Err(format!("branch '{}' already exists", name).into());
+        }
+        let start = ObjectReference::from(cmd.start.clone().unwrap_or_else(|| "HEAD".into()));
+        let commit = space.resolve_ref_name(start)?;
+        if commit.is_zero() {
+            return Err("can't create a branch before the first commit".into());
+        }
+        space.set_ref(&name, ObjectReference::Hash(commit), Some("branch: created"))?;
+        println!("Created branch {} at {}", name, &commit.to_string()[..12]);
+    } else if let Some(name) = cmd.delete.clone() {
         if head_ref == ObjectReference::Ref(name.clone()) {
             return Err(format!("cannot delete branch '{}': it is checked out", name).into());
         }
