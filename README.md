@@ -26,18 +26,20 @@ This is the same approach rsync uses to efficiently synchronize files over a net
 
 ## Project Status
 
-duh is actively under development with the goal of achieving **feature parity with Git** where it makes sense. The core functionality is in place, including:
+duh covers the everyday git workflow for a single project directory.
+Everything below is exercised end to end by [`demo.sh`](demo.sh), which
+`nix flake check` runs on every build:
 
-- ✅ Repository initialization
-- ✅ File tracking and staging
-- ✅ Rolling hash-based delta storage
-- ✅ Commit creation with metadata
-- ✅ Status reporting
-- ✅ Diff computation using block signatures
-- 🚧 Branch management
-- 🚧 Merge operations
-- 🚧 Remote repositories
-- 🚧 History traversal
+- ✅ `init`, `clone`
+- ✅ `add` (files, directories, globs, `-A`, `-u`), `rm` (`--cached`), `mv`
+- ✅ `status` (staged / modified / missing / untracked), `diff` (`--staged`)
+- ✅ `commit` (`-a`, `--allow-empty`), `log` (`--oneline`), `show`, `reflog`
+- ✅ `restore` (`--staged`, `--source`), `checkout <file>`
+- ✅ `branch`, `switch` (`-c`), `tag`, `reset` (`--soft` / `--mixed` / `--hard`)
+- ✅ Commits named by branch, tag, short hash, `HEAD~N` or `X^`
+- ✅ `.duhignore`
+- 🚧 Pushing and pulling between remotes (`copy`, `remote`) — implemented, not yet covered by the demo
+- ❌ Merging, rebasing, stashing — out of scope for now
 
 ## Architecture
 
@@ -46,47 +48,43 @@ duh is actively under development with the goal of achieving **feature parity wi
 ```
 duh/
 ├── lib/              # Core library implementing version control logic
-│   ├── diff.rs       # Rolling hash algorithm and delta generation
-│   ├── hash.rs       # Content-addressable hashing (SHA-256)
+│   ├── dedup.rs      # Content-defined chunking and the edit script between versions
+│   ├── replay.rs     # Lazily reconstructs a file version from its fragments
+│   ├── file.rs       # Staging, committing and reading file versions
+│   ├── space.rs      # A repository ("space"): objects, refs, index, paths
 │   ├── objects.rs    # Object model (Commit, Tree, File, Fragment)
-│   ├── repo.rs       # Repository management and operations
-│   └── utils.rs      # Utilities and helpers
-└── cli/              # Command-line interface
-    ├── init.rs       # Repository initialization
-    ├── status.rs     # Working directory status
-    ├── track.rs      # File staging
-    ├── diff.rs       # Difference visualization
-    └── commit.rs     # Commit creation
+│   ├── hash.rs       # Content-addressable hashing (SHA-256)
+│   └── remote.rs     # Copying commits between spaces
+└── cli/              # Command-line interface, one module per command
 ```
 
 ### Object Model
 
 duh uses a content-addressable storage system similar to Git, with the following object types:
 
-1. **Fragment**: A diff fragment representing added, unchanged, or deleted bytes
-2. **File**: References to content hash and delta fragments
-3. **Tree**: Directory structure with file and subtree references
-4. **Commit**: Snapshot of the tree with metadata (author, message, parent, timestamp)
-5. **StagedFile**: Temporary representation of files being prepared for commit
+1. **Fragment**: raw bytes added in some version
+2. **FileDiffFragment**: one step of a version's edit script — ADDED (a fragment), UNCHANGED or DELETED (a length)
+3. **File**: a file version — its content hash and edit script against the previous version of the file
+4. **Tree**: directory structure with file and subtree references
+5. **Commit**: a tree plus metadata (author, message, parent)
 
-### Rolling Hash Algorithm
+### Content-Defined Chunking
 
-The heart of duh's efficiency is its rolling hash implementation:
+The heart of duh's efficiency is how it compares versions:
 
 ```
-1. Divide file into overlapping windows
-2. Calculate hash for each window position
-3. Create "block signatures" of stable regions
-4. Compare signatures between versions
-5. Generate diff fragments:
-   - ADDED: New bytes not in previous version
-   - UNCHANGED: Bytes matching a known block
-   - DELETED: Bytes present in old but not new version
+1. Split both versions into chunks at content-defined boundaries (gear hash)
+2. Hash each chunk
+3. Walk the new version's chunks in order, matching them against the old one
+4. Emit an edit script:
+   - UNCHANGED: bytes reused from the previous version
+   - DELETED:   bytes of the previous version that are gone
+   - ADDED:     new bytes, stored once
 ```
 
-This allows duh to:
-- Detect moved/copied content within files
-- Store only actual changes, not entire files
+Because boundaries depend on content, an insertion only disturbs the chunks
+around it, so duh can:
+- Store only actual changes, not entire files (even renamed ones)
 - Efficiently reconstruct any historical version
 - Keep repository size manageable even with large binaries
 
@@ -95,86 +93,67 @@ This allows duh to:
 ### Installation
 
 ```bash
-# Build from source
-cd cli
-cargo build --release
-
-# The binary will be at cli/target/release/duh
+nix build .#duh          # binary at ./result/bin/duh
+# or run it directly
+nix run .# -- --help
 ```
 
 ### Basic Usage
 
+The workflow is git's:
+
 ```bash
-# Initialize a new repository
-duh init
-
-# Track files for commit
-duh track file1.bin file2.bin
-
-# Check status
-duh status
-
-# View differences
-duh diff
-
-# Commit changes
+duh init                       # create a space in the current directory
+duh add .                      # stage every file
 duh commit -m "Initial commit"
+
+# ...edit files...
+duh status                     # what changed?
+duh diff                       # how much of each file changed (a diff bar per file)
+duh add -A                     # stage new, modified and deleted files
+duh commit -m "Update assets"  # or: duh commit -a -m "..." for tracked files
+
+duh log --oneline              # history
+duh restore --source HEAD~1 big.bin   # bring back an older version
+duh switch -c experiment       # branch off
+duh clone ../project copy      # clone a space
 ```
+
+Run `duh <command> --help` for every option.
 
 ### Configuration
 
-Repository configuration is stored in `.duh/config.toml`:
+Each space's configuration lives in `.duh/config` (TOML), editable with
+`duh config get <key>` and `duh config set <key> <value>`:
 
 ```toml
-chunk_size = 4096.0  # Size of blocks for rolling hash
+chunk_size = 4096          # target chunk size for content-defined chunking
+max_size = 10485760        # largest stored fragment
+
+[core]
+bare = false
 
 [user]
 name = "Your Name"
 email = "your.email@example.com"
 ```
 
+Patterns in a `.duhignore` file at the top of the worktree keep files out of
+`status` and `add`; lines starting with `!` re-include them.
+
 ## Build & development (Nix + justfile) 🔧
 
-- Uses a Nix flake to build a single derivation for the `cli` crate (`duh`).
+Crates are fetched by Nix from `cli/Cargo.lock`; there's no vendoring step.
 
-### Quick commands
+- `just build` — `nix build .#duh`
+- `just check` — `nix flake check`: builds, runs the unit tests, and runs `demo.sh` in the sandbox
+- `just demo` — just the sandboxed demo
+- `just demo_script <dir>` — run `demo.sh` in `<dir>` against the Nix-built binary, to watch it
+- `nix develop` — a shell with the pinned toolchain, rust-analyzer and friends
 
-- Build (Nix):
-
-  `nix build .#duh`  — binary appears at `./result/bin/duh`
-
-- Enter development shell (Nix):
-
-  `nix develop .#duh`
-
-- Build locally with Cargo (alternative):
-
-  `cd cli && cargo build --release`  — binary at `cli/target/release/duh`
-
-### justfile demo
-
-- Run the full demo (generates test files, init, stage/commit, show):
-
-  `just demo`
-
-- Create test-data only:
-
-  `just generate-test-files <outdir>`
-
-- Update the vendored crates & print the nix hash (paste into `flake.nix`):
-
-  `just update-vendor-hash`
-
-  This runs `cargo vendor` (under `cli/`) and prints the `cargoVendorHash` line you should copy into the flake.
-
-### Troubleshooting
-
-- If `nix build` fails with `cargoSha256` / `cargoHash` out of date:
-  1. Run `just update-vendor-hash`.
-  2. Replace `cargoVendorHash` in `flake.nix` with the printed value.
-  3. Re-run `nix build .#duh`.
-
-- If you get Cargo path-dep errors, ensure you build the flake target (`.#duh`) which selects the `cli/` package in the workspace.
+`demo.sh` is the standard duh is held to: it asserts the outcome of every
+command it runs and checks out every file at every commit to compare it
+byte for byte.
 
 ---
 
@@ -219,20 +198,17 @@ This allows efficient storage and reconstruction of any version in the history.
 4. **Performance**: Fast operations even with large files and deep history
 
 ### Planned Features
-- [ ] Branch and tag management
-- [ ] Merge strategies for binary content
-- [ ] Remote repository support (push/pull)
-- [ ] Repository compression and garbage collection
+- [ ] Demo coverage for pushing and pulling between remotes
+- [ ] Repository garbage collection
 - [ ] Partial clone/checkout for large repositories
-- [ ] Web interface for repository browsing
-- [ ] Plugin system for custom diff/merge handlers
+- [ ] Merge strategies for binary content
 
 ## Technical Details
 
 ### Storage Format
 - Objects stored in MessagePack format for efficiency
 - Content-addressable storage using SHA-256 hashes
-- Rolling hash parameters: Base 256, large prime modulus
+- Chunk boundaries from a gear hash over the content (`chunk_size` sets the average)
 
 ### Performance Characteristics
 - **Time complexity**: O(n) for diff generation (n = file size)
