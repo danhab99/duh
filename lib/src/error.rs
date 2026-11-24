@@ -92,7 +92,7 @@ impl fmt::Display for DuhError {
                 write!(f, "{}", msg)
             }
             DuhError::RemoteNotFound(name) => {
-                write!(f, "remote not found: {} (to clone a repository, run `duh copy --from <url>` outside a duh space)", name)
+                write!(f, "remote not found: {} (to clone a repository, use `duh clone <url>`)", name)
             }
         }
     }

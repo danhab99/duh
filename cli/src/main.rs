@@ -43,6 +43,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             init::init(c)?;
             return Ok(());
         }
+        Commands::Clone(c) => {
+            let dest = match &c.directory {
+                Some(d) => d.clone(),
+                None => copy::default_clone_dir(&c.url)?,
+            };
+            copy::clone(&c.url, &dest, c.branch.as_deref(), c.bare)?;
+            return Ok(());
+        }
         Commands::Copy(c) => {
             let cwd = std::env::current_dir()?;
             let result = lib::utils::find_duh_dir(cwd.to_str().unwrap());
@@ -133,7 +141,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Config(c) => {
             config::config(&space, c)?;
         }
-        Commands::Copy(_) => unreachable!(),
+        Commands::Copy(_) | Commands::Clone(_) => unreachable!(),
         Commands::Remote(c) => {
             remote::remote(&mut space, c)?;
         }

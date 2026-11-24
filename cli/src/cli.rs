@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    copy::CopyCommand, init::InitCommand, log::LogCommand, reflog::ReflogCommand, rm::RmCommand, restore_cmd::RestoreCommand, diff::DiffCommand, mv::MvCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
+    copy::{CloneCommand, CopyCommand}, init::InitCommand, log::LogCommand, reflog::ReflogCommand, rm::RmCommand, restore_cmd::RestoreCommand, diff::DiffCommand, mv::MvCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
     stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
     unstage::UnstageCommand,
 };
@@ -19,15 +19,17 @@ pub struct Cli {
 /// Top-level subcommands for the `duh` CLI.
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize a new space (create `.duh/` metadata)
+    // Start a space
+    /// Create an empty space (a `.duh/` directory) here
     Init(InitCommand),
 
-    /// Add file contents to the index (alias: stage)
+    /// Clone a repository into a new directory
+    Clone(CloneCommand),
+
+    // Work on the current change
+    /// Add file contents to the index
     #[command(name = "add", visible_alias = "stage")]
     Stage(StageCommand),
-
-    /// Remove files from the working tree and the index
-    Rm(RmCommand),
 
     /// Move or rename a tracked file
     Mv(MvCommand),
@@ -35,48 +37,54 @@ pub enum Commands {
     /// Restore working tree files, or unstage them with --staged
     Restore(RestoreCommand),
 
-    /// Show unstaged changes, or staged ones with --staged
-    Diff(DiffCommand),
+    /// Remove files from the working tree and the index
+    Rm(RmCommand),
 
-    /// Unstage a file (remove the file from being comitted)
+    /// Remove files from the index, keeping the working copy (= restore --staged)
     Unstage(UnstageCommand),
 
-    /// Unstage and commit a file (shortcut)
-    Commit(CommitCommand),
+    // Examine history and state
+    /// Show changes: working tree vs index, or index vs HEAD with --staged
+    Diff(DiffCommand),
 
-    /// Show the commit currently pointed to by HEAD
+    /// Show the commit history
+    Log(LogCommand),
+
+    /// Show a commit (default: HEAD) and the files it contains
     Show(ShowCommand),
 
-    /// Restore a file's contents from a commit into the working tree
-    Checkout(CheckoutCommand),
-
-    /// Show the commit log (history) starting at HEAD
-    Log(LogCommand),
+    /// Show the working tree status
+    Status(StatusCommand),
 
     /// Show the history of updates to a branch
     Reflog(ReflogCommand),
 
-    /// Show which tracked files have changed compared to the index
-    Status(StatusCommand),
+    // Grow and tweak history
+    /// Record the staged changes as a new commit
+    Commit(CommitCommand),
 
-    /// Switch or create a different branch
-    Switch(SwitchCommand),
-
-    /// Create delete and manage branches
+    /// List, create, rename or delete branches
     Branch(BranchCommand),
 
-    /// Get or set space configuration values
-    Config(ConfigCommand),
+    /// Switch to another branch, updating the working tree
+    Switch(SwitchCommand),
 
-    /// Copy commits between local and remote repositories
+    /// Write a file as of some commit into the working tree (or --as elsewhere)
+    Checkout(CheckoutCommand),
+
+    /// Move the current branch to another commit (--soft, --mixed, --hard)
+    Reset(ResetCommand),
+
+    /// List, create or delete tags
+    Tag(TagCommand),
+
+    // Collaborate
+    /// Copy commits to or from a remote (pull/push)
     Copy(CopyCommand),
 
     /// Manage remote repository connections
     Remote(RemoteCommand),
 
-    /// Create, list, or delete lightweight tags
-    Tag(TagCommand),
-
-    /// Reset the current branch to a specified commit
-    Reset(ResetCommand),
+    /// Get or set space configuration values
+    Config(ConfigCommand),
 }

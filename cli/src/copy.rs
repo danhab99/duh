@@ -42,6 +42,24 @@ pub struct CopyCommand {
     pub bare: bool,
 }
 
+#[derive(clap::Args)]
+#[command(about = "Clone a repository into a new directory")]
+pub struct CloneCommand {
+    /// Repository to clone: a path, file:// URL or other remote URL
+    pub url: String,
+
+    /// Directory to create (default: derived from the URL)
+    pub directory: Option<String>,
+
+    /// Branch to check out (default: the remote's current branch)
+    #[arg(short = 'b', long = "branch")]
+    pub branch: Option<String>,
+
+    /// Clone the history without checking out a working tree
+    #[arg(long = "bare")]
+    pub bare: bool,
+}
+
 /// Directory name to clone `url` into: its last path component, ignoring
 /// trailing slashes and a trailing `.duh` metadata directory or suffix.
 pub fn default_clone_dir(url: &str) -> Result<String, Box<dyn Error>> {
