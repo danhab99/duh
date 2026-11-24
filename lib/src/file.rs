@@ -34,7 +34,7 @@ impl<'a> FileOps<'a> {
     pub fn stage_file<E, P>(
         &mut self,
         file_path: String,
-        mut event: Option<E>,
+        event: Option<E>,
         progress: Option<P>,
     ) -> FileOpsResult<Hash>
     where
@@ -43,8 +43,24 @@ impl<'a> FileOps<'a> {
     {
         let repo_path = self.normalize_repo_path(&file_path)?;
         let fp = self.space.get_path_in_worktree_str(&repo_path)?;
+        let new = File::open(fp)?;
+        self.stage_reader(repo_path, Box::new(new), event, progress)
+    }
 
-        let mut new = File::open(fp.clone())?;
+    /// Stage `new` as the content of `repo_path`, diffed against HEAD's
+    /// version of that file (or against nothing if HEAD lacks it).
+    pub fn stage_reader<E, P>(
+        &mut self,
+        repo_path: String,
+        mut new: Box<dyn ReadSeek>,
+        mut event: Option<E>,
+        progress: Option<P>,
+    ) -> FileOpsResult<Hash>
+    where
+        E: FnMut(DiffFragment),
+        P: FnMut(crate::dedup::DedupProgress),
+    {
+        let repo_path = self.normalize_repo_path(&repo_path)?;
 
         vlog!("space::stage_file: computing hash for entire file");
         let content_hash = Hash::digest_file_stream(&mut new)?;
@@ -73,7 +89,7 @@ impl<'a> FileOps<'a> {
         vlog!("space::stage_file: building diff fragments");
         let fragments = crate::dedup::build_diff_fragments(
             old,
-            Box::new(new),
+            new,
             self.space.chunk_size,
             // Target average chunk size; max_size (10 MiB default) would make
             // most files a single chunk and defeat deduplication.
