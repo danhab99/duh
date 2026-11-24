@@ -7,17 +7,17 @@ use lib::space::Space;
 #[derive(Args)]
 #[command(about = "Create, list, or delete lightweight tags")]
 pub struct TagCommand {
+    /// Tag to create (lists tags when omitted)
+    name: Option<String>,
+
+    /// Commit to tag (default: HEAD)
+    commit: Option<String>,
+
     #[arg(short = 'd', long = "delete", help = "Delete a tag")]
     delete: Option<String>,
 
     #[arg(short = 'l', long = "list", default_value_t = false, help = "List all tags")]
     list: bool,
-
-    #[arg(short = 'n', long = "name", help = "Tag name (for create)")]
-    name: Option<String>,
-
-    #[arg(short = 'r', long = "ref", help = "Commit ref or hash to tag (for create; defaults to HEAD)")]
-    commit: Option<String>,
 }
 
 pub fn tag(space: &mut Space, cmd: &TagCommand) -> Result<(), Box<dyn Error>> {
@@ -28,7 +28,7 @@ pub fn tag(space: &mut Space, cmd: &TagCommand) -> Result<(), Box<dyn Error>> {
         }
         space.delete_ref(tag_ref.as_str())?;
         println!("Deleted tag {}", name);
-    } else if let Some(name) = &cmd.name {
+    } else if let (Some(name), false) = (&cmd.name, cmd.list) {
         let tag_ref = format!("tags/{}", name);
         if space.get_ref(tag_ref.clone()).is_ok() {
             return Err(format!("tag '{}' already exists", name).into());
