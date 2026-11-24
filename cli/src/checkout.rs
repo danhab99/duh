@@ -105,18 +105,7 @@ pub fn checkout_tree(space: &mut Space, from: Hash, to: Hash) -> Result<(), Box<
     let to_files = files_of(space, to)?;
 
     for path in from_files.keys().filter(|p| !to_files.contains_key(*p)) {
-        let full = space.get_path_in_worktree(path)?;
-        if full.exists() {
-            fs::remove_file(&full)?;
-        }
-        let worktree = space.get_path_in_worktree("")?;
-        let mut dir = full.parent().map(PathBuf::from);
-        while let Some(d) = dir {
-            if d == worktree || fs::remove_dir(&d).is_err() {
-                break;
-            }
-            dir = d.parent().map(PathBuf::from);
-        }
+        crate::worktree::remove_file(space, path)?;
     }
 
     let mut paths: Vec<&String> = to_files.keys().collect();

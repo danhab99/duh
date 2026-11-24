@@ -16,6 +16,7 @@ mod log;
 mod reflog;
 mod remote;
 mod reset;
+mod rm;
 mod show;
 mod stage;
 mod status;
@@ -101,6 +102,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Log(c) => {
             log::log(&mut space, c)?;
+        }
+        Commands::Rm(c) => {
+            rm::rm(&mut space, c)?;
         }
         Commands::Reflog(c) => {
             reflog::reflog(&mut space, c)?;

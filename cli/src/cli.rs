@@ -2,7 +2,7 @@ use clap::*;
 
 use crate::{
     branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    copy::CopyCommand, init::InitCommand, log::LogCommand, reflog::ReflogCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
+    copy::CopyCommand, init::InitCommand, log::LogCommand, reflog::ReflogCommand, rm::RmCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
     stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
     unstage::UnstageCommand,
 };
@@ -25,6 +25,9 @@ pub enum Commands {
     /// Add file contents to the index (alias: stage)
     #[command(name = "add", visible_alias = "stage")]
     Stage(StageCommand),
+
+    /// Remove files from the working tree and the index
+    Rm(RmCommand),
 
     /// Unstage a file (remove the file from being comitted)
     Unstage(UnstageCommand),
