@@ -1,7 +1,8 @@
+use crate::hash::Hash;
 use crate::objects::FileFragment;
 use crate::space::{ReadSeek, Space, SpaceResult};
+use crate::store::Store;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::PathBuf;
 
 /// A reader that lazily replays file fragments to reconstruct a file.
 /// 
@@ -86,9 +87,12 @@ use std::path::PathBuf;
 /// # }
 /// ```
 pub struct LazyFileReplay {
-    /// On-disk paths for ADDED fragment objects, indexed parallel to `fragments`.
+    /// Store holding the ADDED fragment objects.
+    store: Store,
+
+    /// Hashes of ADDED fragment objects, indexed parallel to `fragments`.
     /// `None` for UNCHANGED / DELETED entries. Data is loaded on first access.
-    added_fragment_paths: Vec<Option<PathBuf>>,
+    added_fragments: Vec<Option<Hash>>,
     
     /// The old file to read UNCHANGED fragments from
     old_reader: Box<dyn ReadSeek>,
@@ -123,24 +127,16 @@ impl LazyFileReplay {
         old_reader: Box<dyn ReadSeek>,
         fragments: Vec<FileFragment>,
     ) -> SpaceResult<Self> {
-        use crate::objects::ObjectReference;
-
-        // Pre-compute on-disk paths for ADDED fragment objects.
-        // Data is NOT loaded here – it is read from disk on the first access
+        // Remember which fragment object holds each ADDED body. Data is NOT
+        // loaded here – it is read from the space's store on the first access
         // of each fragment, one fragment at a time.
-        let mut added_fragment_paths = Vec::with_capacity(fragments.len());
-
-        for frag in &fragments {
-            match frag {
-                FileFragment::ADDED { body, .. } => {
-                    let path = space.get_object_path(ObjectReference::Hash(*body))?;
-                    added_fragment_paths.push(Some(path));
-                }
-                _ => {
-                    added_fragment_paths.push(None);
-                }
-            }
-        }
+        let added_fragments = fragments
+            .iter()
+            .map(|frag| match frag {
+                FileFragment::ADDED { body, .. } => Some(*body),
+                _ => None,
+            })
+            .collect();
         
         // Calculate total size of the reconstructed file
         let total_size: u64 = fragments
@@ -153,7 +149,8 @@ impl LazyFileReplay {
             .sum();
 
         Ok(Self {
-            added_fragment_paths,
+            store: space.store().clone(),
+            added_fragments,
             old_reader,
             fragments,
             logical_position: 0,
@@ -224,17 +221,17 @@ impl Read for LazyFileReplay {
                     // the fragment is fully consumed or when seeking.
                     if self.current_added_data.is_none() {
                         use crate::objects::{Fragment, Object};
-                        use std::fs::File;
-                        use std::io::BufReader;
 
-                        let path = self.added_fragment_paths[self.current_fragment_index]
-                            .as_ref()
+                        let hash = self.added_fragments[self.current_fragment_index]
                             .ok_or_else(|| io::Error::new(
                                 io::ErrorKind::NotFound,
-                                "Fragment path not found at expected index",
+                                "Fragment hash not found at expected index",
                             ))?;
-                        let file = File::open(path)?;
-                        let obj = Object::from_msgpack_reader(BufReader::new(file))
+                        let bytes = self
+                            .store
+                            .read(&Space::object_key(&hash))
+                            .map_err(|e| io::Error::other(e.to_string()))?;
+                        let obj = Object::from_msgpack(bytes.to_vec())
                             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                         let data = match obj {
                             Object::Fragment(Fragment(d)) => d,
@@ -517,9 +514,8 @@ mod tests {
         let space_root = temp_dir.path().to_str().unwrap().to_string();
         
         // Initialize the space properly
-        let op = opendal::services::Fs::default().root(&space_root);
-        let fs = opendal::Operator::new(op).unwrap().finish().blocking();
-        let space = Space::initialize_at(fs, None).unwrap();
+        let store = crate::store::local(std::path::Path::new(&space_root)).unwrap();
+        let space = Space::init(store, None).unwrap();
         
         // Create the replay reader
         let mut replay = LazyFileReplay::new(

@@ -7,15 +7,12 @@ use crate::{
 use std::{
     collections::HashMap,
     error::Error,
-    fs::File,
-    io::{Read, Seek, Write},
+    io::{Read, Seek},
     path::{Component, Path, PathBuf},
-    str::FromStr,
     time::SystemTime,
 };
 
-use opendal::BlockingOperator as Operator;
-use serde::Serialize;
+use crate::store::Store as Operator;
 
 use toml::{self};
 
@@ -34,103 +31,6 @@ fn lexical_normalize(path: &Path) -> PathBuf {
     out
 }
 
-fn upsert_pair(pairs: &mut Vec<(String, String)>, key: &str, value: String) {
-    if let Some((_, v)) = pairs.iter_mut().find(|(k, _)| k == key) {
-        *v = value;
-    } else {
-        pairs.push((key.to_string(), value));
-    }
-}
-
-/// Opendal fs config for a local repo given either its worktree path
-/// (containing `.duh/`) or its metadata directory.
-fn local_fs_pairs(uri: &str, abs_path: PathBuf) -> SpaceResult<(opendal::Scheme, Vec<(String, String)>)> {
-    let metadata_root = if abs_path
-        .join(crate::utils::SPACE_METADATA_DIR_NAME)
-        .is_dir()
-    {
-        abs_path.join(crate::utils::SPACE_METADATA_DIR_NAME)
-    } else {
-        abs_path
-    };
-
-    if !metadata_root.join("config").is_file() {
-        return Err(Box::new(DuhError::Generic(format!(
-            "remote path '{}' is not a valid duh repo (missing config)",
-            uri
-        ))));
-    }
-
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    upsert_pair(
-        &mut pairs,
-        "root",
-        metadata_root.to_string_lossy().to_string(),
-    );
-    Ok((opendal::Scheme::Fs, pairs))
-}
-
-fn parse_uri_to_config_pairs(uri: &str) -> SpaceResult<(opendal::Scheme, Vec<(String, String)>)> {
-    // Fallback for local path remotes like `../source` that are not valid URLs.
-    let parsed = match url::Url::parse(uri) {
-        Ok(u) if u.scheme() == "file" => {
-            let path = u
-                .to_file_path()
-                .map_err(|_| format!("invalid file URL '{}'", uri))?;
-            return local_fs_pairs(uri, path);
-        }
-        Ok(u) => u,
-        Err(url::ParseError::RelativeUrlWithoutBase) => {
-            let raw_path = std::path::PathBuf::from(uri);
-            let abs_path = if raw_path.is_absolute() {
-                raw_path
-            } else {
-                std::env::current_dir()?.join(raw_path)
-            };
-            return local_fs_pairs(uri, abs_path);
-        }
-        Err(e) => return Err(Box::new(e)),
-    };
-
-    let scheme = opendal::Scheme::from_str(parsed.scheme())?;
-
-    let mut pairs: Vec<(String, String)> = Vec::new();
-
-    if let Some(host) = parsed.host_str() {
-        let mut endpoint = format!("{}://{}", parsed.scheme(), host);
-        if let Some(port) = parsed.port() {
-            endpoint.push(':');
-            endpoint.push_str(port.to_string().as_str());
-        }
-
-        upsert_pair(&mut pairs, "endpoint", endpoint);
-        upsert_pair(&mut pairs, "host", host.to_string());
-
-        // Common URI shape for s3 is s3://bucket/root
-        if matches!(scheme, opendal::Scheme::S3) {
-            upsert_pair(&mut pairs, "bucket", host.to_string());
-        }
-    }
-
-    if !parsed.username().is_empty() {
-        upsert_pair(&mut pairs, "username", parsed.username().to_string());
-    }
-    if let Some(password) = parsed.password() {
-        upsert_pair(&mut pairs, "password", password.to_string());
-    }
-
-    let root = parsed.path();
-    if !root.is_empty() && root != "/" {
-        upsert_pair(&mut pairs, "root", root.to_string());
-    }
-
-    for (k, v) in parsed.query_pairs() {
-        upsert_pair(&mut pairs, k.as_ref(), v.into_owned());
-    }
-
-    Ok((scheme, pairs))
-}
-
 // Object-safe alias for `Read + Seek` so we can store boxed readers that support both.
 pub trait ReadSeek: Read + Seek {}
 impl<T: Read + Seek + ?Sized> ReadSeek for T {}
@@ -142,7 +42,7 @@ pub struct Space {
     pub chunk_size: usize,
     pub max_size: usize,
     pub worktree: Option<PathBuf>,
-    pub metadata_root: PathBuf,
+    /// Where this space's metadata lives. Injected; any opendal backend.
     fs: Operator,
 }
 
@@ -156,8 +56,10 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
 impl Space {
-    pub fn at_root_path(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
-        vlog!("space::at_root_path called with");
+    /// Open an existing space whose metadata lives in `filesystem` (any
+    /// opendal backend; see [`crate::store`]), with an optional local worktree.
+    pub fn open(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
+        vlog!("space::open called with");
         // metadata_path == "<space-root>/.duh" — store the space root (parent of .duh)
         // let space_root = PathBuf::from(&metadata_path)
         //     .parent()
@@ -199,10 +101,8 @@ impl Space {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let metadata_root = PathBuf::from(filesystem.info().root());
         let mut r = Space {
             fs: filesystem,
-            metadata_root,
             chunk_size,
             max_size,
             worktree: if config_bare { None } else { worktree },
@@ -227,16 +127,14 @@ impl Space {
         };
 
         // Verbose: show resolved space/user info
-        vlog!("space::at_root_path: user='{} <{}>'", r.me.name, r.me.email,);
+        vlog!("space::open: user='{} <{}>'", r.me.name, r.me.email,);
 
         let index_file_path = r.get_path_in_space_str("index");
-        vlog!("space::at_root_path: index path = {}", index_file_path,);
+        vlog!("space::open: index path = {}", index_file_path,);
 
-        let index_file = r.fs.reader(index_file_path.as_str()).unwrap();
-        let mut contents = String::new();
-        index_file
-            .into_std_read(0..)?
-            .read_to_string(&mut contents)?;
+        let contents = String::from_utf8(
+            r.read_in_space(index_file_path.as_str())?.unwrap_or_default(),
+        )?;
         for line in contents.lines() {
             let parts = line.split("=").collect::<Vec<_>>();
             assert!(parts.len() == 2);
@@ -253,49 +151,21 @@ impl Space {
         }
 
         vlog!(
-            "space::at_root_path: loaded {} index entries",
+            "space::open: loaded {} index entries",
             r.index.len()
         );
 
         Ok(r)
     }
 
-    fn create_dir_all(&self, path: &str) -> Result<(), Box<dyn Error>> {
-        use std::path::Path;
-        if self.metadata_root.join(path).exists() {
-            return Ok(());
-        }
-        if let Some(parent) = Path::new(path).parent() {
-            let parent_str = parent.to_str().unwrap();
-            if !parent_str.is_empty() {
-                self.create_dir_all(parent_str)?;
-            }
-        }
-        let mut dir_path = path.to_string();
-        if !dir_path.ends_with('/') {
-            dir_path.push('/');
-        }
-        self.fs.create_dir(dir_path.as_str())?;
-        Ok(())
-    }
-
-    fn get_path_in_space(&self, p: &str) -> PathBuf {
-        vlog!("space::get_path_in_space: p='{}'", p);
-        // Ensure parent directories exist then return the absolute path.
-        if let Some(parent) = PathBuf::from(p).parent() {
-            let parent_str = parent.to_str().unwrap();
-            if !parent_str.is_empty() {
-                self.create_dir_all(parent_str).unwrap();
-            }
-        }
-        self.metadata_root.join(p)
-    }
-
+    /// Key of a metadata entry in the store (paths are store-relative).
     fn get_path_in_space_str(&self, p: &str) -> String {
-        // Ensure the directory structure exists (side-effect of get_path_in_space),
-        // then return the relative path string for OpenDAL.
-        let _ = self.get_path_in_space(p);
         p.to_string()
+    }
+
+    /// The store this space's metadata lives in.
+    pub fn store(&self) -> &Operator {
+        &self.fs
     }
 
     pub fn get_path_in_worktree(&self, p: &str) -> SpaceResult<PathBuf> {
@@ -377,15 +247,15 @@ impl Space {
         self.index.get(path).cloned()
     }
 
-    pub fn initialize_at(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
+    /// Create a new space in `filesystem` (any opendal backend), with an
+    /// optional local worktree (`None` for a bare space).
+    pub fn init(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
-        let metadata_root = PathBuf::from(filesystem.info().root());
         let r = Space {
             fs: filesystem,
-            metadata_root,
             chunk_size: DEFAULT_BLOCK_SIZE,
             max_size: DEFAULT_MAX_FRAGMENT_SIZE,
             worktree,
@@ -397,9 +267,7 @@ impl Space {
             index: HashMap::new(),
         };
 
-        vlog!("space::initialize_at");
-        r.create_dir_all("objects")?;
-        r.create_dir_all("refs")?;
+        vlog!("space::init");
 
         let default_config = format!(
             "chunk_size = {}\nmax_size = {}\n\n[core]\nbare = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
@@ -421,129 +289,56 @@ impl Space {
         Ok(r)
     }
 
-    pub fn get_object_path(&self, r: ObjectReference) -> SpaceResult<PathBuf> {
-        let hash = self.resolve_ref_name(r)?.to_string();
-        vlog!("space::get_object_path: resolved hash={}", hash);
-        let top = &hash[0..3];
-        let top1 = &hash[3..6];
-        let top2 = &hash[6..9];
-        let bottom = &hash[9..hash.len()];
-
-        Ok(
-            self.get_path_in_space(
-                format!("objects/{}/{}/{}/{}", top, top1, top2, bottom).as_str(),
-            ),
-        )
+    /// Store key of the object with this hash: objects/<3>/<3>/<3>/<rest>.
+    pub fn object_key(hash: &Hash) -> String {
+        let hex = hash.to_string();
+        format!("objects/{}/{}/{}/{}", &hex[0..3], &hex[3..6], &hex[6..9], &hex[9..])
     }
 
     pub fn save_obj(&self, o: Object) -> SpaceResult<Hash> {
-        vlog!("space::save_obj: saving object");
-        use rmp_serde::Serializer;
-        use sha2::{Digest, Sha256};
-        use std::io::Write as IoWrite;
-        use tempfile::NamedTempFile;
-
-        // Ensure objects dir exists
-        let objects_dir = &self.get_path_in_space_str("objects");
-        self.create_dir_all(objects_dir)?;
-
-        // Create a named temp file inside the objects dir so rename/persist is atomic
-        let mut tmp = NamedTempFile::new_in(self.metadata_root.join(&objects_dir))?;
-
-        // Hasher to compute hash of the *msgpack* bytes as they are written
-        let mut hasher = Sha256::new();
-
-        // A small writer that writes to the temp file and updates the hasher
-        struct HashingWriter<'a, W: IoWrite> {
-            inner: &'a mut W,
-            hasher: &'a mut Sha256,
-        }
-
-        impl<'a, W: IoWrite> IoWrite for HashingWriter<'a, W> {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.inner.write_all(buf)?;
-                self.hasher.update(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                self.inner.flush()
-            }
-        }
-
-        // Serialize the object directly into the temp file while hashing
-        {
-            let mut hw = HashingWriter {
-                inner: &mut tmp,
-                hasher: &mut hasher,
-            };
-            let mut ser = Serializer::new(&mut hw);
-            o.serialize(&mut ser).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("serialize: {}", e))
-            })?;
-            hw.flush()?;
-        }
-
-        // finalize hash and build Hash value (hex-encoded sha256)
-        let digest = hasher.finalize();
-        let hex = hex::encode(digest);
-        let hash = Hash::from_string(hex)?;
-
-        // Persist temp file to final object path
-        // get_object_path returns an absolute path; strip root to get the
-        // relative path needed by create_dir_all (OpenDAL) while using the
-        // absolute path for the native-FS persist call.
-        let abs_path = self.get_object_path(ObjectReference::Hash(hash.clone()))?;
-        let rel_path = abs_path.strip_prefix(&self.metadata_root).unwrap();
-        if let Some(parent) = rel_path.parent() {
-            let parent_str = parent.to_str().unwrap();
-            if !parent_str.is_empty() {
-                self.create_dir_all(parent_str)?;
-            }
-        }
-        tmp.persist(&abs_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
-
-        vlog!("space::save_obj: persisted object at {:?}", abs_path);
+        let bytes = o.to_msgpack();
+        let hash = Hash::digest_slice(&bytes)?;
+        self.write_raw_object(hash, bytes)?;
         vlog!("space::save_obj: object hash={}", hash.to_string());
-
-        // NOTE: `.raw` sidecars removed — fragment bytes are stored only inside the
-        // serialized `Fragment` object on disk and will be deserialized when first read.
         Ok(hash)
     }
 
-    fn read_in_space(&self, path: &str) -> SpaceResult<Option<Vec<u8>>> {
-        let mut content = Vec::<u8>::new();
-        self.fs
-            .reader(path)?
-            .into_std_read(0..)?
-            .read_to_end(&mut content)?;
-
-        return Ok(Some(content));
+    /// Whether this space's store holds the object.
+    pub fn has_object(&self, hash: Hash) -> SpaceResult<bool> {
+        Ok(self.fs.exists(&Space::object_key(&hash))?)
     }
 
-    fn read_object(&self, r: Hash) -> SpaceResult<Option<Vec<u8>>> {
-        let abs_path = self.get_object_path(ObjectReference::Hash(r))?;
-        let rel_path = abs_path.strip_prefix(&self.metadata_root).unwrap();
-        vlog!("space::read_object: path={:?}", abs_path);
-        if !abs_path.exists() {
-            vlog!(
-                "space::read_object: object not found for hash={}",
-                r.to_string()
-            );
-            return Ok(None);
+    /// The object's stored (msgpack) bytes, if present.
+    pub fn read_raw_object(&self, hash: Hash) -> SpaceResult<Option<Vec<u8>>> {
+        self.read_in_space(&Space::object_key(&hash))
+    }
+
+    /// Store an object's msgpack bytes under `hash`, after checking they
+    /// really hash to it. Objects are content-addressed, so an object that's
+    /// already present is left alone.
+    pub fn write_raw_object(&self, hash: Hash, bytes: Vec<u8>) -> SpaceResult<()> {
+        if Hash::digest_slice(&bytes)? != hash {
+            return Err(format!("object bytes don't match hash {}", hash.to_string()).into());
         }
-        let mut content = Vec::<u8>::new();
-        self.fs
-            .reader(rel_path.to_str().unwrap())?
-            .into_std_read(0..)?
-            .read_to_end(&mut content)?;
-        vlog!("space::read_object: read {} bytes", content.len());
-        return Ok(Some(content.to_vec()));
+        let key = Space::object_key(&hash);
+        if !self.fs.exists(&key)? {
+            self.fs.write(&key, bytes)?;
+        }
+        Ok(())
+    }
+
+    /// Read a metadata entry; `None` if it doesn't exist.
+    fn read_in_space(&self, path: &str) -> SpaceResult<Option<Vec<u8>>> {
+        match self.fs.read(path) {
+            Ok(buf) => Ok(Some(buf.to_vec())),
+            Err(e) if e.kind() == opendal::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(Box::new(e)),
+        }
     }
 
     pub fn get_object(&self, r: Hash) -> SpaceResult<Option<Object>> {
         vlog!("space::get_object: hash={}", r.to_string());
-        let content = self.read_object(r)?;
+        let content = self.read_raw_object(r)?;
         match content {
             Some(content) => {
                 vlog!(
@@ -674,16 +469,16 @@ impl Space {
         // Objects live at objects/<3>/<3>/<3>/<rest>; walk only the
         // directories that can match the prefix.
         let segments = [(0usize, 3usize), (3, 6), (6, 9), (9, 64)];
-        let mut dirs = vec![(self.metadata_root.join("objects"), String::new())];
+        let mut dirs = vec![("objects/".to_string(), String::new())];
         for (start, end) in segments {
             let want = prefix.get(start..end.min(prefix.len())).unwrap_or("");
             let mut next = Vec::new();
             for (dir, so_far) in dirs {
-                let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
+                let Ok(entries) = self.fs.list(&dir) else { continue };
+                for entry in entries {
+                    let name = entry.name().trim_end_matches('/').to_string();
                     if name.len() == end - start && name.starts_with(want) {
-                        next.push((entry.path(), format!("{}{}", so_far, name)));
+                        next.push((format!("{}{}/", dir, name), format!("{}{}", so_far, name)));
                     }
                 }
             }
@@ -707,13 +502,13 @@ impl Space {
     pub fn save_index(&mut self) -> SpaceResult<()> {
         vlog!("space::save_index: saving {} entries", self.index.len());
 
-        let mut index_file = File::create(self.get_path_in_space("index"))?;
-
-        for (key, value) in &self.index {
-            writeln!(index_file, "{} = \"{}\"", key, value.to_string())?;
-        }
-
-        Ok(())
+        let mut entries: Vec<_> = self.index.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        let contents: String = entries
+            .into_iter()
+            .map(|(key, value)| format!("{} = \"{}\"\n", key, value.to_string()))
+            .collect();
+        self.write_to_space("index", contents.as_bytes())
     }
 
     pub fn list_files(&mut self, commit_ref: ObjectReference) -> SpaceResult<Vec<String>> {
@@ -932,48 +727,40 @@ impl Space {
             .as_str()
             .ok_or(DuhError::Generic("remote url must be a string".to_string()))?;
 
-        let config_pairs: Vec<(String, String)> = this_remote_table
+        let options: Vec<(String, String)> = this_remote_table
             .get("config")
             .and_then(|c| c.as_table())
             .map(|t| {
                 t.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .map(|(k, v)| {
+                        let v = match v {
+                            toml::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        (k.clone(), v)
+                    })
                     .collect()
             })
             .unwrap_or_default();
 
-        let (scheme, mut merged_pairs) = parse_uri_to_config_pairs(url_s)?;
-
-        // Explicit remote.config values override URI-derived defaults.
-        for (k, v) in config_pairs {
-            upsert_pair(&mut merged_pairs, k.as_str(), v);
-        }
-
-        let fs = opendal::Operator::via_iter(scheme, merged_pairs)?.blocking();
-        let r: Space = Space::at_root_path(fs, None)?;
+        let store = crate::store::from_url(url_s, &options)?;
+        let r: Space = Space::open(store, None)?;
         Ok(r)
     }
 
     pub fn log_ref(&self, r: ObjectReference, hash: Hash, message: &str) -> SpaceResult<()> {
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(self.get_path_in_space(&format!("reflog/{}", r)))?;
-
-        writeln!(file, "{} | {}", hash.to_string(), message)?;
-
-        Ok(())
+        // Not every backend can append, so rewrite the log with the new line.
+        let key = format!("reflog/{}", r);
+        let mut log = self.read_in_space(&key)?.unwrap_or_default();
+        log.extend_from_slice(format!("{} | {}\n", hash.to_string(), message).as_bytes());
+        self.write_to_space(&key, &log)
     }
 
     pub fn get_reflog(&self, branch: &str) -> SpaceResult<String> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .open(self.get_path_in_space(&format!("reflog/{}", branch)))?;
-
-        let mut s: Vec<u8> = Vec::new();
-        file.read_to_end(&mut s)?;
-
-        Ok(String::from_utf8(s)?)
+        let log = self
+            .read_in_space(&format!("reflog/{}", branch))?
+            .ok_or_else(|| format!("no reflog for '{}'", branch))?;
+        Ok(String::from_utf8(log)?)
     }
 
     /// List all configured remotes as (name, url) pairs.
@@ -1109,9 +896,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let meta = dir.path().join(crate::utils::SPACE_METADATA_DIR_NAME);
         std::fs::create_dir_all(&meta).unwrap();
-        let op = opendal::services::Fs::default().root(meta.to_str().unwrap());
-        let fs = opendal::Operator::new(op).unwrap().finish().blocking();
-        let space = Space::initialize_at(fs, Some(dir.path().to_path_buf())).unwrap();
+        let store = crate::store::local(&meta).unwrap();
+        let space = Space::init(store, Some(dir.path().to_path_buf())).unwrap();
         (dir, space)
     }
 

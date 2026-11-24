@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use clap::clap_derive::Args;
 use lib::{hash::Hash, objects::ObjectReference, space::Space};
-use opendal::services::Fs;
 
 use crate::checkout::restore;
 
@@ -122,10 +121,8 @@ fn clone_into(
     bare: bool,
 ) -> Result<(), Box<dyn Error>> {
     // Initialize a new duh space
-    let op = Fs::default().root(metadata_path.to_str().unwrap());
-    let fs = opendal::Operator::new(op)?.finish().blocking();
     let worktree = if bare { None } else { Some(dest_path.clone()) };
-    let mut space = Space::initialize_at(fs, worktree)?;
+    let mut space = Space::init(lib::store::local(metadata_path)?, worktree)?;
 
     // Add the remote as "origin"
     space.add_remote("origin", url)?;

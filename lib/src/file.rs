@@ -318,7 +318,9 @@ impl<'a> FileOps<'a> {
             hash.to_string()
         );
         let repo_path = self.normalize_repo_path(&file_path)?;
-        let fp = self.space.get_path_in_worktree_str(&repo_path)?;
+        // Spaces from before paths were repo-relative keyed files by absolute
+        // worktree path; only meaningful when there is a worktree.
+        let legacy_key = self.space.get_path_in_worktree_str(&repo_path).ok();
 
         let commit = match self.space.get_object(hash)? {
             Some(Object::Commit(c)) => c,
@@ -337,7 +339,10 @@ impl<'a> FileOps<'a> {
         };
 
         let files = self.space.get_commit_files(hash)?;
-        let file_version_hash = match files.get(repo_path.as_str()).or_else(|| files.get(fp.as_str())) {
+        let file_version_hash = match files
+            .get(repo_path.as_str())
+            .or_else(|| legacy_key.as_deref().and_then(|k| files.get(k)))
+        {
             Some(x) => x,
             None => {
                 vlog!(
@@ -506,9 +511,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let meta = dir.path().join(crate::utils::SPACE_METADATA_DIR_NAME);
         std::fs::create_dir_all(&meta).unwrap();
-        let op = opendal::services::Fs::default().root(meta.to_str().unwrap());
-        let fs = opendal::Operator::new(op).unwrap().finish().blocking();
-        let space = Space::initialize_at(fs, Some(dir.path().to_path_buf())).unwrap();
+        let store = crate::store::local(&meta).unwrap();
+        let space = Space::init(store, Some(dir.path().to_path_buf())).unwrap();
         (dir, space)
     }
 

@@ -71,12 +71,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
             // Inside a duh space: normal copy behavior
             let (metadata_dir, _worktree) = result?;
-            let op =
-                opendal::services::Fs::default().root(metadata_dir.to_str().unwrap());
-
-            let fs = opendal::Operator::new(op)?.finish().blocking();
-
-            let mut space = lib::space::Space::at_root_path(fs, _worktree)?;
+            let mut space = lib::space::Space::open(lib::store::local(&metadata_dir)?, _worktree)?;
             copy::copy(&mut space, c)?;
             space.save_index()?;
             return Ok(());
@@ -85,12 +80,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             let cwd = std::env::current_dir()?;
             let (metadata_dir, worktree) = lib::utils::find_duh_dir(cwd.to_str().unwrap())?;
 
-            let op =
-                opendal::services::Fs::default().root(metadata_dir.to_str().unwrap());
-
-            let fs = opendal::Operator::new(op)?.finish().blocking();
-
-            lib::space::Space::at_root_path(fs, worktree)?
+            lib::space::Space::open(lib::store::local(&metadata_dir)?, worktree)?
         }
     };
 
