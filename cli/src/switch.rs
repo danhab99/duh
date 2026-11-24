@@ -5,54 +5,47 @@ use lib::hash::Hash;
 use lib::objects::ObjectReference;
 use lib::space::Space;
 
-use crate::checkout::restore;
-use crate::status::status;
+use crate::checkout::checkout_tree;
+use crate::status;
 
 #[derive(Args)]
-#[command(about = "switch a file (produce fragment objects without committing)")]
+#[command(about = "Switch to another branch, updating the working tree")]
 pub struct SwitchCommand {
-    /// Path to the file to switch
     #[arg(help = "Name of branch to switch to")]
     pub name: String,
 
-    #[arg(help = "Create a new branch")]
+    #[arg(help = "Create the branch at the current commit first")]
     pub create: Option<bool>,
 }
 
 pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Error>> {
-    let uncomitted_changes = status(space, &crate::status::StatusCommand {})?;
-
-    if uncomitted_changes && cmd.create == None || cmd.create == Some(false) {
+    if status::collect(space)?.is_dirty() {
         return Err(Box::new(lib::error::DuhError::UncommittedChanges));
     }
 
-    println!("{} {}", crate::colors::cyan("Switching to"), cmd.name);
+    let name = cmd.name.clone();
+    let from = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
+    let exists = space.list_branches()?.contains(&name);
 
-    let branch_name = cmd.name.clone();
+    let to: Hash = match (exists, cmd.create == Some(true)) {
+        (true, false) => space.resolve_ref_name(ObjectReference::Ref(name.clone()))?,
+        (true, true) => return Err(format!("branch '{}' already exists", name).into()),
+        (false, true) => {
+            space.set_ref(&name, ObjectReference::Hash(from), Some("switch: create"))?;
+            from
+        }
+        (false, false) => {
+            return Err(format!(
+                "branch '{}' does not exist (use `duh switch {} true` to create it)",
+                name, name
+            )
+            .into())
+        }
+    };
 
-    // Just check existence — all branch refs contain a commit hash, so matching on
-    // Hash(_) and panicking was wrong.
-    let ref_exists = space.get_ref(branch_name.clone()).is_ok();
+    space.set_ref("HEAD", ObjectReference::Ref(name.clone()), Some("switch"))?;
+    checkout_tree(space, from, to)?;
 
-    let commit_hash: Hash;
-
-    if ref_exists {
-        space.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()), Some("switch"))?;
-        commit_hash = space.resolve_ref_name(ObjectReference::Ref(branch_name.clone()))?;
-    } else if cmd.create == Some(true) {
-        // resolve_ref_name handles both attached HEAD (Ref -> Hash) and detached HEAD (Hash directly).
-        commit_hash = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
-        space.set_ref(&cmd.name, ObjectReference::Hash(commit_hash.clone()), Some("switch"))?;
-        space.set_ref("HEAD", ObjectReference::Ref(branch_name.clone()), Some("switch"))?;
-    } else {
-        return Err(format!("branch '{}' does not exist", branch_name).into());
-    }
-
-    let files = space.list_files(ObjectReference::Hash(commit_hash))?;
-
-    for file_path in files {
-        restore(space, &file_path, commit_hash, None)?;
-    }
-
+    println!("{} {}", crate::colors::cyan("Switched to branch"), name);
     Ok(())
 }

@@ -63,7 +63,7 @@ impl fmt::Display for DuhError {
                 write!(f, "Remote operation not yet implemented: {}", op)
             }
             DuhError::UncommittedChanges => {
-                write!(f, "Cannot switch branches with uncommitted changes.\nPlease commit or stash your changes first.")
+                write!(f, "cannot switch branches with uncommitted changes; commit, unstage or discard them first")
             }
             DuhError::DetachedHead { operation } => {
                 write!(

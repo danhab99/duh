@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error};
+use std::{collections::BTreeMap, error::Error};
 
 use clap::clap_derive::Args;
 use lib::{
@@ -11,99 +11,110 @@ use lib::{
 #[command(about = "Show status of tracked files (compare working copy -> index / HEAD)")]
 pub struct StatusCommand {}
 
-pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<bool, Box<dyn Error>> {
+/// Tracked files grouped by state, as repo-relative paths (sorted).
+/// A file can be both staged and modified (edited again after staging).
+#[derive(Default)]
+pub struct StatusReport {
+    /// In the index: will change in the next commit.
+    pub staged: Vec<String>,
+    /// Working copy differs from the staged version (or HEAD's, if unstaged).
+    pub modified: Vec<String>,
+    /// Tracked but absent from the working tree.
+    pub missing: Vec<String>,
+    /// Tracked, not staged, and identical to HEAD.
+    pub clean: Vec<String>,
+}
+
+impl StatusReport {
+    /// Anything a commit, checkout or branch switch could lose.
+    pub fn is_dirty(&self) -> bool {
+        !(self.staged.is_empty() && self.modified.is_empty() && self.missing.is_empty())
+    }
+}
+
+fn content_hash(space: &mut Space, version: Hash) -> Result<Option<Hash>, Box<dyn Error>> {
+    Ok(match space.get_object(version)? {
+        Some(Object::File(fv)) => Some(fv.content_hash),
+        _ => None,
+    })
+}
+
+pub fn collect(space: &mut Space) -> Result<StatusReport, Box<dyn Error>> {
     if space.worktree.is_none() {
         return Err("status needs a working tree (this space is bare)".into());
     }
-    let cwd = std::env::current_dir()?;
 
-    // Build the set of tracked files using HEAD as the base and letting staged
-    // entries in the index override when present.
-    let mut tracked: HashMap<String, Hash> = HashMap::new();
-
+    // Expected content for each tracked file: the staged version if any,
+    // otherwise HEAD's.
+    let mut tracked: BTreeMap<String, (Hash, bool)> = BTreeMap::new();
     let head_hash = space.resolve_ref_name(ObjectReference::Ref("HEAD".to_string()))?;
     if !head_hash.is_zero() {
-        if let Some(Object::Commit(_head)) = space.get_object(head_hash)? {
-            let head_files = space.get_commit_files(head_hash)?;
-            for (path, version_hash) in head_files.iter() {
-                tracked.insert(path.clone(), *version_hash);
-            }
+        for (path, version) in space.get_commit_files(head_hash)? {
+            tracked.insert(path, (version, false));
         }
     }
-
     for path in space.index_paths() {
-        if let Some(version_hash) = space.get_indexed_version(&path) {
-            tracked.insert(path.clone(), version_hash);
+        if let Some(version) = space.get_indexed_version(&path) {
+            tracked.insert(path, (version, true));
         }
     }
 
-    let mut changed: Vec<String> = Vec::new();
-    let mut unchanged: Vec<String> = Vec::new();
-    let mut missing: Vec<String> = Vec::new();
+    let mut report = StatusReport::default();
+    for (path, (version, staged)) in tracked {
+        if staged {
+            report.staged.push(path.clone());
+        }
 
-    for (path, version_hash) in tracked.iter() {
-        let display = space.display_path(&cwd, path);
-
-        let full_path = space.get_path_in_worktree(path)?;
+        let full_path = space.get_path_in_worktree(&path)?;
         if !full_path.exists() {
-            missing.push(display);
+            report.missing.push(path);
             continue;
         }
 
-        let mut f = std::fs::File::open(&full_path)?;
-        let working_hash = Hash::digest_file_stream(&mut f)?;
-
-        match space.get_object(*version_hash)? {
-            Some(Object::File(fv)) => {
-                if fv.content_hash == working_hash {
-                    unchanged.push(display);
-                } else {
-                    changed.push(display);
-                }
-            }
-            _ => changed.push(display),
+        let working = Hash::digest_file_stream(&mut std::fs::File::open(&full_path)?)?;
+        if content_hash(space, version)? != Some(working) {
+            report.modified.push(path);
+        } else if !staged {
+            report.clean.push(path);
         }
     }
+    Ok(report)
+}
 
-    changed.sort();
-    unchanged.sort();
-    missing.sort();
+pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<(), Box<dyn Error>> {
+    let report = collect(space)?;
+    let cwd = std::env::current_dir()?;
 
     let head_ref_name = match space.get_ref("HEAD".into())? {
         ObjectReference::Ref(name) => name,
-        ObjectReference::Hash(hash) => hash.to_string(),
+        ObjectReference::Hash(hash) => format!("(detached at {})", hash.to_string()),
         ObjectReference::AbbrevHash(s) => s,
     };
-
     println!("On branch {}", crate::colors::green(head_ref_name.as_str()));
-    println!("");
 
-    let mut uncommitted_changes = false;
-
-    if !changed.is_empty() {
-        println!("{}", crate::colors::yellow("Modified files:"));
-        for p in &changed {
-            println!("  {}", crate::colors::yellow(p));
+    let sections: [(&str, &Vec<String>, fn(&str) -> String); 4] = [
+        ("Staged for commit:", &report.staged, crate::colors::green),
+        ("Modified (not staged):", &report.modified, crate::colors::yellow),
+        ("Deleted / missing:", &report.missing, crate::colors::red),
+        ("Up to date:", &report.clean, crate::colors::dim),
+    ];
+    for (title, paths, color) in sections {
+        if paths.is_empty() {
+            continue;
         }
-        uncommitted_changes = true;
-    }
-    if !missing.is_empty() {
-        println!("{}", crate::colors::red("Deleted / missing files:"));
-        for p in &missing {
-            println!("  {}", crate::colors::red(p));
+        println!();
+        println!("{}", color(title));
+        for p in paths {
+            println!("  {}", color(&space.display_path(&cwd, p)));
         }
-        uncommitted_changes = true;
-    }
-
-    if !unchanged.is_empty() {
-        println!("{}", crate::colors::green("Staged / up-to-date files:"));
-        for p in &unchanged {
-            println!("  {}", crate::colors::green(p));
-        }
-        uncommitted_changes = true;
     }
 
-    if changed.is_empty() && missing.is_empty() && unchanged.is_empty() {
+    if report.staged.is_empty()
+        && report.modified.is_empty()
+        && report.missing.is_empty()
+        && report.clean.is_empty()
+    {
+        println!();
         println!(
             "{}",
             crate::colors::dim(
@@ -112,5 +123,5 @@ pub fn status(space: &mut Space, _cmd: &StatusCommand) -> Result<bool, Box<dyn E
         );
     }
 
-    Ok(uncommitted_changes)
+    Ok(())
 }

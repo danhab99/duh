@@ -89,3 +89,40 @@ pub fn restore(
     std::io::copy(&mut reader, &mut out_file)?;
     Ok(())
 }
+
+/// Make the worktree match commit `to`, coming from commit `from`: restore
+/// every file in `to` and delete files tracked by `from` that `to` lacks
+/// (pruning directories left empty). Either hash may be zero (no commit).
+pub fn checkout_tree(space: &mut Space, from: Hash, to: Hash) -> Result<(), Box<dyn Error>> {
+    let files_of = |space: &Space, h: Hash| -> Result<_, Box<dyn Error>> {
+        Ok(if h.is_zero() {
+            Default::default()
+        } else {
+            space.get_commit_files(h)?
+        })
+    };
+    let from_files = files_of(space, from)?;
+    let to_files = files_of(space, to)?;
+
+    for path in from_files.keys().filter(|p| !to_files.contains_key(*p)) {
+        let full = space.get_path_in_worktree(path)?;
+        if full.exists() {
+            fs::remove_file(&full)?;
+        }
+        let worktree = space.get_path_in_worktree("")?;
+        let mut dir = full.parent().map(PathBuf::from);
+        while let Some(d) = dir {
+            if d == worktree || fs::remove_dir(&d).is_err() {
+                break;
+            }
+            dir = d.parent().map(PathBuf::from);
+        }
+    }
+
+    let mut paths: Vec<&String> = to_files.keys().collect();
+    paths.sort();
+    for path in paths {
+        restore(space, path, to, None)?;
+    }
+    Ok(())
+}
