@@ -38,7 +38,7 @@ Everything below is exercised end to end by [`demo.sh`](demo.sh), which
 - ✅ `branch`, `switch` (`-c`), `tag`, `reset` (`--soft` / `--mixed` / `--hard`)
 - ✅ Commits named by branch, tag, short hash, `HEAD~N` or `X^`
 - ✅ `.duhignore`
-- 🚧 Pushing and pulling between remotes (`copy`, `remote`) — implemented, not yet covered by the demo
+- ✅ Remotes on 34 storage backends (S3, GCS, Azure, WebDAV, SFTP, Google Drive, …): `remote`, `copy` (fast-forward push / pull), `clone`
 - ❌ Merging, rebasing, stashing — out of scope for now
 
 ## Architecture
@@ -54,7 +54,8 @@ duh/
 │   ├── space.rs      # A repository ("space"): objects, refs, index, paths
 │   ├── objects.rs    # Object model (Commit, Tree, File, Fragment)
 │   ├── hash.rs       # Content-addressable hashing (SHA-256)
-│   └── remote.rs     # Copying commits between spaces
+│   ├── store.rs      # Storage backends: any opendal service, built from a URL + options
+│   └── transfer.rs   # Spaces copying objects and commits to one another
 └── cli/              # Command-line interface, one module per command
 ```
 
@@ -118,6 +119,47 @@ duh restore --source HEAD~1 big.bin   # bring back an older version
 duh switch -c experiment       # branch off
 duh clone ../project copy      # clone a space
 ```
+
+### Remotes and storage backends
+
+A space keeps its history in a *store*: any filesystem-like opendal backend.
+A remote is a URL plus whatever options that backend needs, stored in plain
+text in `.duh/config` (secrets-manager integration is planned):
+
+```bash
+duh remote add origin ../shared-hub          # a local directory (absolute path saved)
+duh remote add warehouse s3://my-bucket/game \
+    -o region=eu-west-1 -o access_key_id=AKIA… -o secret_access_key=…
+duh copy --to warehouse        # push; the first copy creates the space in an empty prefix
+duh copy --from warehouse      # pull (fast-forward only — duh doesn't merge)
+duh clone s3://my-bucket/game game -o region=eu-west-1 -o access_key_id=… -o secret_access_key=…
+```
+
+```toml
+[remote.warehouse]
+url = "s3://my-bucket/game"
+
+[remote.warehouse.config]        # passed to the backend as-is
+region = "eu-west-1"
+access_key_id = "AKIA…"
+secret_access_key = "…"
+```
+
+The URL scheme picks the backend and the options use
+[opendal's names for that service](https://docs.rs/opendal/0.52.0/opendal/services/index.html);
+`duh config set remote.NAME.config.KEY VALUE` changes one later. Included:
+
+- **Object storage:** `s3`, `gcs`, `azblob`, `oss`, `obs`, `cos`, `b2`, `swift`, `upyun`, `supabase`, `vercel-blob`, `lakefs`
+- **File protocols:** local paths / `file://`, `ftp`, `sftp`, `webdav`, `webhdfs`, `hdfs`, `azfile`, `azdls`, `dbfs`, `alluxio`, `ipmfs`
+- **Cloud drives:** `gdrive`, `onedrive`, `dropbox`, `pcloud`, `koofr`, `yandex-disk`, `aliyun-drive`, `seafile`, `icloud`
+- **Read-only:** `http`/`https` — clone a `.duh/` directory served by any static web server
+- **Testing:** `memory`
+
+Databases and caches aren't offered: caches evict data and databases cap
+value sizes, neither of which a repository can survive. Copying refuses to
+drop commits (`--force` overrides when pushing), refuses to run over
+uncommitted changes, and won't move the branch a non-bare remote has
+checked out.
 
 Run `duh <command> --help` for every option.
 
@@ -198,7 +240,7 @@ This allows efficient storage and reconstruction of any version in the history.
 4. **Performance**: Fast operations even with large files and deep history
 
 ### Planned Features
-- [ ] Demo coverage for pushing and pulling between remotes
+- [ ] Credentials from secrets managers instead of plain-text config
 - [ ] Repository garbage collection
 - [ ] Partial clone/checkout for large repositories
 - [ ] Merge strategies for binary content
