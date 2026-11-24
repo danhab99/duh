@@ -150,7 +150,14 @@ impl<'a> FileOps<'a> {
 
         let head_commit = self.space.get_head_commit_hash()?;
 
-        let tree_hash = self.space.build_tree(&self.space.index)?;
+        // Files untouched since HEAD carry forward; staged versions replace them.
+        let mut files = if head_commit.is_zero() {
+            Default::default()
+        } else {
+            self.space.get_commit_files(head_commit)?
+        };
+        files.extend(self.space.index.iter().map(|(k, v)| (k.clone(), *v)));
+        let tree_hash = self.space.build_tree(&files)?;
 
         let commit = CommitStruct {
             parent: head_commit,
@@ -293,20 +300,35 @@ impl<'a> FileOps<'a> {
             }
         }
 
-        let parent_reader: Box<dyn ReadSeek> = if self
-            .version_in_commit(commit.parent, &repo_path)?
-            .is_none()
-        {
-            // File was added in this commit: its fragments diff against nothing.
-            Box::new(io::Cursor::new(Vec::<u8>::new()))
-        } else {
-            self.open_file(repo_path.clone(), commit.parent)?
-        };
+        // A version's fragments diff against the file as it was when staged,
+        // i.e. in the parent of the commit that introduced the version. Commits
+        // that merely carried the version forward must be skipped.
+        let version = *file_version_hash;
+        let mut base_commit = commit.parent;
+        while self.version_in_commit(base_commit, &repo_path)? == Some(version) {
+            base_commit = match self.space.get_object(base_commit)? {
+                Some(Object::Commit(c)) => c.parent,
+                _ => {
+                    return Err(Box::new(crate::error::DuhError::invalid_object(
+                        "commit",
+                        "unknown object type",
+                    )))
+                }
+            };
+        }
+
+        let parent_reader: Box<dyn ReadSeek> =
+            if self.version_in_commit(base_commit, &repo_path)?.is_none() {
+                // File was added by the introducing commit: diff against nothing.
+                Box::new(io::Cursor::new(Vec::<u8>::new()))
+            } else {
+                self.open_file(repo_path.clone(), base_commit)?
+            };
 
         vlog!(
-            "space::open_file: creating lazy replay with {} fragments, parent_hash={}",
+            "space::open_file: creating lazy replay with {} fragments, base_commit={}",
             fragments.len(),
-            commit.parent.to_string()
+            base_commit.to_string()
         );
 
         let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
