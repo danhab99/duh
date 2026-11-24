@@ -10,7 +10,7 @@ use std::{
     error::Error,
     fs::File,
     io::{Read, Seek, Write},
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
     str::FromStr,
     time::SystemTime,
 };
@@ -19,6 +19,21 @@ use opendal::BlockingOperator as Operator;
 use serde::Serialize;
 
 use toml::{self};
+
+/// Resolve `.` and `..` components without touching the filesystem.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
 
 fn upsert_pair(pairs: &mut Vec<(String, String)>, key: &str, value: String) {
     if let Some((_, v)) = pairs.iter_mut().find(|(k, _)| k == key) {
@@ -289,6 +304,61 @@ impl Space {
             Some(wt) => Ok(wt.join(p)),
             None => Err(Box::new(DuhError::BareRepoNoWorktree)),
         }
+    }
+
+    /// Convert a path given by the user (absolute, or relative to `cwd`) into a
+    /// '/'-separated path relative to the worktree root, as stored in the index.
+    pub fn repo_path_from(&self, cwd: &Path, input: &str) -> SpaceResult<String> {
+        let worktree = self
+            .worktree
+            .as_ref()
+            .ok_or_else(|| Box::new(DuhError::BareRepoNoWorktree) as Box<dyn Error>)?;
+
+        let abs = lexical_normalize(&cwd.join(input));
+        let rel = match abs.strip_prefix(lexical_normalize(worktree)) {
+            Ok(rel) => rel.to_path_buf(),
+            // Fall back to resolving symlinks when the path exists.
+            Err(_) => std::fs::canonicalize(&abs)
+                .ok()
+                .zip(std::fs::canonicalize(worktree).ok())
+                .and_then(|(a, w)| a.strip_prefix(w).ok().map(Path::to_path_buf))
+                .ok_or_else(|| format!("path '{}' is outside the worktree", input))?,
+        };
+
+        let parts: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .collect();
+        if parts.is_empty() {
+            return Err(format!("path '{}' is the worktree root, not a file", input).into());
+        }
+        if parts[0] == crate::utils::SPACE_METADATA_DIR_NAME {
+            return Err(format!("path '{}' is inside the metadata directory", input).into());
+        }
+        Ok(parts.join("/"))
+    }
+
+    /// Render a repo path relative to `cwd` for display (e.g. `../a.bin`).
+    pub fn display_path(&self, cwd: &Path, repo_path: &str) -> String {
+        let Some(worktree) = &self.worktree else {
+            return repo_path.to_string();
+        };
+        let target = lexical_normalize(&worktree.join(repo_path));
+        let cwd = lexical_normalize(cwd);
+
+        let common = target
+            .components()
+            .zip(cwd.components())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let mut out = PathBuf::new();
+        for _ in cwd.components().skip(common) {
+            out.push("..");
+        }
+        for c in target.components().skip(common) {
+            out.push(c);
+        }
+        out.to_string_lossy().to_string()
     }
 
     pub fn get_path_in_worktree_str(&self, p: &str) -> SpaceResult<String> {
