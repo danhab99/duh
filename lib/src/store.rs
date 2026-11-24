@@ -56,7 +56,8 @@ pub fn local(root: &Path) -> SpaceResult<Store> {
 /// - Plain paths and `file://` URLs point at a local space: its worktree
 ///   (containing `.duh/`) or the metadata directory itself.
 /// - Any other URL's scheme names an opendal service (`s3://bucket/path`,
-///   `gcs://…`, `webdav://host/path`, `memory://`, …). The host, port,
+///   `gcs://…`, `webdav://host/path`, `memory://`, …; underscores in
+///   service names become hyphens, e.g. `yandex-disk://`). The host, port,
 ///   user info and path become the usual options (`bucket` for s3/gcs/…,
 ///   `endpoint`, `root`, …) and query parameters are passed through, so
 ///   `s3://bucket/repo?region=eu-west-1` works.
@@ -143,6 +144,33 @@ fn host_is_bucket(scheme: &Scheme) -> bool {
     )
 }
 
+/// The opendal service for a URL scheme, if duh supports it.
+fn scheme_for(name: &str, url: &str) -> SpaceResult<Scheme> {
+    let scheme = match name {
+        // HDFS goes through the pure-Rust client (no JVM needed).
+        "hdfs" => Scheme::HdfsNative,
+        "https" => Scheme::Http,
+        // URL schemes can't contain '_', so opendal's `vercel_blob`,
+        // `yandex_disk`, … are written `vercel-blob://`, `yandex-disk://`.
+        // Scheme::from_str maps unknown names to Scheme::Custom.
+        other => match Scheme::from_str(&other.replace('-', "_")) {
+            Ok(Scheme::Custom(_)) | Err(_) => {
+                return Err(format!("unknown storage scheme '{}' in '{}'", name, url).into())
+            }
+            Ok(s) => s,
+        },
+    };
+    if !Scheme::enabled().contains(&scheme) {
+        return Err(format!(
+            "'{}' isn't a backend duh supports: repositories need a filesystem-like store \
+             (object storage, a file protocol or a cloud drive), not a database or cache",
+            name
+        )
+        .into());
+    }
+    Ok(scheme)
+}
+
 fn parse_url(url: &str) -> SpaceResult<(Scheme, Vec<(String, String)>)> {
     let parsed = match url::Url::parse(url) {
         Ok(u) if u.scheme() == "file" => {
@@ -164,13 +192,7 @@ fn parse_url(url: &str) -> SpaceResult<(Scheme, Vec<(String, String)>)> {
         Err(e) => return Err(Box::new(e)),
     };
 
-    // Scheme::from_str maps unknown names to Scheme::Custom rather than failing.
-    let scheme = match Scheme::from_str(parsed.scheme()) {
-        Ok(Scheme::Custom(_)) | Err(_) => {
-            return Err(format!("unknown storage scheme '{}' in '{}'", parsed.scheme(), url).into())
-        }
-        Ok(s) => s,
-    };
+    let scheme = scheme_for(parsed.scheme(), url)?;
     let mut pairs: Vec<(String, String)> = Vec::new();
 
     if let Some(host) = parsed.host_str() {
@@ -180,7 +202,7 @@ fn parse_url(url: &str) -> SpaceResult<(Scheme, Vec<(String, String)>)> {
             // Network services: http(s) endpoint for web-ish protocols,
             // otherwise keep the URL's own scheme.
             let proto = match scheme {
-                Scheme::Webdav | Scheme::Http => "https",
+                Scheme::Webdav => "https",
                 _ => parsed.scheme(),
             };
             let mut endpoint = format!("{}://{}", proto, host);
@@ -244,6 +266,48 @@ mod tests {
 
     #[test]
     fn unknown_scheme_is_an_error() {
-        assert!(config_for_url("nosuchservice://x", &[]).is_err());
+        let err = config_for_url("nosuchservice://x", &[]).unwrap_err().to_string();
+        assert!(err.contains("unknown storage scheme"), "{}", err);
+    }
+
+    #[test]
+    fn databases_and_caches_are_not_backends() {
+        for url in ["redis://localhost:6379", "postgresql://db/x", "moka://", "sqlite:///tmp/x.db"] {
+            let err = config_for_url(url, &[]).unwrap_err().to_string();
+            assert!(err.contains("isn't a backend duh supports"), "{}: {}", url, err);
+        }
+    }
+
+    #[test]
+    fn hdfs_uses_the_native_client() {
+        let (scheme, _) = config_for_url("hdfs://namenode:9000/repos/x", &[]).unwrap();
+        assert_eq!(scheme, Scheme::HdfsNative);
+    }
+
+    #[test]
+    fn http_urls_keep_their_protocol() {
+        for (url, endpoint) in [
+            ("http://host:8080/repo", "http://host:8080"),
+            ("https://cdn.example.com/repo", "https://cdn.example.com"),
+        ] {
+            let (scheme, pairs) = config_for_url(url, &[]).unwrap();
+            assert_eq!(scheme, Scheme::Http);
+            assert!(pairs.contains(&("endpoint".into(), endpoint.into())), "{:?}", pairs);
+            assert!(pairs.contains(&("root".into(), "/repo".into())));
+        }
+    }
+
+    /// Every compiled-in backend accepts a URL of its own scheme (options
+    /// may still be needed to actually connect).
+    #[test]
+    fn every_enabled_backend_has_a_url_form() {
+        for scheme in Scheme::enabled() {
+            if scheme == Scheme::Fs {
+                continue; // local paths, covered elsewhere
+            }
+            let url = format!("{}://host/root", scheme.into_static().replace('_', "-"));
+            let (got, _) = config_for_url(&url, &[]).unwrap_or_else(|e| panic!("{}: {}", url, e));
+            assert_eq!(got, scheme, "{}", url);
+        }
     }
 }
