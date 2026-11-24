@@ -59,16 +59,10 @@ impl Space {
     /// Open an existing space whose metadata lives in `filesystem` (any
     /// opendal backend; see [`crate::store`]), with an optional local worktree.
     pub fn open(filesystem: Operator, worktree: Option<PathBuf>) -> SpaceResult<Space> {
-        vlog!("space::open called with");
-        // metadata_path == "<space-root>/.duh" — store the space root (parent of .duh)
-        // let space_root = PathBuf::from(&metadata_path)
-        //     .parent()
-        //     .and_then(|p| p.to_str())
-        //     .ok_or("couldn't determine space root")?
-        //     .to_string();
-
-        // let config_path = find_file(rp.as_str(), &getSpaceConfigFileName())?;
-
+        vlog!("space::open");
+        if !Space::is_space(&filesystem)? {
+            return Err("no duh space here (the store has no config)".into());
+        }
         let content = String::from_utf8(filesystem.read("config")?.to_bytes().to_vec())?;
         let config = content.parse::<toml::Table>()?;
 
@@ -245,6 +239,11 @@ impl Space {
     /// Return the stored FileVersion *object* hash for `path` if present in the index.
     pub fn get_indexed_version(&self, path: &str) -> Option<Hash> {
         self.index.get(path).cloned()
+    }
+
+    /// Whether `store` holds a space (has a config).
+    pub fn is_space(store: &Operator) -> SpaceResult<bool> {
+        Ok(store.exists("config")?)
     }
 
     /// Create a new space in `filesystem` (any opendal backend), with an
@@ -714,6 +713,17 @@ impl Space {
     }
 
     pub fn get_remote_by_name(&self, name: &str) -> SpaceResult<Space> {
+        self.open_remote(name, false)
+    }
+
+    /// Open a remote, creating a bare space there if its store is empty
+    /// (e.g. a fresh bucket prefix), so the first copy to it just works.
+    /// A non-empty store without a space is still an error.
+    pub fn get_or_create_remote(&self, name: &str) -> SpaceResult<Space> {
+        self.open_remote(name, true)
+    }
+
+    fn open_remote(&self, name: &str, create: bool) -> SpaceResult<Space> {
         let full_table = self.get_table()?;
 
         let this_remote_table = full_table
@@ -745,7 +755,19 @@ impl Space {
             .unwrap_or_default();
 
         let store = crate::store::from_url(url_s, &options)?;
-        let r: Space = Space::open(store, None)?;
+        if create && !Space::is_space(&store)? {
+            let empty = match store.list("/") {
+                Ok(entries) => entries.iter().all(|e| e.path() == "/" || e.path().is_empty()),
+                Err(e) if e.kind() == opendal::ErrorKind::NotFound => true,
+                Err(e) => return Err(Box::new(e)),
+            };
+            if !empty {
+                return Err(format!("remote '{}' ({}) holds files but no duh space", name, url_s).into());
+            }
+            return Space::init(store, None);
+        }
+        let r: Space = Space::open(store, None)
+            .map_err(|e| format!("remote '{}' ({}): {}", name, url_s, e))?;
         Ok(r)
     }
 

@@ -276,7 +276,7 @@ fn copy_to(
     target_branch: &str,
     force: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let remote = space.get_remote_by_name(remote_name)?;
+    let remote = space.get_or_create_remote(remote_name)?;
     let head = space.get_head_commit_hash()?;
     if head.is_zero() {
         return Err("nothing to copy: no commits yet".into());
