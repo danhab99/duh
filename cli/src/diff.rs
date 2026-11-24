@@ -12,13 +12,14 @@ use crate::commit::fmt_bytes;
 use crate::status::{self, StagedChange};
 
 #[derive(Args)]
-#[command(about = "Show changes: working tree vs index, or index vs HEAD with --staged")]
+#[command(about = "Compare your files with the last save, or your picks with --picked")]
 pub struct DiffCommand {
     /// Limit to these files (relative to the current directory)
     pub paths: Vec<String>,
 
-    /// Show staged changes (index vs HEAD) instead of unstaged ones
-    #[arg(long = "staged", visible_alias = "cached")]
+    /// Compare what you've picked with the last save, instead of your
+    /// un-picked edits
+    #[arg(long = "picked", aliases = ["staged", "cached"])]
     pub staged: bool,
 }
 
@@ -27,12 +28,7 @@ type Entry = (u64, char, &'static str);
 fn print_file(space: &Space, repo_path: &str, label: &str, entries: &[Entry]) {
     let cwd = std::env::current_dir().unwrap_or_default();
     let sum = |c: char| entries.iter().filter(|e| e.1 == c).map(|e| e.0 as usize).sum::<usize>();
-    println!(
-        "{} {}{}",
-        crate::colors::bold("diff"),
-        space.display_path(&cwd, repo_path),
-        label
-    );
+    println!("{}{}", crate::colors::bold(&space.display_path(&cwd, repo_path)), label);
     if entries.is_empty() {
         return;
     }
@@ -68,7 +64,7 @@ pub fn diff(space: &mut Space, cmd: &DiffCommand) -> Result<(), Box<dyn Error>> 
             }
             let version = match space.get_indexed_version(path).map(|h| space.get_object(h)) {
                 Some(Ok(Some(Object::File(f)))) => f,
-                _ => return Err(format!("staged version of '{}' is unreadable", path).into()),
+                _ => return Err(format!("picked version of '{}' is unreadable", path).into()),
             };
             let entries: Vec<Entry> = FileOps::from_space(space)
                 .load_fragments(&version)?
@@ -94,7 +90,7 @@ pub fn diff(space: &mut Space, cmd: &DiffCommand) -> Result<(), Box<dyn Error>> 
         print_file(space, path, "", &entries);
     }
     for path in report.missing.iter().filter(|p| wanted(p)) {
-        print_file(space, path, " (deleted from the working tree)", &[]);
+        print_file(space, path, " (missing from your files)", &[]);
     }
     Ok(())
 }

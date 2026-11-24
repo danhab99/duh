@@ -7,62 +7,54 @@ use lib::{hash::Hash, objects::ObjectReference, space::Space};
 use crate::checkout::restore;
 
 #[derive(Args)]
-#[command(about = "Copy commits to a remote (default) or from one (--from); fast-forward only")]
-pub struct CopyCommand {
-    #[arg(
-        short = 'f',
-        long = "from",
-        help = "Remote to copy commits from (like git pull --ff-only)"
-    )]
-    pub from: Option<String>,
+#[command(about = "Send your saves to a place (fast-forward only)")]
+pub struct SendCommand {
+    /// Place to send to (default: origin)
+    pub place: Option<String>,
 
-    #[arg(
-        short = 't',
-        long = "to",
-        help = "Remote to copy commits to (like git push; default: origin)"
-    )]
-    pub to: Option<String>,
+    /// Draft to update there (default: the one you're on)
+    #[arg(short = 'd', long = "draft", alias = "branch", short_alias = 'b')]
+    pub draft: Option<String>,
 
-    #[arg(
-        short = 'a',
-        long = "as",
-        help = "Local branch to update when copying from a remote (default: the current branch)"
-    )]
-    pub as_branch: Option<String>,
-
-    #[arg(
-        short = 'b',
-        long = "branch",
-        help = "Remote branch (default: the local branch's name)"
-    )]
-    pub branch: Option<String>,
-
-    #[arg(
-        long = "force",
-        help = "When copying to a remote, overwrite its branch even if that discards commits"
-    )]
+    /// Overwrite the place's draft even if that discards saves made there
+    #[arg(long = "force")]
     pub force: bool,
 }
 
+#[derive(Args)]
+#[command(about = "Receive new saves from a place (fast-forward only)")]
+pub struct ReceiveCommand {
+    /// Place to receive from (default: origin)
+    pub place: Option<String>,
+
+    /// Draft to receive from there (default: the same name as yours)
+    #[arg(short = 'd', long = "draft", alias = "branch", short_alias = 'b')]
+    pub draft: Option<String>,
+
+    /// Your draft to update (default: the one you're on)
+    #[arg(long = "into")]
+    pub into: Option<String>,
+}
+
 #[derive(clap::Args)]
-#[command(about = "Clone a repository into a new directory")]
+#[command(about = "Get a copy of a space into a new folder")]
 pub struct CloneCommand {
-    /// Repository to clone: a path, file:// URL or other remote URL
+    /// Where the space lives: a folder, file:// URL or storage URL (s3://…)
     pub url: String,
 
-    /// Directory to create (default: derived from the URL)
+    /// Folder to create (default: named after the URL)
     pub directory: Option<String>,
 
-    /// Branch to check out (default: the remote's current branch)
-    #[arg(short = 'b', long = "branch")]
+    /// Draft to open (default: the one the space is on)
+    #[arg(short = 'd', long = "draft", alias = "branch", short_alias = 'b')]
     pub branch: Option<String>,
 
-    /// Clone the history without checking out a working tree
+    /// Only the history, no working files
     #[arg(long = "bare")]
     pub bare: bool,
 
-    /// Backend option or credential for the remote, saved in the new
-    /// space's config (e.g. -o region=eu-west-1 -o access_key_id=…)
+    /// Storage option or credential, saved in the new space's settings
+    /// (e.g. -o region=eu-west-1 -o access_key_id=…)
     #[arg(short = 'o', long = "option", value_name = "KEY=VALUE")]
     pub options: Vec<String>,
 }
@@ -80,7 +72,7 @@ pub fn default_clone_dir(url: &str) -> Result<String, Box<dyn Error>> {
         .trim_end_matches(".duh");
     if name.is_empty() || name == "." || name == ".." {
         return Err(format!(
-            "can't infer a directory name from '{}'; pass one with --as",
+            "can't infer a directory name from '{}'; name the folder: duh get <url> <folder>",
             url
         )
         .into());
@@ -102,7 +94,7 @@ pub fn clone(
     let metadata_path = dest_path.join(lib::utils::SPACE_METADATA_DIR_NAME);
 
     if dest_path.exists() {
-        return Err(format!("destination '{}' already exists", dest_dir).into());
+        return Err(format!("folder '{}' already exists", dest_dir).into());
     }
 
     // Create the destination directory; remove it again if the clone fails
@@ -115,7 +107,7 @@ pub fn clone(
 
     println!(
         "{} {} -> {}",
-        crate::colors::cyan("Cloned"),
+        crate::colors::cyan("Got"),
         crate::colors::green(url),
         crate::colors::green(dest_dir)
     );
@@ -150,7 +142,7 @@ fn clone_into(
     let remote_hash = match remote.resolve_ref_name(ObjectReference::Ref(target_branch.to_string())) {
         Ok(h) => h,
         Err(_) if remote_branch.is_some() => {
-            return Err(format!("remote has no branch '{}'", target_branch).into())
+            return Err(format!("that space has no draft '{}'", target_branch).into())
         }
         Err(_) => Hash::new(),
     };
@@ -168,7 +160,7 @@ fn clone_into(
     space.set_ref(
         "HEAD",
         ObjectReference::Ref(local_branch.to_string()),
-        Some("clone from remote"),
+        Some("get"),
     )?;
 
     if !bare {
@@ -185,29 +177,22 @@ fn clone_into(
     Ok(())
 }
 
-pub fn copy(space: &mut Space, cmd: &CopyCommand) -> Result<(), Box<dyn Error>> {
-    let head_branch = space.get_head_branch_name().unwrap_or_else(|_| "HEAD".to_string());
+pub fn send(space: &mut Space, cmd: &SendCommand) -> Result<(), Box<dyn Error>> {
+    let place = cmd.place.as_deref().unwrap_or("origin");
+    let current = space.get_head_branch_name().unwrap_or_else(|_| "HEAD".to_string());
+    copy_to(space, place, cmd.draft.as_deref().unwrap_or(&current), cmd.force)
+}
 
-    match (&cmd.from, &cmd.to) {
-        (Some(_), Some(_)) => Err("cannot specify both --from and --to".into()),
-        (Some(remote_name), None) => {
-            if cmd.force {
-                return Err("--force only applies when copying to a remote".into());
-            }
-            let local_branch = cmd.as_branch.as_deref().unwrap_or(&head_branch);
-            copy_from(space, remote_name, local_branch, cmd.branch.as_deref())
-        }
-        (None, to) => {
-            let remote_name = to.as_deref().unwrap_or("origin");
-            let target_branch = cmd.branch.as_deref().unwrap_or(&head_branch);
-            copy_to(space, remote_name, target_branch, cmd.force)
-        }
-    }
+pub fn receive(space: &mut Space, cmd: &ReceiveCommand) -> Result<(), Box<dyn Error>> {
+    let place = cmd.place.as_deref().unwrap_or("origin");
+    let current = space.get_head_branch_name().unwrap_or_else(|_| "HEAD".to_string());
+    let into = cmd.into.as_deref().unwrap_or(&current);
+    copy_from(space, place, into, cmd.draft.as_deref())
 }
 
 fn describe(stats: &lib::transfer::TransferStats) -> String {
     format!(
-        "{} commit(s), {} object(s), {}",
+        "{} save(s), {} object(s), {}",
         stats.commits,
         stats.objects,
         crate::commit::fmt_bytes(stats.bytes as usize)
@@ -227,11 +212,11 @@ fn copy_from(
     let remote_branch = remote_branch.unwrap_or(local_branch);
     let remote_hash = remote
         .resolve_ref_name(ObjectReference::Ref(remote_branch.to_string()))
-        .map_err(|_| format!("{} has no branch '{}'", remote_name, remote_branch))?;
+        .map_err(|_| format!("{} has no draft '{}'", remote_name, remote_branch))?;
 
     let is_current = space.get_ref("HEAD".into())? == ObjectReference::Ref(local_branch.to_string());
     if is_current && space.worktree.is_some() && crate::status::collect(space)?.is_dirty() {
-        return Err("you have uncommitted changes; commit or discard them before copying from a remote".into());
+        return Err("you have unsaved changes; save or bring back your files before receiving".into());
     }
 
     let local_hash = space
@@ -241,7 +226,7 @@ fn copy_from(
 
     if !space.is_ancestor(local_hash, remote_hash)? {
         return Err(format!(
-            "'{}' has commits that {}/{} doesn't; duh can't merge, so only fast-forwards are copied",
+            "your draft '{}' has saves that {}/{} doesn't; duh doesn't merge, so it only receives when nothing would be lost",
             local_branch, remote_name, remote_branch
         )
         .into());
@@ -250,7 +235,7 @@ fn copy_from(
     space.set_ref(
         local_branch,
         ObjectReference::Hash(remote_hash),
-        Some(&format!("copy from {}/{}", remote_name, remote_branch)),
+        Some(&format!("receive from {}/{}", remote_name, remote_branch)),
     )?;
     if is_current && space.worktree.is_some() {
         crate::checkout::checkout_tree(space, local_hash, remote_hash)?;
@@ -258,7 +243,7 @@ fn copy_from(
 
     println!(
         "{} {}/{} -> {} ({}..{}): {}",
-        crate::colors::cyan("Copied"),
+        crate::colors::cyan("Received"),
         remote_name,
         remote_branch,
         crate::colors::green(local_branch),
@@ -279,7 +264,7 @@ fn copy_to(
     let remote = space.get_or_create_remote(remote_name)?;
     let head = space.get_head_commit_hash()?;
     if head.is_zero() {
-        return Err("nothing to copy: no commits yet".into());
+        return Err("nothing to send: no saves yet".into());
     }
 
     // Like git, don't move the branch a non-bare remote has checked out:
@@ -287,7 +272,7 @@ fn copy_to(
     let remote_is_bare = remote.get_config_value("core.bare").map(|v| v == "true").unwrap_or(true);
     if !remote_is_bare && remote.get_head_branch_name().ok().as_deref() == Some(target_branch) {
         return Err(format!(
-            "refusing to update '{}', the branch checked out in {}; copy to a bare space or another branch",
+            "won't update '{}': it's the draft open in {}, whose files would go stale; send to another draft or a bare space",
             target_branch, remote_name
         )
         .into());
@@ -298,7 +283,7 @@ fn copy_to(
         .unwrap_or_else(|_| Hash::new());
     if !force && !space.is_ancestor(remote_hash, head)? {
         return Err(format!(
-            "{}/{} has commits you don't; copy --from {} first (or --force to discard them)",
+            "{}/{} has saves you don't; `duh receive {}` first (or --force to discard them)",
             remote_name, target_branch, remote_name
         )
         .into());
@@ -308,12 +293,12 @@ fn copy_to(
     remote.set_ref(
         target_branch,
         ObjectReference::Hash(head),
-        Some(&format!("copy to: {}", target_branch)),
+        Some(&format!("send: {}", target_branch)),
     )?;
 
     println!(
         "{} {} -> {}/{} ({}..{}): {}",
-        crate::colors::cyan("Copied"),
+        crate::colors::cyan("Sent"),
         space.get_head_branch_name().unwrap_or_else(|_| "HEAD".into()),
         remote_name,
         crate::colors::green(target_branch),

@@ -56,31 +56,6 @@ fn run() -> Result<(), Box<dyn Error>> {
             copy::clone(&c.url, &dest, c.branch.as_deref(), c.bare, &options)?;
             return Ok(());
         }
-        Commands::Copy(c) => {
-            let cwd = std::env::current_dir()?;
-            let result = lib::utils::find_duh_dir(cwd.to_str().unwrap());
-
-            if result.is_err() {
-                // Outside a duh space: treat as clone
-                if let Some(ref url) = c.from {
-                    let dest_dir = match c.as_branch.as_deref() {
-                        Some(d) => d.to_string(),
-                        None => copy::default_clone_dir(url)?,
-                    };
-                    copy::clone(url, &dest_dir, c.branch.as_deref(), false, &[])?;
-                    return Ok(());
-                } else {
-                    return Err("must specify --from when cloning outside a duh space".into());
-                }
-            }
-
-            // Inside a duh space: normal copy behavior
-            let (metadata_dir, _worktree) = result?;
-            let mut space = lib::space::Space::open(lib::store::local(&metadata_dir)?, _worktree)?;
-            copy::copy(&mut space, c)?;
-            space.save_index()?;
-            return Ok(());
-        }
         _ => {
             let cwd = std::env::current_dir()?;
             let (metadata_dir, worktree) = lib::utils::find_duh_dir(cwd.to_str().unwrap())?;
@@ -103,14 +78,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Show(c) => {
             show::show(&mut space, c)?;
         }
-        Commands::Checkout(c) => {
-            checkout::checkout(&mut space, c)?;
-        }
         Commands::Log(c) => {
             log::log(&mut space, c)?;
         }
         Commands::Rm(c) => {
             rm::rm(&mut space, c)?;
+        }
+        Commands::Forget(c) => {
+            rm::forget(&mut space, c)?;
+        }
+        Commands::Send(c) => {
+            copy::send(&mut space, c)?;
+        }
+        Commands::Receive(c) => {
+            copy::receive(&mut space, c)?;
         }
         Commands::Mv(c) => {
             mv::mv(&mut space, c)?;
@@ -136,7 +117,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Commands::Config(c) => {
             config::config(&space, c)?;
         }
-        Commands::Copy(_) | Commands::Clone(_) => unreachable!(),
+        Commands::Clone(_) => unreachable!(),
         Commands::Remote(c) => {
             remote::remote(&mut space, c)?;
         }

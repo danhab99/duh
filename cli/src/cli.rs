@@ -1,10 +1,12 @@
 use clap::*;
 
 use crate::{
-    branch::BranchCommand, checkout::CheckoutCommand, commit::CommitCommand, config::ConfigCommand,
-    copy::{CloneCommand, CopyCommand}, init::InitCommand, log::LogCommand, reflog::ReflogCommand, rm::RmCommand, restore_cmd::RestoreCommand, diff::DiffCommand, mv::MvCommand, remote::RemoteCommand, reset::ResetCommand, show::ShowCommand,
-    stage::StageCommand, status::StatusCommand, switch::SwitchCommand, tag::TagCommand,
-    unstage::UnstageCommand,
+    branch::BranchCommand, commit::CommitCommand, config::ConfigCommand,
+    copy::{CloneCommand, ReceiveCommand, SendCommand}, diff::DiffCommand, init::InitCommand,
+    log::LogCommand, mv::MvCommand, reflog::ReflogCommand, remote::RemoteCommand,
+    reset::ResetCommand, restore_cmd::RestoreCommand, rm::{ForgetCommand, RmCommand},
+    show::ShowCommand, stage::StageCommand, status::StatusCommand, switch::SwitchCommand,
+    tag::TagCommand, unstage::UnstageCommand,
 };
 
 /// `duh` — binary oriented version control
@@ -19,72 +21,96 @@ pub struct Cli {
 /// Top-level subcommands for the `duh` CLI.
 #[derive(Subcommand)]
 pub enum Commands {
-    // Start a space
-    /// Create an empty space (a `.duh/` directory) here
+    // Begin
+    /// Start a new space in this folder   [git: init]
+    #[command(name = "start", alias = "init")]
     Init(InitCommand),
 
-    /// Clone a repository into a new directory
+    /// Get a copy of a space into a new folder   [git: clone]
+    #[command(name = "get", alias = "clone")]
     Clone(CloneCommand),
 
-    // Work on the current change
-    /// Add file contents to the index
-    #[command(name = "add", visible_alias = "stage")]
-    Stage(StageCommand),
-
-    /// Move or rename a tracked file
-    Mv(MvCommand),
-
-    /// Restore working tree files, or unstage them with --staged
-    Restore(RestoreCommand),
-
-    /// Remove files from the working tree and the index
-    Rm(RmCommand),
-
-    /// Remove files from the index, keeping the working copy (= restore --staged)
-    Unstage(UnstageCommand),
-
-    // Examine history and state
-    /// Show changes: working tree vs index, or index vs HEAD with --staged
-    Diff(DiffCommand),
-
-    /// Show the commit history
-    Log(LogCommand),
-
-    /// Show a commit (default: HEAD) and the files it contains
-    Show(ShowCommand),
-
-    /// Show the working tree status
+    // Your work
+    /// See what's changed, picked and new   [git: status]
+    #[command(name = "look", alias = "status")]
     Status(StatusCommand),
 
-    /// Show the history of updates to a branch
-    Reflog(ReflogCommand),
+    /// Compare your files with the last save, or your picks with --picked   [git: diff]
+    #[command(name = "compare", alias = "diff")]
+    Diff(DiffCommand),
 
-    // Grow and tweak history
-    /// Record the staged changes as a new commit
+    /// Pick files to go into the next save   [git: add]
+    #[command(name = "pick", aliases = ["add", "stage"])]
+    Stage(StageCommand),
+
+    /// Un-pick files, keeping your edits   [git: restore --staged]
+    #[command(name = "unpick", alias = "unstage")]
+    Unstage(UnstageCommand),
+
+    /// Save a new version of your picked files   [git: commit]
+    #[command(name = "save", alias = "commit")]
     Commit(CommitCommand),
 
-    /// List, create, rename or delete branches
-    Branch(BranchCommand),
+    /// Bring back a file as it was in your picks, the last save, or any version   [git: restore, checkout]
+    #[command(name = "bring-back", aliases = ["restore", "checkout"])]
+    Restore(RestoreCommand),
 
-    /// Switch to another branch, updating the working tree
-    Switch(SwitchCommand),
+    /// Rename or move a tracked file   [git: mv]
+    #[command(name = "rename", aliases = ["mv", "move"])]
+    Mv(MvCommand),
 
-    /// Write a file as of some commit into the working tree (or --as elsewhere)
-    Checkout(CheckoutCommand),
+    /// Delete files and stop tracking them   [git: rm]
+    #[command(name = "delete", alias = "rm")]
+    Rm(RmCommand),
 
-    /// Move the current branch to another commit (--soft, --mixed, --hard)
-    Reset(ResetCommand),
+    /// Stop tracking files but keep them on disk   [git: rm --cached]
+    #[command(name = "forget")]
+    Forget(ForgetCommand),
 
-    /// List, create or delete tags
+    // Versions
+    /// Show your saves, newest first   [git: log]
+    #[command(name = "history", alias = "log")]
+    Log(LogCommand),
+
+    /// Inspect one version: who saved it, when, and its files   [git: show]
+    #[command(name = "inspect", alias = "show")]
+    Show(ShowCommand),
+
+    /// Every place a draft has pointed, for recovering lost work   [git: reflog]
+    #[command(name = "journal", alias = "reflog")]
+    Reflog(ReflogCommand),
+
+    /// Name a version, e.g. "final-v2"   [git: tag]
+    #[command(name = "label", alias = "tag")]
     Tag(TagCommand),
 
-    // Collaborate
-    /// Copy commits to or from a remote (pull/push)
-    Copy(CopyCommand),
+    /// Move your draft back (or forward) to another version   [git: reset]
+    #[command(name = "rewind", alias = "reset")]
+    Reset(ResetCommand),
 
-    /// Manage remote repository connections
+    // Drafts
+    /// List, create, rename or delete drafts   [git: branch]
+    #[command(name = "drafts", aliases = ["draft", "branch"])]
+    Branch(BranchCommand),
+
+    /// Open another draft, swapping your files to match it   [git: switch]
+    #[command(name = "open", alias = "switch")]
+    Switch(SwitchCommand),
+
+    // Sharing
+    /// Send your saves to a place   [git: push]
+    #[command(name = "send", alias = "push")]
+    Send(SendCommand),
+
+    /// Receive new saves from a place   [git: pull]
+    #[command(name = "receive", alias = "pull")]
+    Receive(ReceiveCommand),
+
+    /// Manage places your space is shared to (folders, S3, Drive, …)   [git: remote]
+    #[command(name = "places", aliases = ["place", "remote"])]
     Remote(RemoteCommand),
 
-    /// Get or set space configuration values
+    /// View or change settings   [git: config]
+    #[command(name = "settings", alias = "config")]
     Config(ConfigCommand),
 }

@@ -9,13 +9,13 @@ use crate::checkout::checkout_tree;
 use crate::status;
 
 #[derive(Args)]
-#[command(about = "Switch to another branch, updating the working tree")]
+#[command(about = "Open another draft, swapping your files to match it")]
 pub struct SwitchCommand {
-    #[arg(help = "Name of branch to switch to")]
+    #[arg(help = "Draft to open")]
     pub name: String,
 
-    /// Create the branch at the current commit first
-    #[arg(short = 'c', long = "create")]
+    /// Start a new draft from where you are, then open it
+    #[arg(short = 'n', long = "new", alias = "create", short_alias = 'c')]
     pub create: bool,
 }
 
@@ -30,23 +30,23 @@ pub fn switch(space: &mut Space, cmd: &SwitchCommand) -> Result<(), Box<dyn Erro
 
     let to: Hash = match (exists, cmd.create) {
         (true, false) => space.resolve_ref_name(ObjectReference::Ref(name.clone()))?,
-        (true, true) => return Err(format!("branch '{}' already exists", name).into()),
+        (true, true) => return Err(format!("there's already a draft called '{}'", name).into()),
         (false, true) => {
-            space.set_ref(&name, ObjectReference::Hash(from), Some("switch: create"))?;
+            space.set_ref(&name, ObjectReference::Hash(from), Some("open: new draft"))?;
             from
         }
         (false, false) => {
             return Err(format!(
-                "branch '{}' does not exist (use `duh switch -c {}` to create it)",
+                "there's no draft called '{}' (`duh open --new {}` starts one)",
                 name, name
             )
             .into())
         }
     };
 
-    space.set_ref("HEAD", ObjectReference::Ref(name.clone()), Some("switch"))?;
+    space.set_ref("HEAD", ObjectReference::Ref(name.clone()), Some("open"))?;
     checkout_tree(space, from, to)?;
 
-    println!("{} {}", crate::colors::cyan("Switched to branch"), name);
+    println!("{} {}", crate::colors::cyan("Opened draft"), name);
     Ok(())
 }

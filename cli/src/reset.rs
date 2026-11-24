@@ -18,23 +18,27 @@ pub enum ResetMode {
 }
 
 #[derive(Args)]
-#[command(about = "Reset the current branch to a specified commit")]
+#[command(about = "Move your draft back (or forward) to another version")]
+#[command(long_about = "Move your draft back (or forward) to another version.\n\n\
+By default your files stay exactly as they are and nothing is picked, so the \
+undone saves show up as changes. --keep-picked also picks them, ready to save \
+again; --discard makes your files match that version, throwing away unsaved work.")]
 #[command(group(clap::ArgGroup::new("mode").args(["soft", "mixed", "hard"])))]
 pub struct ResetCommand {
-    /// Keep the index and working tree; the undone changes become staged
-    #[arg(long)]
+    /// Pick the undone changes, ready to save again
+    #[arg(long = "keep-picked", alias = "soft")]
     pub soft: bool,
 
-    /// Clear the index, keep the working tree (default)
-    #[arg(long)]
+    /// Keep your files as they are and un-pick everything (the default)
+    #[arg(long = "mixed", hide = true)]
     pub mixed: bool,
 
-    /// Discard the index and make the working tree match the commit
-    #[arg(long)]
+    /// Make your files match that version, discarding unsaved work
+    #[arg(long = "discard", alias = "hard")]
     pub hard: bool,
 
-    /// Commit to reset to. Defaults to HEAD.
-    #[arg(help = "Commit hash or ref to reset to (defaults to HEAD)")]
+    /// Version to go to: a label, short hash, HEAD~1, … (default: the last save)
+    #[arg(value_name = "VERSION")]
     pub commit: Option<ObjectReference>,
 }
 
@@ -57,17 +61,17 @@ pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>
         None => old_head,
     };
     if !matches!(space.get_object(target)?, Some(Object::Commit(_))) {
-        return Err(format!("{} is not a commit", target.to_string()).into());
+        return Err(format!("{} isn't a version", target.to_string()).into());
     }
 
     if matches!(cmd.mode(), ResetMode::Soft) && !space.index.is_empty() {
         // Staged versions are diffs against the old HEAD; they can't be
         // carried onto a different parent.
-        return Err("soft reset needs an empty index; commit or unstage first".into());
+        return Err("--keep-picked needs nothing picked yet; save or un-pick first".into());
     }
 
     // Move whatever HEAD points at: the current branch, or HEAD if detached.
-    let msg = format!("reset: moving to {}", target.to_string());
+    let msg = format!("rewind to {}", target.to_string());
     match space.get_ref("HEAD".to_string())? {
         ObjectReference::Ref(branch) => {
             space.set_ref(&branch, ObjectReference::Hash(target), Some(&msg))?
@@ -84,11 +88,16 @@ pub fn reset(space: &mut Space, cmd: &ResetCommand) -> Result<(), Box<dyn Error>
         }
     }
 
+    let what = match cmd.mode() {
+        ResetMode::Soft => "the undone changes are picked",
+        ResetMode::Mixed => "your files are unchanged",
+        ResetMode::Hard => "your files match it",
+    };
     println!(
-        "{} to {} ({:?})",
-        crate::colors::green("Reset"),
-        crate::colors::cyan(&target.to_string()),
-        cmd.mode()
+        "{} to {} ({})",
+        crate::colors::green("Rewound"),
+        crate::colors::cyan(&target.to_string()[..12]),
+        what
     );
     Ok(())
 }
