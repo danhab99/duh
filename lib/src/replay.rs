@@ -517,7 +517,9 @@ mod tests {
         let space_root = temp_dir.path().to_str().unwrap().to_string();
         
         // Initialize the space properly
-        let space = Space::initialize_at(space_root).unwrap();
+        let op = opendal::services::Fs::default().root(&space_root);
+        let fs = opendal::Operator::new(op).unwrap().finish().blocking();
+        let space = Space::initialize_at(fs, None).unwrap();
         
         // Create the replay reader
         let mut replay = LazyFileReplay::new(
