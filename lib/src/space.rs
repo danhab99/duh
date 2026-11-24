@@ -1020,3 +1020,58 @@ impl Space {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// A fresh space whose worktree is a temp dir (metadata in `.duh/`).
+    fn space_with_worktree() -> (TempDir, Space) {
+        let dir = TempDir::new().unwrap();
+        let meta = dir.path().join(crate::utils::SPACE_METADATA_DIR_NAME);
+        std::fs::create_dir_all(&meta).unwrap();
+        let op = opendal::services::Fs::default().root(meta.to_str().unwrap());
+        let fs = opendal::Operator::new(op).unwrap().finish().blocking();
+        let space = Space::initialize_at(fs, Some(dir.path().to_path_buf())).unwrap();
+        (dir, space)
+    }
+
+    #[test]
+    fn repo_path_from_resolves_against_cwd() {
+        let (dir, space) = space_with_worktree();
+        let wt = dir.path();
+        let sub = wt.join("sub");
+
+        assert_eq!(space.repo_path_from(wt, "a/b.bin").unwrap(), "a/b.bin");
+        assert_eq!(space.repo_path_from(wt, "./a//b.bin").unwrap(), "a/b.bin");
+        assert_eq!(space.repo_path_from(&sub, "x.bin").unwrap(), "sub/x.bin");
+        assert_eq!(space.repo_path_from(&sub, "../y.bin").unwrap(), "y.bin");
+        assert_eq!(space.repo_path_from(&sub, "deep/../z.bin").unwrap(), "sub/z.bin");
+
+        let abs = wt.join("sub/abs.bin");
+        assert_eq!(space.repo_path_from(&sub, abs.to_str().unwrap()).unwrap(), "sub/abs.bin");
+    }
+
+    #[test]
+    fn repo_path_from_rejects_bad_paths() {
+        let (dir, space) = space_with_worktree();
+        let wt = dir.path();
+
+        assert!(space.repo_path_from(wt, "../outside.bin").is_err());
+        assert!(space.repo_path_from(wt, "/etc/hostname").is_err());
+        assert!(space.repo_path_from(wt, ".").is_err());
+        assert!(space.repo_path_from(wt, ".duh/config").is_err());
+    }
+
+    #[test]
+    fn display_path_is_relative_to_cwd() {
+        let (dir, space) = space_with_worktree();
+        let wt = dir.path();
+
+        assert_eq!(space.display_path(wt, "a/b.bin"), "a/b.bin");
+        assert_eq!(space.display_path(&wt.join("a"), "a/b.bin"), "b.bin");
+        assert_eq!(space.display_path(&wt.join("c"), "a/b.bin"), "../a/b.bin");
+        assert_eq!(space.display_path(&wt.join("c/d"), "y.bin"), "../../y.bin");
+    }
+}
