@@ -102,19 +102,21 @@ stage_expect() {
 }
 
 # status_is <summary>: `duh status` must report exactly these groups, written
-# as "staged: a b; modified: c; missing: d; clean: e" (empty groups omitted,
-# paths as status prints them). "nothing" means no tracked files.
+# as "staged: a b; modified: c; missing: d; untracked: e; clean: f" (empty
+# groups omitted, entries as status prints them, e.g. "x.bin (new)").
+# "nothing" means no files at all.
 status_is() {
     local want="$1" got
     got=$("$DUH" status | plain | awk '
         /^Staged for commit:/      { s = "staged";   next }
         /^Modified \(not staged\):/ { s = "modified"; next }
         /^Deleted \/ missing:/      { s = "missing";  next }
+        /^Untracked:/               { s = "untracked"; next }
         /^Up to date:/              { s = "clean";    next }
-        /^No tracked files/         { none = 1 }
+        /^Nothing here yet/         { none = 1 }
         /^  / && s { sub(/^  /, ""); g[s] = g[s] (g[s] ? " " : "") $0 }
         END {
-            n = split("staged modified missing clean", order, " ")
+            n = split("staged modified missing untracked clean", order, " ")
             for (i = 1; i <= n; i++) if (order[i] in g) {
                 out = out (out ? "; " : "") order[i] ": " g[order[i]]
             }
@@ -134,6 +136,14 @@ expect_fail() {
     fi
     [[ "$out" == *"$msg"* ]] || fail "'duh $*' failed with '$out', expected '$msg'"
     ok "'duh $*' is refused: $msg"
+}
+
+# store_bytes: total size of the object store's files.
+store_bytes() { find .duh/objects -type f -printf '%s\n' | awk '{s += $1} END {print s + 0}'; }
+
+# in_commit <commit> <path>: whether the commit's tree contains the path.
+in_commit() {
+    "$DUH" show "$1" | plain | sed -n '/^files:/,$s/^  \(.*\) -> [0-9a-f]*$/\1/p' | grep -qxF "$2"
 }
 
 # same_file <a> <b> <what>
@@ -197,8 +207,9 @@ section "NEW FILE : start tracking a file" \
         "expect bar: all added"
 gen a 0 $SIZE > project
 run status
+status_is "untracked: project"
 stage_expect "+60" project
-status_is "staged: project"
+status_is "staged: project (new)"
 commit_msg "add project: all A"
 status_is "clean: project"
 run show
@@ -319,8 +330,7 @@ gen a 0 1000 > project
 run stage project > /dev/null
 run unstage project
 status_is "modified: project"
-run commit -m "commit with nothing staged"
-same_file project project "working copy keeps its uncommitted edit"
+expect_fail "nothing to commit" commit -m "commit with nothing staged"
 
 section "DISCARD : throw away local edits by checking out HEAD"
 run checkout project
@@ -340,6 +350,39 @@ run checkout -c "$FIRST" --as "$VERIFICATION_DIR/first" project
 gen a 0 $SIZE > "$VERIFICATION_DIR/expected-first"
 same_file "$VERIFICATION_DIR/first" "$VERIFICATION_DIR/expected-first" "first version reconstructed"
 status_is "clean: project"
+
+section "DIFF : see what changed before staging, and what is staged" \
+        "old: D[500k:750k] + B[0:250k] + C[0:250k]   new: old + F[0:250k]" \
+        "expect bar (both): =...= (750k unchanged) +...+ (250k F appended)"
+gen f 0 $QUARTER >> project
+out=$(run diff)
+printf '%s\n' "$out"
+expect_bar "=45 +15" "$out"
+run add project > /dev/null
+out=$(run diff --staged)
+printf '%s\n' "$out"
+expect_bar "=45 +15" "$out"
+[[ -z "$("$DUH" diff)" ]] || fail "diff should be empty once everything is staged"
+ok "diff is empty once everything is staged"
+
+section "RESTORE : unstage, discard, or bring back any commit's version"
+run restore --staged project
+status_is "modified: project"
+run restore project
+same_file project "$VERIFICATION_DIR/committed" "restore brings back HEAD's version"
+status_is "clean: project"
+run restore --source "${FIRST:0:12}" project
+same_file project "$VERIFICATION_DIR/expected-first" "restore --source (abbreviated hash) brings back the first version"
+run restore project
+status_is "clean: project"
+
+section "UNTRACKED + IGNORED : new files show up; hidden and ignored ones don't"
+echo "*.tmp" > .duhignore
+echo "scratch" > scratch.tmp
+echo "hidden" > .hidden-note
+echo "draft" > draft.bin
+status_is "untracked: draft.bin; clean: project"
+rm draft.bin .hidden-note
 
 section "REVERT : bring back an old version as a new commit" \
         "expect bar: everything deleted, all of A re-added"
@@ -365,7 +408,7 @@ section "ADD A SECOND FILE IN A SUBDIRECTORY : later in history"
 mkdir -p assets
 gen t 0 $HALF > assets/texture.bin
 stage_expect "+60" assets/texture.bin
-status_is "staged: assets/texture.bin; clean: project"
+status_is "staged: assets/texture.bin (new); clean: project"
 commit_msg "add assets/texture.bin"
 
 section "EDIT ONE FILE : the other carries forward unchanged" \
@@ -399,7 +442,7 @@ part "Part 4: tags, branches and resets"
 # ===========================================================================
 
 section "TAG : name a commit and use the name anywhere a commit is accepted"
-run tag -n release-1
+run tag release-1
 cp project "$VERIFICATION_DIR/release-1"
 run tag
 gen r 0 $QUARTER >> project
@@ -408,9 +451,22 @@ commit_msg "post-release edit"
 run checkout -c release-1 --as "$VERIFICATION_DIR/from-tag" project
 same_file "$VERIFICATION_DIR/from-tag" "$VERIFICATION_DIR/release-1" "tag resolves to the tagged version"
 
+section "REFER TO COMMITS : short hashes, HEAD~N, X^, and log --oneline"
+run log --oneline -n 3
+[[ "$("$DUH" log --oneline -n 3 | plain | grep -cE '^[0-9a-f]{12} .+')" == 3 ]] ||
+    fail "log --oneline should print 3 '<hash> <subject>' lines"
+ok "log --oneline prints one '<hash> <subject>' line per commit"
+REL=$("$DUH" log -n 1 release-1 | plain | awk '/^commit /{print $2}')
+for ref in HEAD~1 HEAD^ "${REL:0:7}" "${REL:0:12}"; do
+    rm -f "$VERIFICATION_DIR/ref.bin"
+    "$DUH" checkout -c "$ref" --as "$VERIFICATION_DIR/ref.bin" project > /dev/null
+    same_file "$VERIFICATION_DIR/ref.bin" "$VERIFICATION_DIR/release-1" "'$ref' names the release-1 commit"
+done
+expect_fail "past the first commit" show HEAD~999
+
 section "BRANCH : diverge, then switch back and forth"
 cp project "$VERIFICATION_DIR/main-project"
-run switch experiment true
+run switch -c experiment
 run branch
 gen x 0 $HALF > project
 gen y 0 $QUARTER > assets/experiment-only.bin
@@ -431,9 +487,15 @@ expect_fail "uncommitted changes" switch main
 run checkout project
 run switch main
 expect_fail "checked out" branch -d main
+run branch maintenance release-1
+"$DUH" branch | plain | grep -qx '  maintenance' || fail "new branch not listed"
+ok "branch NAME START creates a branch without switching to it"
+run branch -d maintenance
+! "$DUH" branch | plain | grep -q maintenance || fail "deleted branch still listed"
+ok "branch -d deletes it"
 
 section "RESET --hard : move the branch back and restore the files"
-run reset -m hard release-1
+run reset --hard release-1
 same_file project "$VERIFICATION_DIR/release-1" "project is at release-1"
 [[ "$(head_commit)" == "$(grep -m1 '' <("$DUH" log -n 1 release-1 | plain | awk '/^commit /{print $2}'))" ]] ||
     fail "HEAD is not at release-1"
@@ -446,7 +508,7 @@ gen s 0 $QUARTER >> project
 commit_msg "commit to undo"
 UNDONE=$(head_commit)
 cp project "$VERIFICATION_DIR/undone"
-run reset -m soft release-1
+run reset --soft release-1
 status_is "staged: project; clean: assets/texture.bin notes.bin"
 run commit -m "redo the undone commit"
 same_file project "$VERIFICATION_DIR/undone" "re-committing restores the same content"
@@ -459,17 +521,75 @@ run checkout project
 same_file project "$VERIFICATION_DIR/release-1" "discarding returns to release-1"
 
 # ===========================================================================
-part "Part 5: clone"
+part "Part 5: renaming, removing and bulk changes"
 # ===========================================================================
 
-# Cloning happens outside any duh space (inside one, --from names a remote).
+section "MV : rename a file; its content isn't stored again"
+before=$(store_bytes)
+cp assets/texture.bin "$VERIFICATION_DIR/texture"
+run mv assets/texture.bin media/texture.bin
+status_is "staged: assets/texture.bin (deleted) media/texture.bin (new); clean: notes.bin project"
+commit_msg "rename texture into media/"
+same_file media/texture.bin "$VERIFICATION_DIR/texture" "renamed file has the same content"
+in_commit HEAD assets/texture.bin && fail "old path still in the commit"
+ok "old path is gone from the commit"
+growth=$(( $(store_bytes) - before ))
+size=$(stat -c %s media/texture.bin)
+(( growth * 20 < size )) || fail "renaming a ${size}-byte file grew the store by $growth bytes"
+ok "renaming a ${size}-byte file grew the store by only $growth bytes"
+
+section "RM : stop tracking a file and delete it"
+cp notes.bin "$VERIFICATION_DIR/notes"
+run rm notes.bin
+[[ ! -e notes.bin ]] || fail "notes.bin still on disk"
+status_is "staged: notes.bin (deleted); clean: media/texture.bin project"
+commit_msg "remove notes.bin"
+in_commit HEAD notes.bin && fail "notes.bin still in the commit"
+ok "notes.bin is gone from the commit"
+run checkout -c HEAD~1 --as "$VERIFICATION_DIR/notes-back" notes.bin
+same_file "$VERIFICATION_DIR/notes-back" "$VERIFICATION_DIR/notes" "history still has notes.bin"
+
+section "RM --cached : stop tracking a file but keep it on disk"
+gen k 0 1000 > keep.bin
+run add keep.bin > /dev/null
+commit_msg "add keep.bin"
+echo "local edit" >> keep.bin
+expect_fail "uncommitted changes" rm keep.bin
+run rm --cached keep.bin
+status_is "staged: keep.bin (deleted); untracked: keep.bin; clean: media/texture.bin project"
+commit_msg "untrack keep.bin"
+status_is "untracked: keep.bin; clean: media/texture.bin project"
+rm keep.bin
+
+section "ADD -u / ADD -A : stage everything at once"
+gen n 0 1000 > new-a.bin
+gen m 0 1000 > new-b.bin
+gen p 0 1000 >> project
+run add -u
+status_is "staged: project; untracked: new-a.bin new-b.bin; clean: media/texture.bin"
+run add -A
+status_is "staged: new-a.bin (new) new-b.bin (new) project; clean: media/texture.bin"
+commit_msg "add -A: two new files and an edit"
+
+section "COMMIT -a : commit every tracked change without staging first"
+gen q 0 1000 >> project
+rm new-b.bin
+run commit -a -m "commit -a: an edit and a deletion"
+record
+in_commit HEAD new-b.bin && fail "new-b.bin still in the commit"
+status_is "clean: media/texture.bin new-a.bin project"
+
+# ===========================================================================
+part "Part 6: clone"
+# ===========================================================================
+
 CLONE="${td%/}-clone"
 section "CLONE : copy the repository and check out its files"
-(cd "$(dirname "$td")" && run copy --from "$td" --as "$CLONE")
-for f in project notes.bin assets/texture.bin; do
+run clone "$td" "$CLONE"
+for f in project new-a.bin media/texture.bin; do
     same_file "$CLONE/$f" "$f" "clone has the same $f"
 done
-(cd "$CLONE" && status_is "clean: assets/texture.bin notes.bin project")
+(cd "$CLONE" && status_is "clean: media/texture.bin new-a.bin project")
 
 # ===========================================================================
 part "VERIFICATION: every file at every commit, byte for byte"
