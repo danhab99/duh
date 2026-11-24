@@ -363,18 +363,7 @@ impl<'a> FileOps<'a> {
         };
         let base_path = file_version.base_path.clone();
 
-        let mut fragments = Vec::with_capacity(file_version.fragments.len());
-        for frag_hash in file_version.fragments {
-            match self.space.get_object(frag_hash)? {
-                Some(Object::FileDiffFragment(frag)) => fragments.push(frag),
-                _ => {
-                    return Err(Box::new(crate::error::DuhError::invalid_object(
-                        "file diff fragment",
-                        "unknown object type",
-                    )))
-                }
-            }
-        }
+        let fragments = self.load_fragments(&file_version)?;
 
         // A version's fragments diff against the file as it was when staged,
         // i.e. in the parent of the commit that introduced the version. Commits
@@ -413,6 +402,52 @@ impl<'a> FileOps<'a> {
         let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
 
         Ok(Box::new(replay))
+    }
+
+    /// The diff fragments of a file version, in order.
+    pub fn load_fragments(&self, version: &FileStruct) -> FileOpsResult<Vec<FileFragment>> {
+        let mut fragments = Vec::with_capacity(version.fragments.len());
+        for frag_hash in &version.fragments {
+            match self.space.get_object(*frag_hash)? {
+                Some(Object::FileDiffFragment(frag)) => fragments.push(frag),
+                _ => {
+                    return Err(Box::new(crate::error::DuhError::invalid_object(
+                        "file diff fragment",
+                        "unknown object type",
+                    )))
+                }
+            }
+        }
+        Ok(fragments)
+    }
+
+    /// Read the version of `file_path` staged in the index. Staged versions
+    /// diff against HEAD (at the file's own path, or its rename source).
+    pub fn open_staged(&mut self, file_path: String) -> FileOpsResult<Box<dyn ReadSeek>> {
+        let repo_path = self.normalize_repo_path(&file_path)?;
+        let version_hash = match self.space.index.get(&repo_path) {
+            Some(h) if !h.is_zero() => *h,
+            _ => return Err(format!("'{}' has no staged version", repo_path).into()),
+        };
+        let version = match self.space.get_object(version_hash)? {
+            Some(Object::File(f)) => f,
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "file",
+                    "unknown object type",
+                )))
+            }
+        };
+        let fragments = self.load_fragments(&version)?;
+
+        let head = self.space.get_head_commit_hash()?;
+        let base_path = version.base_path.clone().unwrap_or(repo_path);
+        let base: Box<dyn ReadSeek> = if self.version_in_commit(head, &base_path)?.is_some() {
+            self.open_file(base_path, head)?
+        } else {
+            Box::new(io::Cursor::new(Vec::<u8>::new()))
+        };
+        Ok(Box::new(LazyFileReplay::new(&self.space, base, fragments)?))
     }
 
     /// The file version recorded for `repo_path` in `commit`, if any.
@@ -557,5 +592,59 @@ mod tests {
         }
 
         assert!(read_at(&mut space, "sub/b.bin", history[0].0).is_none());
+    }
+
+    fn read_all(mut r: Box<dyn ReadSeek>) -> Vec<u8> {
+        let mut out = Vec::new();
+        r.read_to_end(&mut out).unwrap();
+        out
+    }
+
+    /// Staged versions read back exactly; a rename staged against its source
+    /// reads back before and after commit, while the source is deleted.
+    #[test]
+    fn staged_versions_and_renames_round_trip() {
+        let (dir, mut space) = space_with_worktree();
+        let a1: Vec<u8> = (0..60_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+        let mut a2 = a1.clone();
+        a2.extend_from_slice(b"more");
+
+        write(&dir, "a.bin", &a1);
+        stage(&mut space, "a.bin");
+        commit(&mut space);
+
+        write(&dir, "a.bin", &a2);
+        stage(&mut space, "a.bin");
+        let staged = FileOps::from_space(&mut space).open_staged("a.bin".into()).unwrap();
+        assert!(read_all(staged) == a2);
+        FileOps::from_space(&mut space).unstage_file("a.bin".into()).unwrap();
+
+        // Restaging content identical to HEAD stages nothing.
+        write(&dir, "a.bin", &a1);
+        let none = FileOps::from_space(&mut space)
+            .stage_file("a.bin".into(), None::<fn(DiffFragment)>, None::<fn(_)>)
+            .unwrap();
+        assert!(none.is_none() && space.index.is_empty());
+
+        // Rename a.bin -> moved/a.bin, diffing against a.bin's content.
+        std::fs::create_dir_all(dir.path().join("moved")).unwrap();
+        std::fs::rename(dir.path().join("a.bin"), dir.path().join("moved/a.bin")).unwrap();
+        let mut ops = FileOps::from_space(&mut space);
+        ops.stage_deletion("a.bin".into()).unwrap();
+        ops.stage_reader_from(
+            "moved/a.bin".into(),
+            Some("a.bin".into()),
+            Box::new(std::fs::File::open(dir.path().join("moved/a.bin")).unwrap()),
+            None::<fn(DiffFragment)>,
+            None::<fn(_)>,
+        )
+        .unwrap();
+        let staged = FileOps::from_space(&mut space).open_staged("moved/a.bin".into()).unwrap();
+        assert!(read_all(staged) == a1);
+
+        let renamed = commit(&mut space);
+        let files = space.get_commit_files(renamed).unwrap();
+        assert!(!files.contains_key("a.bin") && files.contains_key("moved/a.bin"));
+        assert!(read_at(&mut space, "moved/a.bin", renamed).unwrap() == a1);
     }
 }
