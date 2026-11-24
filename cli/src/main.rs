@@ -11,6 +11,7 @@ mod colors;
 mod commit;
 mod config;
 mod copy;
+mod diff;
 mod init;
 mod log;
 mod mv;
@@ -113,6 +114,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Restore(c) => {
             restore_cmd::restore(&mut space, c)?;
+        }
+        Commands::Diff(c) => {
+            diff::diff(&mut space, c)?;
         }
         Commands::Reflog(c) => {
             reflog::reflog(&mut space, c)?;

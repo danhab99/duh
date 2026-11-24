@@ -2,6 +2,7 @@ use std::io::{self, Write};
 
 use crate::dedup::DedupProgress;
 use crate::diff::DiffFragment;
+use crate::objects::FileFragment;
 
 const RAINBOW: &[u8] = &[196, 202, 208, 214, 220, 118, 46, 51, 27, 21, 93, 201];
 pub const MAX_COLS: u64 = 60;
@@ -141,5 +142,15 @@ pub fn fragment_to_entry(fragment: DiffFragment) -> (u64, char, &'static str) {
         DiffFragment::ADDED { body } => (body.len() as u64, '+', "32"),
         DiffFragment::UNCHANGED { len } => (len as u64, '=', "37"),
         DiffFragment::DELETED { len } => (len as u64, '-', "31"),
+    }
+}
+
+/// Bar entry for a stored fragment (ADDED bodies are referenced by hash, so
+/// only their length is known here).
+pub fn file_fragment_to_entry(fragment: &FileFragment) -> (u64, char, &'static str) {
+    match fragment {
+        FileFragment::ADDED { len, .. } => (*len as u64, '+', "32"),
+        FileFragment::UNCHANGED { len } => (*len as u64, '=', "37"),
+        FileFragment::DELETED { len } => (*len as u64, '-', "31"),
     }
 }

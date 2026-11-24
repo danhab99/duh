@@ -132,7 +132,7 @@ fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
     Ok(lines.join("\n"))
 }
 
-fn fmt_bytes(n: usize) -> String {
+pub fn fmt_bytes(n: usize) -> String {
     if n >= 1_000_000_000 {
         format!("{:.1} GB", n as f64 / 1_000_000_000.0)
     } else if n >= 1_000_000 {
