@@ -615,6 +615,26 @@ impl Space {
                 vlog!("space::resolve_ref_name: given hash {}", h.to_string());
                 Ok(h)
             }
+            ObjectReference::Ref(r) if r.ends_with('^') || r.contains('~') => {
+                // Ancestry: `X^` is X's parent, `X~N` its Nth ancestor.
+                let (base, steps) = if let Some(base) = r.strip_suffix('^') {
+                    (base, 1usize)
+                } else {
+                    let (base, n) = r.rsplit_once('~').unwrap();
+                    let n = if n.is_empty() { 1 } else {
+                        n.parse::<usize>().map_err(|_| format!("bad ancestry suffix in '{}'", r))?
+                    };
+                    (base, n)
+                };
+                let mut h = self.resolve_ref_name(ObjectReference::from(base.to_string()))?;
+                for _ in 0..steps {
+                    h = match self.get_object(h)? {
+                        Some(Object::Commit(c)) if !c.parent.is_zero() => c.parent,
+                        _ => return Err(format!("'{}' goes past the first commit", r).into()),
+                    };
+                }
+                Ok(h)
+            }
             ObjectReference::Ref(r) => {
                 vlog!("space::resolve_ref_name: resolving ref '{}'", r);
                 // Bare names resolve as branches first, then as tags.
