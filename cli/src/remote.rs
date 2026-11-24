@@ -19,12 +19,17 @@ pub enum RemoteAction {
         #[arg(short = 'v', long = "verbose")]
         verbose: bool,
     },
-    /// Add a new remote
+    /// Add a new remote: a path, file:// URL, or any opendal backend URL
+    /// (s3://bucket/path, gcs://bucket/path, webdav://host/path, …)
     Add {
         /// Remote name
         name: String,
         /// Remote URL
         url: String,
+        /// Backend option or credential, stored in plain text in the config
+        /// (e.g. -o region=eu-west-1 -o access_key_id=… -o secret_access_key=…)
+        #[arg(short = 'o', long = "option", value_name = "KEY=VALUE")]
+        options: Vec<String>,
     },
     /// Remove a remote
     #[command(name = "remove", visible_alias = "rm")]
@@ -86,8 +91,12 @@ pub fn remote(
                 }
             }
         }
-        RemoteAction::Add { name, url } => {
-            space.add_remote(name, url)?;
+        RemoteAction::Add { name, url, options } => {
+            let options = options
+                .iter()
+                .map(|o| lib::store::parse_option(o))
+                .collect::<Result<Vec<_>, _>>()?;
+            space.add_remote_with_options(name, url, &options)?;
             println!(
                 "{} remote '{}' -> {}",
                 crate::colors::green("added"),
@@ -117,7 +126,8 @@ pub fn remote(
             println!("{}", url);
         }
         RemoteAction::SetUrl { name, url } => {
-            space.set_remote_url(name, url)?;
+            lib::store::validate_url(url)?;
+            space.set_remote_url(name, &lib::store::normalize_url(url)?)?;
             println!(
                 "{} remote '{}' -> {}",
                 crate::colors::green("set url"),

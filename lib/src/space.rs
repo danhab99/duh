@@ -784,6 +784,22 @@ impl Space {
     }
 
     /// Add a new remote with the given name and URL.
+    /// Add a remote with backend options (credentials, region, …) stored in
+    /// plain text under `[remote.<name>.config]` and handed to opendal.
+    pub fn add_remote_with_options(
+        &self,
+        name: &str,
+        url: &str,
+        options: &[(String, String)],
+    ) -> SpaceResult<()> {
+        crate::store::validate_url(url)?;
+        self.add_remote(name, &crate::store::normalize_url(url)?)?;
+        for (k, v) in options {
+            self.set_config_value(&format!("remote.{}.config.{}", name, k), v)?;
+        }
+        Ok(())
+    }
+
     pub fn add_remote(&self, name: &str, url: &str) -> SpaceResult<()> {
         let mut table = self.get_table()?;
 
