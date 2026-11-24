@@ -42,6 +42,27 @@ pub struct CopyCommand {
     pub bare: bool,
 }
 
+/// Directory name to clone `url` into: its last path component, ignoring
+/// trailing slashes and a trailing `.duh` metadata directory or suffix.
+pub fn default_clone_dir(url: &str) -> Result<String, Box<dyn Error>> {
+    let name = url
+        .trim_end_matches('/')
+        .trim_end_matches(lib::utils::SPACE_METADATA_DIR_NAME)
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(".duh");
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(format!(
+            "can't infer a directory name from '{}'; pass one with --as",
+            url
+        )
+        .into());
+    }
+    Ok(name.to_string())
+}
+
 /// Clone a remote repository into a new directory (git clone equivalent)
 pub fn clone(
     url: &str,
@@ -58,10 +79,30 @@ pub fn clone(
         return Err(format!("destination '{}' already exists", dest_dir).into());
     }
 
-    // Create the destination directory
-    fs::create_dir_all(&dest_path)?;
+    // Create the destination directory; remove it again if the clone fails
+    // so a failed clone leaves nothing behind.
     fs::create_dir_all(&metadata_path)?;
+    clone_into(url, &dest_path, &metadata_path, remote_branch, bare).map_err(|e| {
+        let _ = fs::remove_dir_all(&dest_path);
+        e
+    })?;
 
+    println!(
+        "{} {} -> {}",
+        crate::colors::cyan("Cloned"),
+        crate::colors::green(url),
+        crate::colors::green(dest_dir)
+    );
+    Ok(())
+}
+
+fn clone_into(
+    url: &str,
+    dest_path: &PathBuf,
+    metadata_path: &PathBuf,
+    remote_branch: Option<&str>,
+    bare: bool,
+) -> Result<(), Box<dyn Error>> {
     // Initialize a new duh space
     let op = Fs::default().root(metadata_path.to_str().unwrap());
     let fs = opendal::Operator::new(op)?.finish().blocking();
@@ -117,13 +158,6 @@ pub fn clone(
     }
 
     space.save_index()?;
-
-    println!(
-        "{} {} -> {}",
-        crate::colors::cyan("Cloned"),
-        crate::colors::green(url),
-        crate::colors::green(dest_dir)
-    );
 
     Ok(())
 }

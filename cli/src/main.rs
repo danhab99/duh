@@ -45,14 +45,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             if result.is_err() {
                 // Outside a duh space: treat as clone
                 if let Some(ref url) = c.from {
-                    let dest_dir = c.as_branch.as_deref().unwrap_or_else(|| {
-                        // Default to the last component of the URL
-                        url.split('/')
-                            .last()
-                            .unwrap_or("repo")
-                            .trim_end_matches(".duh")
-                    });
-                    copy::clone(url, dest_dir, c.branch.as_deref(), c.bare)?;
+                    let dest_dir = match c.as_branch.as_deref() {
+                        Some(d) => d.to_string(),
+                        None => copy::default_clone_dir(url)?,
+                    };
+                    copy::clone(url, &dest_dir, c.branch.as_deref(), c.bare)?;
                     return Ok(());
                 } else {
                     return Err("must specify --from when cloning outside a duh space".into());
