@@ -4,12 +4,12 @@ use clap::clap_derive::Args;
 use lib::{objects::ObjectReference, space::Space};
 
 #[derive(Args)]
-#[command(about = "Stage a file (produce fragment objects without committing)")]
+#[command(about = "List, delete, rename and move branches")]
 pub struct BranchCommand {
-    #[arg(short = 'd', long = "delete", help = "Delete a branches")]
+    #[arg(short = 'd', long = "delete", help = "Delete a branch")]
     delete: Option<String>,
 
-    #[arg(short = 'r', long = "rename", help = "Rename a branches")]
+    #[arg(short = 'r', long = "rename", help = "Rename the current branch")]
     rename: Option<String>,
 
     #[arg(
@@ -24,15 +24,14 @@ pub fn branch(space: &mut Space, cmd: &BranchCommand) -> Result<(), Box<dyn Erro
     let head_ref = space.get_ref("HEAD".into())?;
 
     if let Some(name) = cmd.delete.clone() {
-        let deleting_ref = space.get_ref(name.clone())?;
-
-        if head_ref.eq(&deleting_ref) {
-            println!("Unable to delete the branch you are on");
-            return Err("detatched head".into());
+        if head_ref == ObjectReference::Ref(name.clone()) {
+            return Err(format!("cannot delete branch '{}': it is checked out", name).into());
         }
-
-        println!("Deleting branch {}", name.clone());
+        if !space.list_branches()?.contains(&name) {
+            return Err(format!("branch '{}' does not exist", name).into());
+        }
         space.delete_ref(name.as_str())?;
+        println!("Deleted branch {}", name);
     } else if let Some(name) = cmd.rename.clone() {
         let current_commit = space.resolve_ref_name(head_ref.clone())?;
 
@@ -44,14 +43,9 @@ pub fn branch(space: &mut Space, cmd: &BranchCommand) -> Result<(), Box<dyn Erro
         let commit = ObjectReference::from(set);
         space.set_ref(head_ref.to_string().as_str(), commit, Some("set branch"))?;
     } else {
-        println!("Listing all branches");
-
-        let refs = space.list_refs("branch")?;
-
-        for r in refs {
-            if let ObjectReference::Ref(name) = r {
-                println!("  {}", name);
-            }
+        for name in space.list_branches()? {
+            let marker = if head_ref == ObjectReference::Ref(name.clone()) { "*" } else { " " };
+            println!("{} {}", marker, name);
         }
     }
 

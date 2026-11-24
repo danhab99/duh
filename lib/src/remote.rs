@@ -74,33 +74,6 @@ fn copy_tree_objects(
     Ok(())
 }
 
-pub fn fetch_all_refs(
-    local: &mut Space,
-    remote: &mut Space,
-    remote_name: &str,
-    prefix: &str,
-) -> Result<(), Box<dyn Error>> {
-    vlog!("remote::fetch_all_refs");
-
-    let remote_refs = remote.list_refs("/")?;
-
-    for r in remote_refs {
-        local.set_ref(
-            format!(
-                "{}/{}/{}",
-                prefix,
-                remote_name,
-                r.clone().to_string().as_str()
-            )
-            .as_str(),
-            r,
-            Some(format!("fetch: {}", remote_name).as_str()),
-        )?;
-    }
-
-    Ok(())
-}
-
 pub enum CopyCommitsProgress {
     Commit(Hash),
 }

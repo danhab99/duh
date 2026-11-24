@@ -618,7 +618,14 @@ impl Space {
             }
             ObjectReference::Ref(r) => {
                 vlog!("space::resolve_ref_name: resolving ref '{}'", r);
-                let n = self.get_ref(r.clone())?;
+                // Bare names resolve as branches first, then as tags.
+                let n = match self.get_ref(r.clone()) {
+                    Ok(n) => n,
+                    Err(e) => match self.get_ref(format!("tags/{}", r)) {
+                        Ok(n) => n,
+                        Err(_) => return Err(e),
+                    },
+                };
                 let resolved = self.resolve_ref_name(n)?;
                 vlog!(
                     "space::resolve_ref_name: ref '{}' -> {}",
@@ -753,26 +760,34 @@ impl Space {
         self.walk_tree(commit.tree)
     }
 
-    pub fn create_branch(&mut self, name: &str) -> SpaceResult<()> {
-        let head_hash = self.get_head_commit_hash()?;
-        self.set_ref(
-            format!("head/{}", name).as_str(),
-            ObjectReference::Hash(head_hash),
-            Some(format!("create branch: {}", name).as_str()),
-        )
+    /// Names of the refs stored directly in `refs/<dir>` (`""` for top-level
+    /// refs, i.e. branches and HEAD), sorted. Subdirectories are skipped.
+    pub fn list_ref_names(&self, dir: &str) -> SpaceResult<Vec<String>> {
+        let mut path = self.get_ref_path(dir);
+        if !path.ends_with('/') {
+            path.push('/');
+        }
+        if !self.fs.exists(&path)? {
+            return Ok(Vec::new());
+        }
+        let mut names: Vec<String> = self
+            .fs
+            .list(&path)?
+            .into_iter()
+            .filter(|e| e.metadata().is_file())
+            .map(|e| e.name().to_string())
+            .collect();
+        names.sort();
+        Ok(names)
     }
 
-    pub fn list_refs(&mut self, path: &str) -> SpaceResult<Vec<ObjectReference>> {
-        let refs_path = self.get_ref_path(path);
-
-        let refs_names = self
-            .fs
-            .list(&refs_path)?
-            .iter()
-            .map(|x| ObjectReference::from_str(x.name()).unwrap())
-            .collect::<Vec<_>>();
-
-        Ok(refs_names)
+    /// Branch names (top-level refs other than HEAD), sorted.
+    pub fn list_branches(&self) -> SpaceResult<Vec<String>> {
+        Ok(self
+            .list_ref_names("")?
+            .into_iter()
+            .filter(|n| n != "HEAD")
+            .collect())
     }
 
     pub fn delete_ref(&mut self, path: &str) -> SpaceResult<()> {
