@@ -306,7 +306,7 @@ passing and committed, so work can stop and resume between any two.
 - [x] Move each behaviour in §4 into `ops`, with unit tests
 - [x] CLI commands rewritten as parse → `ops` → print (output unchanged; CLI is 1,572 lines, down from 2,430, with no low-level calls left)
 - [x] `sync_status`; the four fixes from §4
-- [ ] Stat cache for `look` (not yet: the app polls file stats itself and only calls `look` when something changed)
+- [x] Stat cache for `look` (`.duh/statcache`; a 400 MB file: 2.35 s → instant)
 - [x] `demo.sh` passes unchanged at every step (it's the proof the CLI still behaves)
 
 ### Phase 2: the bridge (medium)
@@ -323,7 +323,7 @@ passing and committed, so work can stop and resume between any two.
 - [x] Places editor, sync pill, send / receive, the diverged sheet
 - [x] Health badge and check view (here and per place)
 - [x] Command palette, keyboard shortcuts, light theme
-- [ ] Reduce motion (animations are short; not yet tied to the system setting)
+- [x] Reduce motion (animations drop to zero when the system asks)
 - [x] Widget tests for the main screen states (first run, empty space, pick and save, save inspector and rewind, diverged, not sent, check, palette)
 
 ### Phase 4: polish and proof (small)

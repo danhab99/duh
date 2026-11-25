@@ -104,7 +104,7 @@ class _StudioAppState extends State<StudioApp> {
           child: Focus(
             autofocus: true,
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
+              duration: motion(context, 220),
               child: app.space == null
                   ? Welcome(key: const ValueKey('welcome'), app: app)
                   : SpaceScreen(key: ValueKey(app.folder), app: app, onPalette: _palette),

@@ -18,7 +18,7 @@ class Inspector extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(color: p.panel, border: Border(left: BorderSide(color: p.line))),
       child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 180),
+        duration: motion(context, 180),
         child: switch (sel) {
           WorkSelected() => WorkInspector(key: const ValueKey('work'), app: app),
           SaveSelected(:final version) => SaveInspector(key: ValueKey(version), app: app),

@@ -185,3 +185,7 @@ String fmtStamp(int unixSeconds) {
   String two(int v) => v.toString().padLeft(2, '0');
   return '${_days[t.weekday - 1]} ${_months[t.month - 1]} ${t.day}, ${t.year} · ${two(t.hour)}:${two(t.minute)}';
 }
+
+/// An animation's length, or none when the system asks for less motion.
+Duration motion(BuildContext context, int milliseconds) =>
+    MediaQuery.maybeDisableAnimationsOf(context) ?? false ? Duration.zero : Duration(milliseconds: milliseconds);

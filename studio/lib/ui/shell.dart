@@ -550,7 +550,7 @@ class _WorkCard extends StatelessWidget {
         ? 'nothing changed'
         : '${files.length} changed · ${app.pickedCount > 0 ? '${app.pickedCount} picked' : 'not saved'}';
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 180),
+      duration: motion(context, 180),
       curve: Curves.easeOut,
       decoration: BoxDecoration(
         color: selected ? p.accentSoft : p.panel,
@@ -597,7 +597,7 @@ class _SaveRow extends StatelessWidget {
     final dotColor = save.labels.isNotEmpty ? p.label : (unsent ? p.sync : p.faint);
     final total = save.added + save.removed;
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
+      duration: motion(context, 150),
       margin: const EdgeInsets.only(bottom: 2),
       decoration: BoxDecoration(color: selected ? p.accentSoft : null, borderRadius: BorderRadius.circular(12), border: Border.all(color: selected ? p.accent : Colors.transparent)),
       child: InkWell(
