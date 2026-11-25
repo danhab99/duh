@@ -1,7 +1,7 @@
 use clap::*;
 
 use crate::{
-    branch::BranchCommand, commit::CommitCommand, config::ConfigCommand,
+    branch::BranchCommand, check::CheckCommand, commit::CommitCommand, config::ConfigCommand,
     copy::{CloneCommand, ReceiveCommand, SendCommand}, diff::DiffCommand, init::InitCommand,
     log::LogCommand, mv::MvCommand, reflog::ReflogCommand, remote::RemoteCommand,
     reset::ResetCommand, restore_cmd::RestoreCommand, rm::{ForgetCommand, RmCommand},
@@ -113,4 +113,8 @@ pub enum Commands {
     /// View or change settings   [git: config]
     #[command(name = "settings", alias = "config")]
     Config(ConfigCommand),
+
+    /// Check that every save is intact and reads back exactly   [git: fsck]
+    #[command(name = "check", alias = "fsck")]
+    Check(CheckCommand),
 }

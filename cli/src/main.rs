@@ -5,6 +5,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 
 mod branch;
+mod check;
 mod checkout;
 mod cli;
 mod colors;
@@ -126,6 +127,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         Commands::Reset(c) => {
             reset::reset(&mut space, c)?;
+        }
+        Commands::Check(c) => {
+            check::check(&mut space, c)?;
         }
     };
 

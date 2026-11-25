@@ -50,6 +50,7 @@ below is exercised end to end by [`demo.sh`](demo.sh), which
 | `send [place]`, `receive [place]` | share saves with a place (never merges) | `push`, `pull` |
 | `places` | folders, buckets and drives your space is shared to | `remote` |
 | `settings` | view or change settings | `config` |
+| `check [place]` | check that every save is intact and reads back exactly, here or in a place | `fsck` |
 
 Versions can be named by label, draft, short hash, `HEAD~N` or `X^`.
 `.duhignore` keeps files out of `look` and `pick`. Places work on 34 storage
