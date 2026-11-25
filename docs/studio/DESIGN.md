@@ -294,38 +294,40 @@ in one command before investing in screens. Each phase ends with everything
 passing and committed, so work can stop and resume between any two.
 
 ### Phase 0: prove the toolchain (small)
-- [ ] `studio/` skeleton app and `studio/native` crate exposing one function (`duh_version()`)
-- [ ] Bindings generated and committed; app shows the version from Rust
-- [ ] `nix run .#studio` opens the window; `nix flake check` builds it
+- [x] `studio/` skeleton app and `studio/native` crate exposing one function (`engine_version()`)
+- [x] Bindings generated and committed; app shows the version from Rust
+- [x] `nix run .#studio` opens the window; `nix flake check` builds it and runs a headless smoke test (`studioSmoke`)
 - **If this fails** in a way that can't be fixed within the phase, fall back
   to the CLI with a JSON-lines mode over stdio (the design in §3 survives;
   only the bridge layer changes). Decided with you before going further.
 
 ### Phase 1: one engine — `lib::ops` (large; the most important phase)
-- [ ] `ops` module: lock, progress enum, stateless open-by-path
-- [ ] Move each behaviour in §4 into `ops`, with unit tests
-- [ ] CLI commands rewritten as parse → `ops` → print (output unchanged)
-- [ ] Stat cache for `look`; `sync_status`; the four fixes from §4
-- [ ] `demo.sh` passes unchanged at every step (it's the proof the CLI still behaves)
+- [x] `ops` module: lock, stateless open-by-path (progress is a per-operation callback, not one shared enum)
+- [x] Move each behaviour in §4 into `ops`, with unit tests
+- [x] CLI commands rewritten as parse → `ops` → print (output unchanged; CLI is 1,572 lines, down from 2,430, with no low-level calls left)
+- [x] `sync_status`; the four fixes from §4
+- [ ] Stat cache for `look` (not yet: the app polls file stats itself and only calls `look` when something changed)
+- [x] `demo.sh` passes unchanged at every step (it's the proof the CLI still behaves)
 
 ### Phase 2: the bridge (medium)
-- [ ] `studio/native` exposes `ops` with Dart-friendly types and progress streams
-- [ ] Rust test driving the full loop through the bridge
-- [ ] Dart `Engine` interface with a bridge implementation and a fake one
+- [x] `studio/native` exposes `ops` with Dart-friendly types (no progress streams: a stream-returning function loses its result in flutter_rust_bridge, so `pick` returns results and the app shows a spinner)
+- [x] Rust test driving the full loop through the bridge (`core.rs`)
+- [x] Dart `Engine` interface with a bridge implementation and a fake one
 
 ### Phase 3: the app (large)
-- [ ] Theme, typography, change-strip widget, app shell (top bar, sidebar, timeline, inspector)
-- [ ] First run (start / get), recent spaces, folder watching
-- [ ] Your files: pick, compare, save, suggested message
-- [ ] Timeline and save inspector: bring back, save a copy as…, label, start a draft, rewind
-- [ ] Drafts switcher, labels, journal / recover
-- [ ] Places editor, sync pill, send / receive, the diverged sheet
-- [ ] Health badge and check view (here and per place)
-- [ ] Command palette, keyboard shortcuts, light theme, reduce motion
-- [ ] Widget tests for every screen state
+- [x] Theme, typography, change-strip widget, app shell (top bar, sidebar, timeline, inspector)
+- [x] First run (start / get / open), recent spaces, folder watching (stat polling)
+- [x] Your files: pick, compare, save, suggested message
+- [x] Timeline and save inspector: bring back, save a copy as…, label, start a draft, rewind
+- [x] Drafts switcher, labels, journal / recover
+- [x] Places editor, sync pill, send / receive, the diverged sheet
+- [x] Health badge and check view (here and per place)
+- [x] Command palette, keyboard shortcuts, light theme
+- [ ] Reduce motion (animations are short; not yet tied to the system setting)
+- [x] Widget tests for the main screen states (first run, empty space, pick and save, save inspector and rewind, diverged, not sent, check, palette)
 
 ### Phase 4: polish and proof (small)
-- [ ] Headless smoke test in `nix flake check` (or documented manual check)
+- [x] Headless smoke test in `nix flake check`
 - [ ] README: screenshots, `nix run .#studio`
 - [ ] Final pass with you on look and wording
 
