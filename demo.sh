@@ -9,6 +9,10 @@
 set -euo pipefail
 
 td="${1:?Usage: demo.sh <test-dir>}"
+# Absolute, so the sibling folders made below (td-clone, td-outside.bin, …)
+# land beside the test dir, not inside it once we cd there.
+mkdir -p "$td"
+td=$(cd "$td" && pwd)
 DUH="${DUH:-duh}"
 
 VERIFICATION_DIR="$td/.verification"
