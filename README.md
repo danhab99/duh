@@ -206,7 +206,7 @@ Crates are fetched by Nix from `cli/Cargo.lock`; there's no vendoring step.
 - `just build` — `nix build .#duh`
 - `just check` — `nix flake check`: builds, runs the unit tests, and runs `demo.sh` in the sandbox
 - `just demo` — just the sandboxed demo
-- `just demo_script <dir>` — run `demo.sh` in `<dir>` against the Nix-built binary, to watch it
+- `./demo.sh [dir]` (or `just demo_script [dir]`) — run `demo.sh` against the Nix-built binary, to watch it; with no `dir` it uses a fresh temporary folder
 - `nix develop` — a shell with the pinned toolchain, rust-analyzer and friends
 
 `demo.sh` is the standard duh is held to: it asserts the outcome of every

@@ -6,11 +6,24 @@
 # `nix flake check`). At the end, every file is brought back at every save
 # ever made and compared byte-for-byte with what was saved — in this space,
 # in a copy made with `duh get`, and in a copy fetched from S3.
+#
+# Usage: ./demo.sh [test-dir]
+#   With no test-dir, it runs in a fresh temporary folder and prints where.
+#   Unless DUH names a binary, it restarts itself in the flake's `duh` shell,
+#   which provides the Nix-built duh (never one that's merely on PATH),
+#   rclone and time.
 set -euo pipefail
 
-td="${1:?Usage: demo.sh <test-dir>}"
-# Absolute, so the sibling folders made below (td-clone, td-outside.bin, …)
-# land beside the test dir, not inside it once we cd there.
+# The space lives at td; sibling folders (td-clone, td-outside.bin, …) are
+# made beside it. With no argument, both go in one fresh temporary folder.
+td="${1:-$(mktemp -d -t duh-demo.XXXXXX)/space}"
+
+if [[ -z "${DUH:-}" && -z "${DUH_DEMO_SHELL:-}" ]]; then
+    exec nix develop "$(dirname "$(realpath "$0")")#duh" \
+        --command env DUH_DEMO_SHELL=1 bash "$(realpath "$0")" "$td"
+fi
+# Absolute, so those siblings land beside the test dir, not inside it once
+# we cd there.
 mkdir -p "$td"
 td=$(cd "$td" && pwd)
 DUH="${DUH:-duh}"
