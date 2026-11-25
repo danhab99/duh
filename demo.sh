@@ -789,6 +789,37 @@ mkdir -p "$LONG"
 )
 
 # ===========================================================================
+part "Part 9: check — is everything intact?"
+# ===========================================================================
+
+section "CHECK : every save here reads back exactly as it was saved"
+run check
+"$DUH" check | plain | grep -q "Everything is intact" || fail "check didn't say everything is intact"
+ok "this space is intact"
+
+section "CHECK A PLACE : the copy on S3 is intact too"
+run check warehouse
+ok "the space on S3 is intact"
+
+DAMAGED="${td%/}-damaged"
+section "DAMAGE : check finds a changed byte and a missing piece, and names them"
+cp -r "$td" "$DAMAGED"
+(
+    cd "$DAMAGED"
+    biggest=$(find .duh/objects -type f -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2)
+    python3 -c "import sys; f = open(sys.argv[1], 'r+b'); f.seek(-100, 2); b = f.read(1); f.seek(-100, 2); f.write(bytes([b[0] ^ 1]))" "$biggest"
+    expect_fail "damaged: its bytes have changed" check
+    python3 -c "import sys; f = open(sys.argv[1], 'r+b'); f.seek(-100, 2); b = f.read(1); f.seek(-100, 2); f.write(bytes([b[0] ^ 1]))" "$biggest"
+    "$DUH" check > /dev/null || fail "undoing the damage didn't make the space intact again"
+    ok "flipping the byte back makes it intact again"
+
+    version=$("$DUH" inspect HEAD | plain | sed -n 's/^  project -> \([0-9a-f]*\)$/\1/p')
+    [[ ${#version} == 64 ]] || fail "couldn't find project's version in HEAD"
+    rm ".duh/objects/${version:0:3}/${version:3:3}/${version:6:3}/${version:9}"
+    expect_fail "project in save" check
+)
+
+# ===========================================================================
 part "VERIFICATION: every file at every save, byte for byte"
 # ===========================================================================
 
