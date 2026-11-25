@@ -11,15 +11,16 @@ pub struct UnstageCommand {
     pub paths: Vec<String>,
 }
 
-/// Drop these repo paths from the picked set, saying what happened.
-pub fn unpick_paths(space: &mut Space, repo_paths: &[String]) {
-    for p in repo_paths {
-        if space.index.remove(p).is_some() {
+/// Un-pick these repo paths, saying what happened.
+pub fn unpick_paths(space: &mut Space, repo_paths: &[String]) -> Result<(), Box<dyn Error>> {
+    for (p, was_picked) in lib::ops::pick::unpick(space, repo_paths)? {
+        if was_picked {
             println!("Un-picked {}", p);
         } else {
             println!("{}", crate::colors::dim(&format!("{} wasn't picked", p)));
         }
     }
+    Ok(())
 }
 
 pub fn unstage(space: &mut Space, cmd: &UnstageCommand) -> Result<(), Box<dyn Error>> {
@@ -28,6 +29,5 @@ pub fn unstage(space: &mut Space, cmd: &UnstageCommand) -> Result<(), Box<dyn Er
     for p in &cmd.paths {
         repo_paths.push(space.repo_path_from(&cwd, p)?);
     }
-    unpick_paths(space, &repo_paths);
-    Ok(())
+    unpick_paths(space, &repo_paths)
 }

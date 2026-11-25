@@ -1,7 +1,10 @@
 use std::{error::Error, fs};
 
 use clap::clap_derive::Args;
-use lib::{file::FileOps, space::Space};
+use lib::ops::{pick, save};
+use lib::space::Space;
+
+use crate::stage::PickPrinter;
 
 #[derive(Args)]
 #[command(about = "Save a new version of your picked files")]
@@ -11,19 +14,11 @@ pub struct CommitCommand {
     pub file_path: Option<String>,
 
     /// Commit message
-    #[arg(
-        short = 'm',
-        long = "message",
-        help = "What changed, in a sentence"
-    )]
+    #[arg(short = 'm', long = "message", help = "What changed, in a sentence")]
     pub message: Option<String>,
 
     /// Write the message for me from what changed
-    #[arg(
-        short = 'g',
-        long = "generate",
-        help = "Write the message for me from what changed"
-    )]
+    #[arg(short = 'g', long = "generate", help = "Write the message for me from what changed")]
     pub generate: bool,
 
     /// Pick every changed or deleted tracked file first
@@ -35,131 +30,54 @@ pub struct CommitCommand {
     pub allow_empty: bool,
 }
 
-pub fn commit(
-    space: &mut Space,
-    cmd: &CommitCommand,
-) -> Result<(), Box<dyn Error>> {
+pub fn commit(space: &mut Space, cmd: &CommitCommand) -> Result<(), Box<dyn Error>> {
+    let mut out = PickPrinter::new();
     if let Some(fp) = &cmd.file_path {
         let repo_path = space.repo_path_from(&std::env::current_dir()?, fp)?;
-        crate::stage::stage_repo_path(space, &repo_path)?;
+        pick::pick_file(space, &repo_path, |e| out.on(e))?;
     }
     if cmd.all {
-        let report = crate::status::collect(space)?;
-        for p in &report.modified {
-            crate::stage::stage_repo_path(space, p)?;
-        }
-        for p in &report.missing {
-            FileOps::from_space(space).stage_deletion(p.clone())?;
-            println!("-- Picking the deletion of {}", p);
-        }
+        save::pick_tracked(space, |e| out.on(e))?;
     }
-
     if space.index.is_empty() && !cmd.allow_empty {
-        return Err("nothing to save: pick some changes first (`duh pick <file>`), or use --allow-empty".into());
+        // Let save explain.
+        save::save(space, "-", false)?;
     }
 
     let message = match cmd.message.clone() {
-        Some(ref x) if !x.is_empty() => x.clone(),
+        Some(x) if !x.is_empty() => x,
         _ if cmd.generate || std::env::var("EDITOR").is_err() => {
-            let msg = generate_message(space)?;
+            let cwd = std::env::current_dir()?;
+            let display_space = space.clone();
+            let msg = save::suggest_message(space, |p| display_space.display_path(&cwd, p))?;
             println!(
                 "{} {}",
                 crate::colors::dim("Generated message:"),
-                crate::colors::bold(&msg.lines().next().unwrap_or(""))
+                crate::colors::bold(msg.lines().next().unwrap_or(""))
             );
             msg
         }
         _ => prompt_editor()?,
     };
 
-    let h = {
-        let mut fileops = FileOps::from_space(space);
-        fileops.commit(message.clone())?
-    };
-    let branch = space
-        .get_head_branch_name()
-        .unwrap_or_else(|_| "no draft".to_string());
+    let saved = save::save(space, &message, cmd.allow_empty)?;
     println!(
         "[{} {}] {}",
-        crate::colors::green(&branch),
-        crate::colors::cyan(&h.to_string()[..12]),
-        message.lines().next().unwrap_or("")
+        crate::colors::green(saved.draft.as_deref().unwrap_or("no draft")),
+        crate::colors::cyan(&saved.version.to_string()[..12]),
+        saved.message.lines().next().unwrap_or("")
     );
     Ok(())
 }
 
-fn generate_message(space: &mut Space) -> Result<String, Box<dyn Error>> {
-    let fileops = FileOps::from_space(space);
-    let summaries = fileops.staged_summary()?;
-    if summaries.is_empty() {
-        return Ok("Nothing changed".to_string());
-    }
-
-    let cwd = std::env::current_dir()?;
-
-    let file_count = summaries.len();
-    let noun = if file_count == 1 { "file" } else { "files" };
-
-    let mut lines = vec![format!("Update {} {}", file_count, noun), String::new()];
-
-    let mut sorted = summaries;
-    sorted.sort_by(|a, b| a.path.cmp(&b.path));
-
-    for s in &sorted {
-        let display = space.display_path(&cwd, &s.path);
-        if s.removed {
-            lines.push(format!("  {}  (deleted)", display));
-            continue;
-        }
-        let is_new = s.unchanged_bytes == 0 && s.deleted_bytes == 0;
-        if is_new {
-            lines.push(format!(
-                "  {}  +{}  (new)",
-                display,
-                fmt_bytes(s.added_bytes)
-            ));
-        } else {
-            let mut parts = vec![format!("+{}", fmt_bytes(s.added_bytes))];
-            if s.deleted_bytes > 0 {
-                parts.push(format!("-{}", fmt_bytes(s.deleted_bytes)));
-            }
-            parts.push(format!("~{} unchanged", fmt_bytes(s.unchanged_bytes)));
-            lines.push(format!("  {}  {}", display, parts.join("  ")));
-        }
-    }
-
-    Ok(lines.join("\n"))
-}
-
-pub fn fmt_bytes(n: usize) -> String {
-    if n >= 1_000_000_000 {
-        format!("{:.1} GB", n as f64 / 1_000_000_000.0)
-    } else if n >= 1_000_000 {
-        format!("{:.1} MB", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1} KB", n as f64 / 1_000.0)
-    } else {
-        format!("{} B", n)
-    }
-}
-
+/// The message from $EDITOR, written in a file of its own so two saves at
+/// once can't collide.
 fn prompt_editor() -> Result<String, Box<dyn Error>> {
-    let editor_command = std::env::var("EDITOR").unwrap();
-
-    let message_dir = std::env::temp_dir().to_string_lossy().into_owned();
-    let message_path = format!("{}/message", message_dir);
-
-    let mut command = std::process::Command::new(editor_command);
-    command.arg(message_path.clone());
-
-    let exit_code = command.status().unwrap();
-
-    if !exit_code.success() {
-        let code = exit_code.code().unwrap_or(-1);
-        return Err(Box::new(lib::error::DuhError::EditorExitedWithError(code)));
+    let editor = std::env::var("EDITOR")?;
+    let file = tempfile::Builder::new().prefix("duh-message-").suffix(".txt").tempfile()?;
+    let status = std::process::Command::new(editor).arg(file.path()).status()?;
+    if !status.success() {
+        return Err(Box::new(lib::error::DuhError::EditorExitedWithError(status.code().unwrap_or(-1))));
     }
-
-    let msg = fs::read(message_path.clone()).unwrap();
-
-    Ok(String::from_utf8(msg).unwrap())
+    Ok(fs::read_to_string(file.path())?)
 }

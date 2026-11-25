@@ -12,6 +12,7 @@ atty = "0.2"
 walkdir = "2.5.0"
 globwalk = "0.9.1"
 opendal = { version = "0.52.0", features = ["layers-blocking"] }
+tempfile = "3.25.0"
 
 [profile.release]
 opt-level = 'z'     # Optimize for size

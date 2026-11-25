@@ -1,10 +1,7 @@
 use std::error::Error;
 
 use clap::clap_derive::Args;
-use lib::file::FileOps;
 use lib::space::Space;
-
-use crate::status;
 
 #[derive(Args)]
 #[command(about = "Delete files and stop tracking them (earlier versions stay in history)")]
@@ -30,44 +27,28 @@ pub struct ForgetCommand {
     pub paths: Vec<String>,
 }
 
+fn repo_paths(space: &Space, paths: &[String]) -> Result<Vec<String>, Box<dyn Error>> {
+    let cwd = std::env::current_dir()?;
+    paths.iter().map(|p| space.repo_path_from(&cwd, p)).collect()
+}
+
 pub fn forget(space: &mut Space, cmd: &ForgetCommand) -> Result<(), Box<dyn Error>> {
-    rm(space, &RmCommand { paths: cmd.paths.clone(), cached: true, force: false })
+    let paths = repo_paths(space, &cmd.paths)?;
+    lib::ops::files::forget(space, &paths)?;
+    for p in paths {
+        println!("Forgot {} (the file stays on disk)", p);
+    }
+    Ok(())
 }
 
 pub fn rm(space: &mut Space, cmd: &RmCommand) -> Result<(), Box<dyn Error>> {
-    let cwd = std::env::current_dir()?;
-    let report = status::collect(space)?;
-    let tracked = report.tracked();
-
-    // Validate everything before touching anything.
-    let mut repo_paths = Vec::new();
-    for p in &cmd.paths {
-        let repo_path = space.repo_path_from(&cwd, p)?;
-        if tracked.binary_search(&repo_path).is_err() {
-            return Err(format!("'{}' isn't a tracked file", p).into());
-        }
-        let has_changes = report.modified.contains(&repo_path)
-            || report.staged.iter().any(|(s, _)| *s == repo_path);
-        if has_changes && !cmd.force && !cmd.cached {
-            return Err(format!(
-                "'{}' has unsaved changes (--force deletes it anyway; `duh forget` keeps the file)",
-                p
-            )
-            .into());
-        }
-        repo_paths.push(repo_path);
+    if cmd.cached {
+        return forget(space, &ForgetCommand { paths: cmd.paths.clone() });
     }
-
-    for repo_path in repo_paths {
-        FileOps::from_space(space).stage_deletion(repo_path.clone())?;
-        if !cmd.cached {
-            crate::worktree::remove_file(space, &repo_path)?;
-        }
-        if cmd.cached {
-            println!("Forgot {} (the file stays on disk)", repo_path);
-        } else {
-            println!("Deleted {}", repo_path);
-        }
+    let paths = repo_paths(space, &cmd.paths)?;
+    lib::ops::files::delete(space, &paths, cmd.force)?;
+    for p in paths {
+        println!("Deleted {}", p);
     }
     Ok(())
 }

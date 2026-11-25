@@ -1061,6 +1061,7 @@ dependencies = [
  "globwalk",
  "lib",
  "opendal",
+ "tempfile",
  "walkdir",
 ]
 
@@ -1997,6 +1998,7 @@ dependencies = [
  "blake3",
  "diff",
  "gearhash",
+ "globwalk",
  "hex",
  "opendal",
  "rmp-serde",

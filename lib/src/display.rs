@@ -154,3 +154,12 @@ pub fn file_fragment_to_entry(fragment: &FileFragment) -> (u64, char, &'static s
         FileFragment::DELETED { len } => (*len as u64, '-', "31"),
     }
 }
+
+/// A change-strip span as a diff-bar entry.
+pub fn span_to_entry(span: &crate::ops::Span) -> (u64, char, &'static str) {
+    match *span {
+        crate::ops::Span::Added(n) => (n, '+', "32"),
+        crate::ops::Span::Kept(n) => (n, '=', "37"),
+        crate::ops::Span::Removed(n) => (n, '-', "31"),
+    }
+}

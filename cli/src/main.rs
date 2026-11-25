@@ -6,7 +6,6 @@ use cli::{Cli, Commands};
 
 mod branch;
 mod check;
-mod checkout;
 mod cli;
 mod colors;
 mod commit;
@@ -27,7 +26,7 @@ mod status;
 mod switch;
 mod tag;
 mod unstage;
-mod worktree;
+mod when;
 
 fn main() {
     if let Err(e) = run() {
@@ -63,6 +62,18 @@ fn run() -> Result<(), Box<dyn Error>> {
 
             lib::space::Space::open(lib::store::local(&metadata_dir)?, worktree)?
         }
+    };
+
+    // Commands that change the space wait their turn, so duh Studio and
+    // another duh never write to it at once. Looking never waits.
+    let read_only = matches!(
+        &cli.command,
+        Commands::Status(_) | Commands::Diff(_) | Commands::Log(_) | Commands::Show(_) | Commands::Reflog(_) | Commands::Check(_)
+    );
+    let _lock = if read_only {
+        None
+    } else {
+        Some(lib::ops::lock(&std::env::current_dir()?, std::time::Duration::from_secs(10))?)
     };
 
     match &cli.command {
