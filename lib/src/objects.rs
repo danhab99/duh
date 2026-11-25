@@ -53,6 +53,18 @@ pub struct FileStruct {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StagedFileStruct(Vec<u8>);
 
+/// A file's whole content stored as plain fragments, so it can be read
+/// without replaying the diffs that lead up to it. Solid copies sit beside
+/// history rather than in it: they're found by content hash (see
+/// `Space::solid_for`), and no commit, tree or file version refers to one.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SolidStruct {
+    /// Hash of the bytes the fragments add up to.
+    pub content_hash: Hash,
+    /// Fragment objects and their lengths, in order.
+    pub parts: Vec<(Hash, usize)>,
+}
+
 #[derive(PartialEq, Eq, Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum FileFragment {
     ADDED { body: Hash, len: usize },
@@ -80,6 +92,7 @@ pub enum Object {
     Fragment(Fragment),
     StagedFileStruct(StagedFileStruct),
     FileDiffFragment(FileFragment),
+    Solid(SolidStruct),
 }
 
 impl Object {
@@ -117,6 +130,7 @@ impl Object {
             Self::StagedFileStruct(_) => "stagedfilestruct",
             Self::File(_) => "file",
             Self::Tree(_) => "tree",
+            Self::Solid(_) => "solid",
         }
         .into()
     }

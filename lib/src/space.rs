@@ -41,6 +41,9 @@ pub struct Space {
     pub index: HashMap<String, Hash>,
     pub chunk_size: usize,
     pub max_size: usize,
+    /// Once a file has this many saves since its last solid copy, the
+    /// middle one is made solid (see `FileOps::commit`).
+    pub solid_after: usize,
     pub worktree: Option<PathBuf>,
     /// Where this space's metadata lives. Injected; any opendal backend.
     fs: Operator,
@@ -58,6 +61,9 @@ pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 /// A content-defined chunk is cut once it reaches this many times
 /// `chunk_size` (or `max_size`, if that's smaller), even without a boundary.
 pub const MAX_CHUNK_FACTOR: usize = 8;
+
+/// Default for the `solid_after` setting.
+pub const DEFAULT_SOLID_AFTER: usize = 100;
 
 impl Space {
     /// Open an existing space whose metadata lives in `filesystem` (any
@@ -88,6 +94,15 @@ impl Space {
             .as_integer()
             .ok_or("chunk_size is not a number")? as usize;
 
+        let solid_after = match config.get("solid_after") {
+            None => DEFAULT_SOLID_AFTER,
+            Some(v) => v
+                .as_integer()
+                .filter(|n| *n >= 2)
+                .ok_or("solid_after must be a whole number of at least 2")?
+                as usize,
+        };
+
         let config_bare = config
             .get("core")
             .and_then(|c| c.as_table())
@@ -103,6 +118,7 @@ impl Space {
             fs: filesystem,
             chunk_size,
             max_size,
+            solid_after,
             worktree: if config_bare { None } else { worktree },
             me: Person {
                 name: String::from(
@@ -266,6 +282,7 @@ impl Space {
             fs: filesystem,
             chunk_size: DEFAULT_BLOCK_SIZE,
             max_size: DEFAULT_MAX_FRAGMENT_SIZE,
+            solid_after: DEFAULT_SOLID_AFTER,
             worktree,
             me: Person {
                 name: "test".to_string(),
@@ -333,6 +350,42 @@ impl Space {
             self.fs.write(&key, bytes)?;
         }
         Ok(())
+    }
+
+    fn solid_key(content_hash: &Hash) -> String {
+        format!("solid/{}", content_hash.to_hex())
+    }
+
+    /// The solid copy of the content with this hash, if this space has one.
+    pub fn solid_for(&self, content_hash: &Hash) -> SpaceResult<Option<Hash>> {
+        match self.read_in_space(&Space::solid_key(content_hash))? {
+            Some(bytes) => Ok(Some(Hash::from_string(String::from_utf8(bytes)?.trim().to_string())?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Record `solid` (a Solid object already in the store) as the solid
+    /// copy of the content with this hash.
+    pub fn set_solid(&self, content_hash: &Hash, solid: Hash) -> SpaceResult<()> {
+        self.write_to_space(&Space::solid_key(content_hash), solid.to_hex().as_bytes())
+    }
+
+    /// Every solid copy in this space, as (content hash, Solid object).
+    pub fn list_solids(&self) -> SpaceResult<Vec<(Hash, Hash)>> {
+        if !self.fs.exists("solid/")? {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in self.fs.list("solid/")? {
+            if !entry.metadata().is_file() {
+                continue;
+            }
+            let content = Hash::from_string(entry.name().to_string())?;
+            if let Some(solid) = self.solid_for(&content)? {
+                out.push((content, solid));
+            }
+        }
+        Ok(out)
     }
 
     /// Read a metadata entry; `None` if it doesn't exist.

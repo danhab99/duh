@@ -1,14 +1,14 @@
 use crate::{
     diff::DiffFragment,
     hash::Hash,
-    objects::{CommitStruct, FileFragment, FileStruct, Fragment, Object, ObjectReference},
+    objects::{CommitStruct, FileFragment, FileStruct, Fragment, Object, ObjectReference, SolidStruct},
     replay::LazyFileReplay,
     space::ReadSeek,
     vlog,
 };
 use std::{error::Error, fs::File, io::Seek, path::{Component, Path, PathBuf}};
 
-use std::io;
+use std::io::{self, Read};
 
 use crate::space::Space;
 
@@ -22,6 +22,14 @@ pub struct FileStagedSummary {
     pub added_bytes: usize,
     pub deleted_bytes: usize,
     pub unchanged_bytes: usize,
+}
+
+/// Where a file version sits in history (see `FileOps::locate`).
+struct Located {
+    file: FileStruct,
+    /// The path and commit whose version this one diffs against, or `None`
+    /// if it diffs against nothing.
+    base: Option<(String, Hash)>,
 }
 
 pub struct FileOps<'a> {
@@ -243,6 +251,13 @@ impl<'a> FileOps<'a> {
         };
 
         let files_count = self.space.index.len();
+        let saved: Vec<String> = self
+            .space
+            .index
+            .iter()
+            .filter(|(_, v)| !v.is_zero())
+            .map(|(k, _)| k.clone())
+            .collect();
         vlog!("space::commit: creating commit with {} files", files_count);
 
         let commit_hash = self.space.save_obj(Object::Commit(commit))?;
@@ -277,6 +292,10 @@ impl<'a> FileOps<'a> {
             self.space.index.clear();
             vlog!("space::commit: cleared {} entries from index", files_count);
             self.space.save_index()?;
+        }
+
+        for path in saved {
+            self.solidify(&path, commit_hash)?;
         }
 
         Ok(commit_hash)
@@ -319,15 +338,42 @@ impl<'a> FileOps<'a> {
             hash.to_string()
         );
         let repo_path = self.normalize_repo_path(&file_path)?;
+        let located = self.locate(&repo_path, hash)?;
+
+        if let Some(solid) = self.open_solid(&located.file.content_hash)? {
+            vlog!("space::open_file: '{}' has a solid copy", repo_path);
+            return Ok(solid);
+        }
+
+        let fragments = self.load_fragments(&located.file)?;
+        let parent_reader: Box<dyn ReadSeek> = match located.base {
+            // File was added by the introducing commit: diff against nothing.
+            None => Box::new(io::Cursor::new(Vec::<u8>::new())),
+            Some((base_path, base_commit)) => self.open_file(base_path, base_commit)?,
+        };
+
+        vlog!(
+            "space::open_file: creating lazy replay with {} fragments",
+            fragments.len()
+        );
+
+        let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
+
+        Ok(Box::new(replay))
+    }
+
+    /// Find the version of `repo_path` in `commit`, and the version its
+    /// fragments diff against.
+    fn locate(&self, repo_path: &str, commit_hash: Hash) -> FileOpsResult<Located> {
         // Spaces from before paths were repo-relative keyed files by absolute
         // worktree path; only meaningful when there is a worktree.
-        let legacy_key = self.space.get_path_in_worktree_str(&repo_path).ok();
+        let legacy_key = self.space.get_path_in_worktree_str(repo_path).ok();
 
-        let commit = match self.space.get_object(hash)? {
+        let commit = match self.space.get_object(commit_hash)? {
             Some(Object::Commit(c)) => c,
             None => {
                 return Err(Box::new(crate::error::DuhError::object_not_found(
-                    &hash.to_string(),
+                    &commit_hash.to_string(),
                     "commit",
                 )));
             }
@@ -339,26 +385,26 @@ impl<'a> FileOps<'a> {
             }
         };
 
-        let files = self.space.get_commit_files(hash)?;
-        let file_version_hash = match files
-            .get(repo_path.as_str())
+        let files = self.space.get_commit_files(commit_hash)?;
+        let version = match files
+            .get(repo_path)
             .or_else(|| legacy_key.as_deref().and_then(|k| files.get(k)))
         {
-            Some(x) => x,
+            Some(x) => *x,
             None => {
                 vlog!(
-                    "space::open_file: file '{}' not in commit {}",
+                    "space::locate: file '{}' not in commit {}",
                     repo_path,
-                    hash.to_string()
+                    commit_hash.to_string()
                 );
                 return Err(Box::new(crate::error::DuhError::file_not_in_commit(
-                    &repo_path,
-                    &hash.to_string(),
+                    repo_path,
+                    &commit_hash.to_string(),
                 )));
             }
         };
 
-        let file_version = match self.space.get_object(*file_version_hash)? {
+        let file = match self.space.get_object(version)? {
             Some(Object::File(c)) => c,
             _ => {
                 return Err(Box::new(crate::error::DuhError::invalid_object(
@@ -367,16 +413,12 @@ impl<'a> FileOps<'a> {
                 )))
             }
         };
-        let base_path = file_version.base_path.clone();
-
-        let fragments = self.load_fragments(&file_version)?;
 
         // A version's fragments diff against the file as it was when staged,
         // i.e. in the parent of the commit that introduced the version. Commits
         // that merely carried the version forward must be skipped.
-        let version = *file_version_hash;
         let mut base_commit = commit.parent;
-        while self.version_in_commit(base_commit, &repo_path)? == Some(version) {
+        while self.version_in_commit(base_commit, repo_path)? == Some(version) {
             base_commit = match self.space.get_object(base_commit)? {
                 Some(Object::Commit(c)) => c.parent,
                 _ => {
@@ -390,24 +432,120 @@ impl<'a> FileOps<'a> {
 
         // The diff base is the same path unless the version was staged
         // against another one (a rename).
-        let base_path = base_path.unwrap_or_else(|| repo_path.clone());
-        let parent_reader: Box<dyn ReadSeek> =
-            if self.version_in_commit(base_commit, &base_path)?.is_none() {
-                // File was added by the introducing commit: diff against nothing.
-                Box::new(io::Cursor::new(Vec::<u8>::new()))
-            } else {
-                self.open_file(base_path, base_commit)?
-            };
+        let base_path = file.base_path.clone().unwrap_or_else(|| repo_path.to_string());
+        let base = match self.version_in_commit(base_commit, &base_path)? {
+            Some(_) => Some((base_path, base_commit)),
+            None => None,
+        };
 
-        vlog!(
-            "space::open_file: creating lazy replay with {} fragments, base_commit={}",
-            fragments.len(),
-            base_commit.to_string()
-        );
+        Ok(Located { file, base })
+    }
 
-        let replay = LazyFileReplay::new(&self.space, parent_reader, fragments)?;
+    /// A reader over the solid copy of this content, if there is one.
+    fn open_solid(&self, content_hash: &Hash) -> FileOpsResult<Option<Box<dyn ReadSeek>>> {
+        let Some(solid_hash) = self.space.solid_for(content_hash)? else {
+            return Ok(None);
+        };
+        let solid = match self.space.get_object(solid_hash)? {
+            Some(Object::Solid(s)) => s,
+            _ => {
+                return Err(Box::new(crate::error::DuhError::invalid_object(
+                    "solid copy",
+                    "missing or not a solid copy",
+                )))
+            }
+        };
+        let fragments = solid
+            .parts
+            .into_iter()
+            .map(|(body, len)| FileFragment::ADDED { body, len })
+            .collect();
+        let empty: Box<dyn ReadSeek> = Box::new(io::Cursor::new(Vec::<u8>::new()));
+        Ok(Some(Box::new(LazyFileReplay::new(&self.space, empty, fragments)?)))
+    }
 
-        Ok(Box::new(replay))
+    /// If `repo_path` has `solid_after` or more saves since its last solid
+    /// copy as of `commit`, make the middle one of those saves solid, so
+    /// reading any save never replays much more than `solid_after` diffs.
+    /// Returns the content hash that was made solid, if any.
+    pub fn solidify(&mut self, repo_path: &str, commit: Hash) -> FileOpsResult<Option<Hash>> {
+        let limit = self.space.solid_after;
+
+        // Saves since the last solid copy, newest first. A save that diffs
+        // against nothing (the file's first) reads as fast as a solid copy.
+        let mut chain: Vec<(String, Hash, Hash)> = Vec::new();
+        let (mut path, mut at) = (repo_path.to_string(), commit);
+        while chain.len() < limit {
+            let located = self.locate(&path, at)?;
+            let content = located.file.content_hash;
+            if self.space.solid_for(&content)?.is_some() {
+                break;
+            }
+            match located.base {
+                None => break,
+                Some((base_path, base_commit)) => {
+                    chain.push((path, at, content));
+                    path = base_path;
+                    at = base_commit;
+                }
+            }
+        }
+        if chain.len() < limit {
+            return Ok(None);
+        }
+
+        // The (limit/2)th oldest of the saves since the last solid copy.
+        let (path, at, content) = chain[limit - limit / 2].clone();
+        self.make_solid(&path, at, content)?;
+        Ok(Some(content))
+    }
+
+    /// Store `repo_path` as of `commit` as a solid copy of `content_hash`,
+    /// checking the bytes read back really have that hash first.
+    fn make_solid(&mut self, repo_path: &str, commit: Hash, content_hash: Hash) -> FileOpsResult<()> {
+        use sha2::{Digest, Sha256};
+
+        // The whole content as added fragments of max_size bytes each (the
+        // last one shorter), so it costs about as much as a checkout.
+        let mut reader = self.open_file(repo_path.to_string(), commit)?;
+        let mut parts = Vec::new();
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; self.space.max_size];
+        loop {
+            let mut filled = 0;
+            while filled < buf.len() {
+                match reader.read(&mut buf[filled..])? {
+                    0 => break,
+                    n => filled += n,
+                }
+            }
+            if filled == 0 {
+                break;
+            }
+            let bytes = &buf[..filled];
+            hasher.update(bytes);
+            let h = self.space.save_obj(Object::Fragment(Fragment(bytes.to_vec())))?;
+            parts.push((h, filled));
+            if filled < buf.len() {
+                break;
+            }
+        }
+
+        let got = Hash::from_string(hex::encode(hasher.finalize()))?;
+        if got != content_hash {
+            return Err(format!(
+                "'{}' read back as {} instead of {}; not making it solid",
+                repo_path,
+                got.to_hex(),
+                content_hash.to_hex()
+            )
+            .into());
+        }
+
+        let solid = self.space.save_obj(Object::Solid(SolidStruct { content_hash, parts }))?;
+        self.space.set_solid(&content_hash, solid)?;
+        vlog!("space::make_solid: '{}' -> {}", repo_path, solid.to_string());
+        Ok(())
     }
 
     /// The diff fragments of a file version, in order.
@@ -604,6 +742,47 @@ mod tests {
             assert_eq!(space.resolve_ref_name(short).unwrap(), *hash);
         }
         assert!(space.resolve_commit_prefix("zzzz").is_err());
+    }
+
+    /// With solid_after = 10, the 5th oldest of every 10 saves since the
+    /// last solid copy is made solid: saves 6, 11 and 16 of 25 (save 1
+    /// diffs against nothing, so it never counts). Every save, solid or
+    /// not, still reads back exactly, and a solid one reads back even with
+    /// its diffs gone.
+    #[test]
+    fn middle_saves_become_solid() {
+        let (dir, mut space) = space_with_worktree();
+        space.solid_after = 10;
+        let mut data: Vec<u8> = (0..80_000u32).map(|i| (i.wrapping_mul(2654435761) >> 13) as u8).collect();
+
+        let mut saves = Vec::new();
+        for i in 1..=25u32 {
+            let at = (i as usize * 2_971) % (data.len() - 8);
+            data[at..at + 4].copy_from_slice(&i.to_le_bytes());
+            write(&dir, "f.bin", &data);
+            stage(&mut space, "f.bin");
+            saves.push((commit(&mut space), crate::hash::Hash::digest_slice(&data).unwrap(), data.clone()));
+        }
+
+        let solid: Vec<usize> = (1..=25)
+            .filter(|n| space.solid_for(&saves[n - 1].1).unwrap().is_some())
+            .collect();
+        assert_eq!(solid, vec![6, 11, 16]);
+        assert_eq!(space.list_solids().unwrap().len(), 3);
+
+        for (n, (hash, _, want)) in saves.iter().enumerate() {
+            let got = read_at(&mut space, "f.bin", *hash).unwrap();
+            assert!(got == *want, "save {} differs", n + 1);
+        }
+
+        // Save 16 reads from its solid copy alone: drop the version it
+        // diffs against and it still comes back.
+        let files = space.get_commit_files(saves[14].0).unwrap();
+        let v15 = files["f.bin"];
+        let key = Space::object_key(&v15);
+        space.store().delete(&key).unwrap();
+        assert!(read_at(&mut space, "f.bin", saves[14].0).is_none());
+        assert!(read_at(&mut space, "f.bin", saves[15].0).unwrap() == saves[15].2);
     }
 
     fn read_all(mut r: Box<dyn ReadSeek>) -> Vec<u8> {
