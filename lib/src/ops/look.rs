@@ -1,6 +1,7 @@
 //! What's changed, picked, missing and new: `duh look`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{worktree, OpResult};
 use crate::hash::Hash;
@@ -59,6 +60,69 @@ impl Look {
     }
 }
 
+/// Hashes of working files by size and modification time, kept in
+/// `.duh/statcache`, so looking doesn't re-read files that haven't changed.
+/// A file modified within the last couple of seconds isn't trusted to the
+/// cache: it could change again within the same timestamp.
+struct StatCache {
+    entries: HashMap<String, (u64, u128, Hash)>,
+    changed: bool,
+}
+
+const STAT_CACHE: &str = "statcache";
+
+impl StatCache {
+    fn load(space: &Space) -> Self {
+        let mut entries = HashMap::new();
+        if let Ok(Some(bytes)) = space.read_in_space(STAT_CACHE) {
+            for line in String::from_utf8_lossy(&bytes).lines() {
+                let mut f = line.splitn(4, '\t');
+                if let (Some(h), Some(size), Some(mtime), Some(path)) = (f.next(), f.next(), f.next(), f.next()) {
+                    if let (Ok(h), Ok(size), Ok(mtime)) = (Hash::from_string(h.to_string()), size.parse(), mtime.parse()) {
+                        entries.insert(path.to_string(), (size, mtime, h));
+                    }
+                }
+            }
+        }
+        StatCache { entries, changed: false }
+    }
+
+    /// The hash of the file at `full` (repo path `path`), from the cache
+    /// when its size and time match, else read and remembered.
+    fn hash(&mut self, path: &str, full: &std::path::Path) -> OpResult<Hash> {
+        let meta = std::fs::metadata(full)?;
+        let mtime = meta.modified()?.duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        if let Some((size, t, h)) = self.entries.get(path) {
+            if *size == meta.len() && *t == mtime {
+                return Ok(*h);
+            }
+        }
+        let h = Hash::digest_file_stream(&mut std::fs::File::open(full)?)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        if now.saturating_sub(mtime) > 2_000_000_000 {
+            self.entries.insert(path.to_string(), (meta.len(), mtime, h));
+            self.changed = true;
+        }
+        Ok(h)
+    }
+
+    /// Save it if it changed. Best effort: a lost cache only costs a re-read.
+    fn save(mut self, space: &Space, live: &[String]) {
+        let before = self.entries.len();
+        self.entries.retain(|p, _| live.binary_search(p).is_ok());
+        if !self.changed && self.entries.len() == before {
+            return;
+        }
+        let mut out = String::new();
+        let mut paths: Vec<_> = self.entries.iter().collect();
+        paths.sort_by(|a, b| a.0.cmp(b.0));
+        for (path, (size, mtime, h)) in paths {
+            out.push_str(&format!("{}\t{}\t{}\t{}\n", h.to_hex(), size, mtime, path));
+        }
+        let _ = space.write_to_space(STAT_CACHE, out.as_bytes());
+    }
+}
+
 fn content_hash(space: &Space, version: Hash) -> OpResult<Option<Hash>> {
     Ok(match space.get_object(version)? {
         Some(Object::File(fv)) => Some(fv.content_hash),
@@ -104,6 +168,7 @@ pub fn look(space: &mut Space) -> OpResult<Look> {
         }
     }
 
+    let mut cache = StatCache::load(space);
     for (path, (version, picked)) in &tracked {
         if let Some(change) = picked {
             report.picked.push((path.clone(), *change));
@@ -118,7 +183,7 @@ pub fn look(space: &mut Space) -> OpResult<Look> {
             continue;
         }
 
-        let working = Hash::digest_file_stream(&mut std::fs::File::open(&full_path)?)?;
+        let working = cache.hash(path, &full_path)?;
         if content_hash(space, *version)? != Some(working) {
             report.changed.push(path.clone());
         } else if picked.is_none() {
@@ -127,9 +192,48 @@ pub fn look(space: &mut Space) -> OpResult<Look> {
     }
 
     let tracked_now = report.tracked();
+    cache.save(space, &tracked_now);
     report.new = worktree::files(space)?
         .into_iter()
         .filter(|p| tracked_now.binary_search(p).is_err())
         .collect();
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{pick::pick_file, save::save, testing};
+    use super::*;
+
+    fn age(path: &std::path::Path, secs: u64) {
+        let t = SystemTime::now() - std::time::Duration::from_secs(secs);
+        std::fs::File::options().write(true).open(path).unwrap().set_modified(t).unwrap();
+    }
+
+    #[test]
+    fn look_trusts_the_cache_only_for_files_that_settled() {
+        let (dir, mut space) = testing::space();
+        let a = dir.path().join("a.bin");
+        testing::write(&dir, "a.bin", &testing::noise(1, 20_000));
+        pick_file(&mut space, "a.bin", |_| {}).unwrap();
+        save(&mut space, "one", false).unwrap();
+
+        // A fresh file isn't cached.
+        assert_eq!(look(&mut space).unwrap().unchanged, vec!["a.bin"]);
+        assert!(space.read_in_space(STAT_CACHE).unwrap().is_none_or(|b| b.is_empty()));
+
+        // A settled one is, and a later edit is still noticed.
+        age(&a, 60);
+        look(&mut space).unwrap();
+        let cached = String::from_utf8(space.read_in_space(STAT_CACHE).unwrap().unwrap()).unwrap();
+        assert!(cached.contains("\ta.bin"));
+        testing::write(&dir, "a.bin", &testing::noise(2, 20_000));
+        assert_eq!(look(&mut space).unwrap().changed, vec!["a.bin"]);
+
+        // Same size, back-dated to the cached time: the cache would be
+        // fooled, which is the trade git makes too; restoring the real
+        // content brings it back to unchanged.
+        testing::write(&dir, "a.bin", &testing::noise(1, 20_000));
+        assert_eq!(look(&mut space).unwrap().unchanged, vec!["a.bin"]);
+    }
 }

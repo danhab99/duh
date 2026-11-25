@@ -389,7 +389,7 @@ impl Space {
     }
 
     /// Read a metadata entry; `None` if it doesn't exist.
-    fn read_in_space(&self, path: &str) -> SpaceResult<Option<Vec<u8>>> {
+    pub(crate) fn read_in_space(&self, path: &str) -> SpaceResult<Option<Vec<u8>>> {
         match self.fs.read(path) {
             Ok(buf) => Ok(Some(buf.to_vec())),
             Err(e) if e.kind() == opendal::ErrorKind::NotFound => Ok(None),
