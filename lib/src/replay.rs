@@ -240,6 +240,19 @@ impl Read for LazyFileReplay {
                                 "expected Fragment object",
                             )),
                         };
+                        // Damaged data can disagree about a piece's length;
+                        // refuse rather than read past its end.
+                        if data.len() != *len {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "piece {} holds {} bytes, not the {} expected",
+                                    hash.to_hex(),
+                                    data.len(),
+                                    len
+                                ),
+                            ));
+                        }
                         self.current_added_data = Some(data);
                     }
 
