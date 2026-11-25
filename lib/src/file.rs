@@ -136,6 +136,7 @@ impl<'a> FileOps<'a> {
             // Target average chunk size; max_size (10 MiB default) would make
             // most files a single chunk and defeat deduplication.
             self.space.chunk_size as u64,
+            self.space.max_chunk(),
             progress,
         )?;
 

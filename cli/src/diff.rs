@@ -43,7 +43,7 @@ fn print_file(space: &Space, repo_path: &str, label: &str, entries: &[Entry]) {
 
 /// Diff `old` → `new` in memory (nothing is stored).
 fn compute(space: &Space, old: Box<dyn ReadSeek>, new: Box<dyn ReadSeek>) -> Result<Vec<Entry>, Box<dyn Error>> {
-    let frags = build_diff_fragments(old, new, space.chunk_size, space.chunk_size as u64, None::<fn(DedupProgress)>)?;
+    let frags = build_diff_fragments(old, new, space.chunk_size, space.chunk_size as u64, space.max_chunk(), None::<fn(DedupProgress)>)?;
     Ok(frags.map(display::fragment_to_entry).collect())
 }
 

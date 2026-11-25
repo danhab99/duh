@@ -55,6 +55,10 @@ pub const DEFAULT_BLOCK_SIZE: usize = 4096;
 /// bodies are split into multiple Fragment objects at stage time.
 pub const DEFAULT_MAX_FRAGMENT_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
 
+/// A content-defined chunk is cut once it reaches this many times
+/// `chunk_size` (or `max_size`, if that's smaller), even without a boundary.
+pub const MAX_CHUNK_FACTOR: usize = 8;
+
 impl Space {
     /// Open an existing space whose metadata lives in `filesystem` (any
     /// opendal backend; see [`crate::store`]), with an optional local worktree.
@@ -160,6 +164,11 @@ impl Space {
     /// The store this space's metadata lives in.
     pub fn store(&self) -> &Operator {
         &self.fs
+    }
+
+    /// The longest a content-defined chunk may grow before it's cut.
+    pub fn max_chunk(&self) -> usize {
+        self.chunk_size.saturating_mul(MAX_CHUNK_FACTOR).min(self.max_size)
     }
 
     pub fn get_path_in_worktree(&self, p: &str) -> SpaceResult<PathBuf> {

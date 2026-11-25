@@ -9,12 +9,18 @@ use crate::hash::Hash;
 use crate::utils::read_chunk;
 use crate::vlog;
 
-fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash) -> Option<()>>(
+/// Split `old` into content-defined chunks and call `action` with each
+/// chunk's position, hash and bytes, in order. A chunk never grows past
+/// `max_chunk` bytes (0 means no limit): runs that never hit a boundary,
+/// such as long stretches of identical bytes, are cut at that length.
+fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash, &[u8]) -> Option<()>>(
     old: &mut R,
     window: usize,
     hash_mod: u64,
+    max_chunk: usize,
     mut action: F,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let max_chunk = if max_chunk == 0 { usize::MAX } else { max_chunk };
     vlog!(
         "dedup::iterate_cdc_rewind: starting iteration with window={}",
         window
@@ -36,10 +42,18 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash) -> Option<()>>(
 
         let mut chunk_offset = 0usize;
         while chunk_offset < old_chunk.len() {
-            let slice = &old_chunk[chunk_offset..];
+            // Never look past the point where the chunk would be full.
+            let room = max_chunk - strong_buf.len();
+            let end = old_chunk.len().min(chunk_offset.saturating_add(room));
+            let slice = &old_chunk[chunk_offset..end];
 
-            if let Some(boundary) = hasher.next_match(slice, hash_mod) {
-                let boundary_pos = chunk_offset + boundary;
+            let cut = match hasher.next_match(slice, hash_mod) {
+                Some(boundary) => Some(chunk_offset + boundary),
+                None if strong_buf.len() + slice.len() == max_chunk => Some(end),
+                None => None,
+            };
+
+            if let Some(boundary_pos) = cut {
                 strong_buf.extend_from_slice(&old_chunk[chunk_offset..boundary_pos]);
                 chunks_found += 1;
                 let strong_hash = Hash::digest_slice(&strong_buf)?;
@@ -55,6 +69,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash) -> Option<()>>(
                         length: strong_buf.len(),
                     },
                     strong_hash,
+                    &strong_buf,
                 )
                 .is_none()
                 {
@@ -95,6 +110,7 @@ fn iterate_cdc_rewind<R: Read + Seek, F: FnMut(Position, Hash) -> Option<()>>(
                 length: strong_buf.len(),
             },
             strong_hash,
+            &strong_buf,
         );
     }
 
@@ -156,7 +172,7 @@ pub fn build_cdc_rewind<R: Read + Seek>(
 
     let mut map = HashMap::<Hash, Position>::new();
 
-    iterate_cdc_rewind(old, window, hash_mod, |position, hash| {
+    iterate_cdc_rewind(old, window, hash_mod, 0, |position, hash, _| {
         if match map.get(&hash) {
             Some(existing_position) => {
                 (existing_position.start + existing_position.length) > position.start
@@ -243,6 +259,7 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
         mut new: R,
         window: usize,
         hash_mod: u64,
+        max_chunk: usize,
         mut progress: Option<P>,
     ) -> Result<Self, Box<dyn Error>> {
         let hash_mod = normalize_hash_mod(hash_mod);
@@ -255,7 +272,7 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
         let mut old_chunk_idx = 0usize;
         let mut old_len = 0usize;
 
-        iterate_cdc_rewind(&mut old, window, hash_mod, |position, hash| {
+        iterate_cdc_rewind(&mut old, window, hash_mod, max_chunk, |position, hash, _| {
             old_starts.entry(hash).or_default().push(position.start);
             old_index_map.entry(hash).or_insert(old_chunk_idx);
             old_len = position.start + position.length;
@@ -273,7 +290,7 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
         let mut new_chunks = Vec::<(Position, Hash)>::new();
         let mut new_chunk_idx = 0usize;
 
-        iterate_cdc_rewind(&mut new, window, hash_mod, |position, hash| {
+        iterate_cdc_rewind(&mut new, window, hash_mod, max_chunk, |position, hash, _| {
             new_chunks.push((position, hash));
             let old_index = old_index_map.get(&hash).copied();
             if let Some(ref mut p) = progress {
@@ -365,9 +382,10 @@ pub fn build_diff_fragments<R: Read + Seek, P: FnMut(DedupProgress)>(
     new: R,
     window: usize,
     hash_mod: u64,
+    max_chunk: usize,
     progress: Option<P>,
 ) -> Result<DedupeFragIterator<R>, Box<dyn Error>> {
-    Ok(DedupeFragIterator::<R>::build(old, new, window, hash_mod, progress)?)
+    Ok(DedupeFragIterator::<R>::build(old, new, window, hash_mod, max_chunk, progress)?)
 }
 
 #[cfg(test)]
@@ -396,6 +414,7 @@ mod tests {
             Cursor::new(new.to_vec()),
             4096,
             4096,
+            MAX_CHUNK,
             None::<fn(DedupProgress)>,
         )
         .unwrap();
@@ -435,6 +454,7 @@ mod tests {
     }
 
     const N: usize = 200_000;
+    const MAX_CHUNK: usize = 8 * 4096;
 
     #[test]
     fn identical() {
@@ -483,6 +503,32 @@ mod tests {
     #[test]
     fn unrelated() {
         check(&noise(1, N), &noise(2, N), 0);
+    }
+
+    /// Runs with no content boundary (here, all zeros) are cut at
+    /// MAX_CHUNK, so an edit inside one only re-adds the chunks around it.
+    #[test]
+    fn uniform_runs_are_cut_at_max_chunk() {
+        let old = vec![0u8; 4 * 1024 * 1024];
+        let mut new = old.clone();
+        new[2 * 1024 * 1024] = b'X';
+        let (rebuilt, unchanged) = round_trip(&old, &new);
+        assert!(rebuilt == new);
+        assert!(
+            new.len() - unchanged <= 2 * MAX_CHUNK,
+            "a 1-byte edit re-added {} bytes",
+            new.len() - unchanged
+        );
+
+        let mut sizes = Vec::new();
+        iterate_cdc_rewind(&mut Cursor::new(&old), 4096, 4095, MAX_CHUNK, |p, _, bytes| {
+            assert_eq!(p.length, bytes.len());
+            sizes.push(p.length);
+            Some(())
+        })
+        .unwrap();
+        assert_eq!(sizes.iter().sum::<usize>(), old.len());
+        assert!(sizes.iter().all(|&n| n <= MAX_CHUNK));
     }
 
     #[test]
