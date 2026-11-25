@@ -37,3 +37,14 @@ studio:
 # Regenerate the Dart <-> Rust bindings after changing studio/native/src/api.
 studio-codegen:
     cd studio && nix develop ..#studio --command flutter_rust_bridge_codegen generate
+
+# duh Studio's tests: widget tests against a fake engine, and the real
+# engine through the bridge.
+studio-test:
+    cd studio/native && nix develop ../..#studio --command cargo test
+    cd studio/native && nix develop ../..#studio --command cargo build
+    cd studio && nix develop ..#studio --command flutter test
+
+# Render duh Studio's main screens to studio/test_screens/out/*.png.
+studio-screens:
+    cd studio && nix develop ..#studio --command bash -c 'flutter test --update-goldens --dart-define=ICONS=$(dirname $(dirname $(readlink -f $(which flutter))))/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf test_screens/screens_test.dart'

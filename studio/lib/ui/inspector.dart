@@ -102,6 +102,7 @@ class WorkInspectorState extends State<WorkInspector> {
         const SizedBox(height: 8),
         TextField(
           controller: app.message,
+          style: const TextStyle(fontSize: 14, height: 1.4),
           minLines: 2,
           maxLines: 4,
           decoration: InputDecoration(hintText: suggestion.isEmpty ? 'Describe this version' : suggestion),
