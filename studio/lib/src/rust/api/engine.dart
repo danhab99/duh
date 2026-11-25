@@ -18,6 +18,10 @@ Future<SpaceInfo> openSpace({required String folder}) =>
 Future<SpaceInfo> startSpace({required String folder}) =>
     RustLib.instance.api.crateApiEngineStartSpace(folder: folder);
 
+/// Start a bare space (history only, for sharing) in an empty `folder`.
+Future<void> startBareSpace({required String folder}) =>
+    RustLib.instance.api.crateApiEngineStartBareSpace(folder: folder);
+
 /// Copy the space at `url` into the new folder `dest`. `options` are
 /// storage settings such as credentials, as `key=value`.
 Future<SpaceInfo> getSpace({

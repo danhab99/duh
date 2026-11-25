@@ -77,6 +77,19 @@ pub fn start_space(folder: &str) -> R<SpaceInfo> {
     Ok(info_of(&space, folder))
 }
 
+/// Start a bare space (history only, for sharing) in `folder`, which must
+/// be empty or not exist yet.
+pub fn start_bare_space(folder: &str) -> R<()> {
+    let root = Path::new(folder);
+    if root.exists() && std::fs::read_dir(root)?.next().is_some() {
+        anyhow::bail!("{} isn't empty; a place needs an empty folder or an existing space", folder);
+    }
+    let meta = root.join(lib::utils::SPACE_METADATA_DIR_NAME);
+    std::fs::create_dir_all(&meta)?;
+    ok(Space::init(ok(lib::store::local(&meta))?, None))?;
+    Ok(())
+}
+
 pub fn get_space(url: &str, dest: &str, options: &[String]) -> R<SpaceInfo> {
     ok(ops::sharing::get(url, Path::new(dest), None, false, &parse_options(options)?))?;
     open_space(dest)
@@ -388,6 +401,7 @@ mod tests {
         let info = start_space(folder).unwrap();
         assert_eq!(info.draft.as_deref(), Some("main"));
         assert!(start_space(folder).is_err());
+        assert!(start_bare_space(folder).is_err()); // not empty
 
         std::fs::write(dir.path().join("a.bin"), vec![7u8; 50_000]).unwrap();
         let l = look(folder).unwrap();
@@ -429,9 +443,7 @@ mod tests {
         std::fs::remove_file(&copy).unwrap();
 
         let hub = tempfile::TempDir::new().unwrap();
-        let hub_meta = hub.path().join(".duh");
-        std::fs::create_dir_all(&hub_meta).unwrap();
-        Space::init(lib::store::local(&hub_meta).unwrap(), None).unwrap();
+        start_bare_space(hub.path().to_str().unwrap()).unwrap();
         add_place(folder, "origin", hub.path().to_str().unwrap(), &[]).unwrap();
         assert_eq!(places(folder).unwrap()[0].name, "origin");
         let s = sync_status(folder, "origin").unwrap();

@@ -36,6 +36,11 @@ pub fn start_space(folder: String) -> anyhow::Result<SpaceInfo> {
     core::start_space(&folder)
 }
 
+/// Start a bare space (history only, for sharing) in an empty `folder`.
+pub fn start_bare_space(folder: String) -> anyhow::Result<()> {
+    core::start_bare_space(&folder)
+}
+
 /// Copy the space at `url` into the new folder `dest`. `options` are
 /// storage settings such as credentials, as `key=value`.
 pub fn get_space(url: String, dest: String, options: Vec<String>) -> anyhow::Result<SpaceInfo> {
