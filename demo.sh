@@ -700,6 +700,78 @@ same_file media/texture.bin "$S3_CLONE/media/texture.bin" "the edit came back fr
 record
 
 # ===========================================================================
+part "Part 8: big files and long histories"
+# Each section works in a space of its own.
+# ===========================================================================
+
+section "UNIFORM RUN : a 1-byte edit inside 8 MB of zeros stores only what's near it" \
+        "(content-defined chunks are cut at 8 x chunk_size, even with no boundary)"
+UNIFORM="${td%/}-uniform"
+mkdir -p "$UNIFORM"
+(
+    cd "$UNIFORM"
+    "$DUH" start > /dev/null
+    head -c 8388608 /dev/zero > canvas.raw
+    "$DUH" pick canvas.raw > /dev/null
+    "$DUH" save -m "blank canvas" > /dev/null
+    before=$(store_bytes)
+    python3 -c "f = open('canvas.raw', 'r+b'); f.seek(4194304); f.write(b'X')"
+    run save -a -m "one dot"
+    growth=$(( $(store_bytes) - before ))
+    (( growth < 262144 )) || fail "a 1-byte edit to 8 MB of zeros added $growth bytes"
+    ok "a 1-byte edit to 8 MB of zeros added only $growth bytes"
+    run bring-back --from HEAD^ --as "$VERIFICATION_DIR/blank.raw" canvas.raw
+    cmp -s "$VERIFICATION_DIR/blank.raw" <(head -c 8388608 /dev/zero) || fail "blank canvas didn't come back"
+    ok "the blank canvas comes back exactly"
+    rm -f "$VERIFICATION_DIR/blank.raw"
+)
+
+section "SOLID COPIES : after 100 saves since the last solid copy, the middle one is made solid" \
+        "(a solid save reads without replaying the diffs before it, so reading" \
+        " any save replays at most ~100 diffs, however long the history gets)"
+LONG="${td%/}-long"
+LONG_COPY="${td%/}-long-copy"
+mkdir -p "$LONG"
+(
+    cd "$LONG"
+    "$DUH" start > /dev/null
+    gen L 0 200000 > sketch.psd
+    "$DUH" pick sketch.psd > /dev/null
+    "$DUH" save -m "save 1" > /dev/null
+    shas=("$(sha sketch.psd)")
+    for i in $(seq 2 110); do
+        python3 -c "import random; r = random.Random($i); f = open('sketch.psd', 'r+b'); f.seek(r.randrange(199000)); f.write(r.randbytes(64))"
+        "$DUH" save -a -m "save $i" > /dev/null
+        shas+=("$(sha sketch.psd)")
+    done
+    ok "110 saves of sketch.psd"
+
+    # Save 1 diffs against nothing; saves 2-101 are the first 100 since then,
+    # and the 50th of those is save 51.
+    solids=$(ls .duh/solid)
+    [[ "$solids" == "${shas[50]}" ]] || fail "expected only save 51 to be solid, found: $solids"
+    ok "save 51 (the middle of saves 2-101) is solid, and nothing else yet"
+
+    mapfile -t versions < <("$DUH" history | plain | awk '/^version /{print $2}' | tac)
+    for i in "${!versions[@]}"; do
+        "$DUH" bring-back --from "${versions[$i]}" --as "$VERIFICATION_DIR/long.bin" sketch.psd > /dev/null
+        [[ "$(sha "$VERIFICATION_DIR/long.bin")" == "${shas[$i]}" ]] || fail "save $((i + 1)) differs"
+    done
+    ok "all 110 saves come back exactly"
+
+    run get "$LONG" "$LONG_COPY"
+    [[ -f "$LONG_COPY/.duh/solid/${shas[50]}" ]] || fail "the copy didn't get the solid copy"
+    ok "get brings the solid copy along"
+    cd "$LONG_COPY"
+    for i in "${!versions[@]}"; do
+        "$DUH" bring-back --from "${versions[$i]}" --as "$VERIFICATION_DIR/long.bin" sketch.psd > /dev/null
+        [[ "$(sha "$VERIFICATION_DIR/long.bin")" == "${shas[$i]}" ]] || fail "save $((i + 1)) differs in the copy"
+    done
+    ok "all 110 saves come back exactly in the copy"
+    rm -f "$VERIFICATION_DIR/long.bin"
+)
+
+# ===========================================================================
 part "VERIFICATION: every file at every save, byte for byte"
 # ===========================================================================
 
