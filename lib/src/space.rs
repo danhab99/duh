@@ -642,7 +642,14 @@ impl Space {
 
         let tree = match self.get_object(tree_hash)? {
             Some(Object::Tree(t)) => t,
-            None => return Ok(files),
+            // Every save stores a tree, even an empty one: a missing tree is
+            // damage, not a save with no files.
+            None => {
+                return Err(Box::new(crate::error::DuhError::object_not_found(
+                    &tree_hash.to_string(),
+                    "tree",
+                )))
+            }
             _ => {
                 return Err(Box::new(crate::error::DuhError::invalid_object(
                     "tree",
