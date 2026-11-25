@@ -57,6 +57,24 @@ Versions can be named by label, draft, short hash, `HEAD~N` or `X^`.
 backends (S3, GCS, Azure, WebDAV, SFTP, Google Drive, …). Merging, rebasing
 and stashing are out of scope for now.
 
+## duh Studio, the desktop app
+
+Everything above, for people who'd rather not open a terminal:
+
+```bash
+nix run .#studio              # or: nix run .#studio -- /path/to/a/space
+```
+
+One window: your unsaved files at the top of a timeline of saves, each drawn
+with a change strip (where bytes were added, removed and kept). Tick files to
+pick them, write what changed, press Save (Ctrl+S). Drafts, labels, places,
+send/receive, recovering lost work and `check` are all there, and Ctrl+K
+finds anything else.
+
+Studio and the CLI run the same engine (`lib::ops`, reached from Dart through
+flutter_rust_bridge), so they always agree, and you can use both on one space
+at once. Design and plan: [docs/studio/DESIGN.md](docs/studio/DESIGN.md).
+
 ## Architecture
 
 ### Core Components
@@ -71,8 +89,11 @@ duh/
 │   ├── objects.rs    # Object model (Commit, Tree, File, Fragment)
 │   ├── hash.rs       # Content-addressable hashing (SHA-256)
 │   ├── store.rs      # Storage backends: any opendal service, built from a URL + options
-│   └── transfer.rs   # Spaces copying objects and commits to one another
-└── cli/              # Command-line interface, one module per command
+│   ├── transfer.rs   # Spaces copying objects and commits to one another
+│   ├── check.rs      # duh check: is every save intact?
+│   └── ops/          # Every operation, returning data; the CLI and Studio call these
+├── cli/              # Command-line interface: parse, call lib::ops, print
+└── studio/           # duh Studio (Flutter) and its Rust bridge (studio/native)
 ```
 
 ### Object Model
