@@ -20,6 +20,22 @@ Future<AppState> openApp(WidgetTester tester, FakeEngine engine, {bool open = tr
 }
 
 void main() {
+  testWidgets('the appearance button cycles system, dark, light', (tester) async {
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    final app = await openApp(tester, FakeEngine(files: {'body.FCStd': WorkState.changed}));
+    Brightness shown() => Theme.of(tester.element(find.text('body.FCStd').first)).brightness;
+    expect(shown(), Brightness.light);
+    await tester.tap(find.byIcon(Icons.brightness_auto_outlined));
+    await tester.pumpAndSettle();
+    expect(app.appearance.value, ThemeMode.dark);
+    expect(shown(), Brightness.dark);
+    await tester.tap(find.byIcon(Icons.dark_mode_outlined));
+    await tester.pumpAndSettle();
+    expect(shown(), Brightness.light);
+    expect(app.appearance.value, ThemeMode.light);
+  });
+
   testWidgets('first run offers to start, get or open a space', (tester) async {
     await openApp(tester, FakeEngine(), open: false);
     expect(find.text('duh Studio'), findsOneWidget);

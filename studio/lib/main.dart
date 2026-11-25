@@ -25,6 +25,7 @@ Future<void> main(List<String> args) async {
   }
 
   final app = AppState(engine);
+  await app.loadSettings();
   await app.loadRecent();
   // A folder given on the command line opens straight away.
   final folder = args.where((a) => !a.startsWith('-')).firstOrNull;
@@ -81,12 +82,19 @@ class _StudioAppState extends State<StudioApp> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder(
+      valueListenable: app.appearance,
+      builder: (context, mode, _) => _app(mode),
+    );
+  }
+
+  Widget _app(ThemeMode mode) {
     return MaterialApp(
       title: 'duh Studio',
       debugShowCheckedModeBanner: false,
       theme: studioTheme(Brightness.light),
       darkTheme: studioTheme(Brightness.dark),
-      themeMode: ThemeMode.system,
+      themeMode: mode,
       scaffoldMessengerKey: messenger,
       navigatorKey: navigator,
       home: ListenableBuilder(
@@ -146,6 +154,12 @@ List<Command> commandsFor(AppState app) {
     for (final d in app.drafts.where((d) => !d.open)) Command('Open draft ${d.name}', (_) => app.openDraft(d.name), icon: Icons.swap_horiz_rounded),
     for (final l in app.labels) Command('Go to label ${l.name}', (_) => app.select(SaveSelected(l.version)), icon: Icons.label_outline_rounded),
     Command('Recover lost work…', (c) => showJournal(c, app), icon: Icons.history_rounded),
+    for (final (mode, name, icon) in [
+      (ThemeMode.dark, 'dark', Icons.dark_mode_outlined),
+      (ThemeMode.light, 'light', Icons.light_mode_outlined),
+      (ThemeMode.system, 'the system\'s', Icons.brightness_auto_outlined),
+    ])
+      if (app.appearance.value != mode) Command('Use $name appearance', (_) => app.setAppearance(mode), icon: icon),
     Command('Look again', (_) => app.refresh(), hint: 'Ctrl R', icon: Icons.refresh_rounded),
     Command('All spaces', (_) async => app.closeSpace(), icon: Icons.grid_view_rounded),
   ];
@@ -156,7 +170,6 @@ Future<void> showCommandPalette(BuildContext context, AppState app) async {
   if (all.isEmpty) return;
   final chosen = await showDialog<Command>(
     context: context,
-    barrierColor: Colors.black.withValues(alpha: 0.35),
     builder: (context) => _Palette(commands: all),
   );
   if (chosen != null && context.mounted) await chosen.run(context);

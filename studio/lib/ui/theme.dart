@@ -27,6 +27,9 @@ class Palette extends ThemeExtension<Palette> {
     required this.label,
     required this.labelSoft,
     required this.ok,
+    required this.scrim,
+    required this.onBadge,
+    required this.badges,
   });
 
   final Color ground, sidebar, panel, raised, line;
@@ -36,6 +39,15 @@ class Palette extends ThemeExtension<Palette> {
   final Color added, removed, kept;
   final Color warn, warnSoft, danger;
   final Color label, labelSoft, ok;
+
+  /// Behind dialogs and the command palette.
+  final Color scrim;
+
+  /// File-type badges ("CAD", "XCF", …) and the text on them. `FILE` is the
+  /// fallback for kinds without their own colour.
+  final Color onBadge;
+  final Map<String, Color> badges;
+  Color badge(String kind) => badges[kind] ?? badges['FILE']!;
 
   static const dark = Palette(
     ground: Color(0xFF0E1116),
@@ -60,6 +72,17 @@ class Palette extends ThemeExtension<Palette> {
     label: Color(0xFFFCD34D),
     labelSoft: Color(0xFF3A2E0B),
     ok: Color(0xFF34D399),
+    scrim: Color(0x80000000),
+    onBadge: Color(0xFF0E1116),
+    badges: {
+      'CAD': Color(0xFFA78BFA),
+      'XCF': Color(0xFFF9A8D4),
+      'IMG': Color(0xFF67E8F9),
+      'VEC': Color(0xFFFCD34D),
+      'AUD': Color(0xFF6EE7B7),
+      'VID': Color(0xFFFDBA74),
+      'FILE': Color(0xFFCBD5E1),
+    },
   );
 
   static const light = Palette(
@@ -85,6 +108,17 @@ class Palette extends ThemeExtension<Palette> {
     label: Color(0xFF8A5A00),
     labelSoft: Color(0xFFFEF3C7),
     ok: Color(0xFF059669),
+    scrim: Color(0x59000000),
+    onBadge: Color(0xFF161A22),
+    badges: {
+      'CAD': Color(0xFFDDD6FE),
+      'XCF': Color(0xFFFBCFE8),
+      'IMG': Color(0xFFA5F3FC),
+      'VEC': Color(0xFFFDE68A),
+      'AUD': Color(0xFFA7F3D0),
+      'VID': Color(0xFFFED7AA),
+      'FILE': Color(0xFFE2E8F0),
+    },
   );
 
   static Palette of(BuildContext context) => Theme.of(context).extension<Palette>()!;
@@ -124,6 +158,7 @@ ThemeData studioTheme(Brightness brightness) {
     ),
     dialogTheme: DialogThemeData(
       backgroundColor: p.panel,
+      barrierColor: p.scrim,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
     ),
     inputDecorationTheme: InputDecorationTheme(

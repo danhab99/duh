@@ -67,7 +67,9 @@ class TopBar extends StatelessWidget {
         _SyncPill(app: app),
         const SizedBox(width: 10),
         _HealthBadge(app: app),
-        const SizedBox(width: 10),
+        const SizedBox(width: 4),
+        AppearanceButton(app: app),
+        const SizedBox(width: 4),
         _PaletteButton(onTap: onPalette),
       ]),
     );

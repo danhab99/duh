@@ -29,6 +29,8 @@ class Welcome extends StatelessWidget {
                   const Text('duh Studio', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: -0.5)),
                   Text('Every version of every file, kept for you.', style: TextStyle(color: p.muted, fontSize: 15)),
                 ]),
+                const Spacer(),
+                AppearanceButton(app: app),
               ]),
               const SizedBox(height: 36),
               LayoutBuilder(builder: (context, c) {

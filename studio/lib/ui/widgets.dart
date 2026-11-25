@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../engine.dart';
+import '../state.dart';
 import 'theme.dart';
 
 /// A change strip: where a file's bytes were kept, added and removed, each
@@ -215,29 +216,31 @@ class FileBadge extends StatelessWidget {
   const FileBadge(this.path, {super.key});
   final String path;
 
-  static (String, Color) kind(String path) {
+  /// The badge's text: what kind of file this is.
+  static String kind(String path) {
     final ext = path.contains('.') ? path.split('.').last.toLowerCase() : '';
     return switch (ext) {
-      'fcstd' || 'step' || 'stp' || 'stl' || 'blend' || 'obj' || '3mf' => ('CAD', const Color(0xFFA78BFA)),
-      'xcf' || 'psd' || 'kra' || 'ora' => ('XCF', const Color(0xFFF9A8D4)),
-      'png' || 'jpg' || 'jpeg' || 'webp' || 'gif' || 'tif' || 'tiff' => ('IMG', const Color(0xFF67E8F9)),
-      'svg' || 'ai' || 'pdf' => ('VEC', const Color(0xFFFCD34D)),
-      'wav' || 'flac' || 'mp3' || 'ogg' => ('AUD', const Color(0xFF6EE7B7)),
-      'mp4' || 'mov' || 'mkv' || 'webm' => ('VID', const Color(0xFFFDBA74)),
-      '' => ('FILE', const Color(0xFFCBD5E1)),
-      _ => (ext.length <= 4 ? ext.toUpperCase() : 'FILE', const Color(0xFFCBD5E1)),
+      'fcstd' || 'step' || 'stp' || 'stl' || 'blend' || 'obj' || '3mf' => 'CAD',
+      'xcf' || 'psd' || 'kra' || 'ora' => 'XCF',
+      'png' || 'jpg' || 'jpeg' || 'webp' || 'gif' || 'tif' || 'tiff' => 'IMG',
+      'svg' || 'ai' || 'pdf' => 'VEC',
+      'wav' || 'flac' || 'mp3' || 'ogg' => 'AUD',
+      'mp4' || 'mov' || 'mkv' || 'webm' => 'VID',
+      _ when ext.isNotEmpty && ext.length <= 4 => ext.toUpperCase(),
+      _ => 'FILE',
     };
   }
 
   @override
   Widget build(BuildContext context) {
-    final (text, color) = kind(path);
+    final p = Palette.of(context);
+    final text = kind(path);
     return Container(
       width: 32,
       height: 32,
       alignment: Alignment.center,
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
-      child: Text(text, style: const TextStyle(color: Color(0xFF0E1116), fontSize: 9.5, fontWeight: FontWeight.w700)),
+      decoration: BoxDecoration(color: p.badge(text), borderRadius: BorderRadius.circular(8)),
+      child: Text(text, style: TextStyle(color: p.onBadge, fontSize: 9.5, fontWeight: FontWeight.w700)),
     );
   }
 }
@@ -251,4 +254,30 @@ class Eyebrow extends StatelessWidget {
         text.toUpperCase(),
         style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.9, color: Palette.of(context).faint),
       );
+}
+
+/// Switches between the system's appearance, dark and light.
+class AppearanceButton extends StatelessWidget {
+  const AppearanceButton({super.key, required this.app});
+  final AppState app;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = Palette.of(context);
+    return ValueListenableBuilder(
+      valueListenable: app.appearance,
+      builder: (context, mode, _) {
+        final (icon, now, next) = switch (mode) {
+          ThemeMode.system => (Icons.brightness_auto_outlined, 'Following the system', 'dark'),
+          ThemeMode.dark => (Icons.dark_mode_outlined, 'Dark', 'light'),
+          ThemeMode.light => (Icons.light_mode_outlined, 'Light', 'the system'),
+        };
+        return IconButton(
+          tooltip: '$now — click for $next',
+          onPressed: app.nextAppearance,
+          icon: Icon(icon, size: 18, color: p.muted),
+        );
+      },
+    );
+  }
 }

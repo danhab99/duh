@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/widgets.dart';
 
 import 'engine.dart';
@@ -34,6 +35,10 @@ class AppState extends ChangeNotifier {
   final String _configDir;
   final bool persist;
   final bool watch;
+
+  /// Light, dark, or whatever the system says. Kept apart from the rest so
+  /// changing it rebuilds the theme without rebuilding on every refresh.
+  final appearance = ValueNotifier<ThemeMode>(ThemeMode.system);
 
   // Spaces
   List<String> recent = [];
@@ -92,6 +97,35 @@ class AppState extends ChangeNotifier {
     final xdg = Platform.environment['XDG_CONFIG_HOME'];
     return '${xdg ?? '$home/.config'}/duh-studio';
   }
+
+  // -------------------------------------------------------------- settings
+
+  Future<void> loadSettings() async {
+    try {
+      final f = File('$_configDir/settings.json');
+      if (!await f.exists()) return;
+      final json = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+      appearance.value = ThemeMode.values.firstWhere((m) => m.name == json['appearance'], orElse: () => ThemeMode.system);
+    } catch (_) {
+      // A broken settings file means defaults, not a broken app.
+    }
+  }
+
+  Future<void> setAppearance(ThemeMode mode) async {
+    appearance.value = mode;
+    if (!persist) return;
+    try {
+      await Directory(_configDir).create(recursive: true);
+      await File('$_configDir/settings.json').writeAsString(jsonEncode({'appearance': mode.name}));
+    } catch (_) {}
+  }
+
+  /// System → dark → light → system.
+  Future<void> nextAppearance() => setAppearance(switch (appearance.value) {
+        ThemeMode.system => ThemeMode.dark,
+        ThemeMode.dark => ThemeMode.light,
+        ThemeMode.light => ThemeMode.system,
+      });
 
   Future<void> loadRecent() async {
     try {
