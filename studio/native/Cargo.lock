@@ -1067,8 +1067,10 @@ dependencies = [
 name = "duh_studio_native"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "flutter_rust_bridge",
  "lib",
+ "tempfile",
 ]
 
 [[package]]

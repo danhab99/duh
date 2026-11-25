@@ -3,4 +3,5 @@
 //! flutter_rust_bridge_codegen (`just studio-codegen`) and committed.
 
 pub mod api;
+mod core;
 mod frb_generated;

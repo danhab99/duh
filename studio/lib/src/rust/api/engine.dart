@@ -5,6 +5,185 @@
 
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'types.dart';
 
 /// The version of duh's engine this app was built with.
 String engineVersion() => RustLib.instance.api.crateApiEngineEngineVersion();
+
+/// The space containing `folder`, or an error if there isn't one.
+Future<SpaceInfo> openSpace({required String folder}) =>
+    RustLib.instance.api.crateApiEngineOpenSpace(folder: folder);
+
+/// Start a new space in `folder`.
+Future<SpaceInfo> startSpace({required String folder}) =>
+    RustLib.instance.api.crateApiEngineStartSpace(folder: folder);
+
+/// Copy the space at `url` into the new folder `dest`. `options` are
+/// storage settings such as credentials, as `key=value`.
+Future<SpaceInfo> getSpace({
+  required String url,
+  required String dest,
+  required List<String> options,
+}) => RustLib.instance.api.crateApiEngineGetSpace(
+  url: url,
+  dest: dest,
+  options: options,
+);
+
+Future<LookResult> look({required String folder}) =>
+    RustLib.instance.api.crateApiEngineLook(folder: folder);
+
+/// How your copy of `path` differs from what's picked (or the last save).
+Future<List<Segment>> compareFile({
+  required String folder,
+  required String path,
+}) =>
+    RustLib.instance.api.crateApiEngineCompareFile(folder: folder, path: path);
+
+/// Pick files (deletions for missing ones).
+Future<List<Picked>> pick({
+  required String folder,
+  required List<String> paths,
+}) => RustLib.instance.api.crateApiEnginePick(folder: folder, paths: paths);
+
+Future<void> unpick({required String folder, required List<String> paths}) =>
+    RustLib.instance.api.crateApiEngineUnpick(folder: folder, paths: paths);
+
+Future<String> suggestMessage({required String folder}) =>
+    RustLib.instance.api.crateApiEngineSuggestMessage(folder: folder);
+
+Future<Saved> save({required String folder, required String message}) =>
+    RustLib.instance.api.crateApiEngineSave(folder: folder, message: message);
+
+/// Bring back a file: from `from` (a version), or else what's picked or the
+/// last save. With `as_path`, writes a copy there instead.
+Future<void> bringBack({
+  required String folder,
+  required String path,
+  String? from,
+  String? asPath,
+}) => RustLib.instance.api.crateApiEngineBringBack(
+  folder: folder,
+  path: path,
+  from: from,
+  asPath: asPath,
+);
+
+Future<List<SaveInfo>> history({required String folder, int? max}) =>
+    RustLib.instance.api.crateApiEngineHistory(folder: folder, max: max);
+
+Future<SaveDetail> inspect({required String folder, required String version}) =>
+    RustLib.instance.api.crateApiEngineInspect(
+      folder: folder,
+      version: version,
+    );
+
+Future<List<JournalItem>> journal({
+  required String folder,
+  required String draft,
+}) => RustLib.instance.api.crateApiEngineJournal(folder: folder, draft: draft);
+
+Future<List<DraftInfo>> drafts({required String folder}) =>
+    RustLib.instance.api.crateApiEngineDrafts(folder: folder);
+
+/// Start a draft at `at` (a version; default: the last save).
+Future<void> startDraft({
+  required String folder,
+  required String name,
+  String? at,
+}) => RustLib.instance.api.crateApiEngineStartDraft(
+  folder: folder,
+  name: name,
+  at: at,
+);
+
+/// Open a draft, making your files match it.
+Future<void> openDraft({required String folder, required String name}) =>
+    RustLib.instance.api.crateApiEngineOpenDraft(folder: folder, name: name);
+
+Future<void> deleteDraft({required String folder, required String name}) =>
+    RustLib.instance.api.crateApiEngineDeleteDraft(folder: folder, name: name);
+
+Future<void> renameDraft({required String folder, required String newName}) =>
+    RustLib.instance.api.crateApiEngineRenameDraft(
+      folder: folder,
+      newName: newName,
+    );
+
+Future<List<LabelInfo>> labels({required String folder}) =>
+    RustLib.instance.api.crateApiEngineLabels(folder: folder);
+
+Future<void> addLabel({
+  required String folder,
+  required String name,
+  required String version,
+}) => RustLib.instance.api.crateApiEngineAddLabel(
+  folder: folder,
+  name: name,
+  version: version,
+);
+
+Future<void> removeLabel({required String folder, required String name}) =>
+    RustLib.instance.api.crateApiEngineRemoveLabel(folder: folder, name: name);
+
+Future<void> rewind({
+  required String folder,
+  required String version,
+  required RewindMode mode,
+}) => RustLib.instance.api.crateApiEngineRewind(
+  folder: folder,
+  version: version,
+  mode: mode,
+);
+
+Future<List<PlaceInfo>> places({required String folder}) =>
+    RustLib.instance.api.crateApiEnginePlaces(folder: folder);
+
+Future<void> addPlace({
+  required String folder,
+  required String name,
+  required String url,
+  required List<String> options,
+}) => RustLib.instance.api.crateApiEngineAddPlace(
+  folder: folder,
+  name: name,
+  url: url,
+  options: options,
+);
+
+Future<void> removePlace({required String folder, required String name}) =>
+    RustLib.instance.api.crateApiEngineRemovePlace(folder: folder, name: name);
+
+Future<SyncInfo> syncStatus({required String folder, required String place}) =>
+    RustLib.instance.api.crateApiEngineSyncStatus(folder: folder, place: place);
+
+/// Send the open draft to `place`, as `draft` there (default: same name).
+Future<TransferResult> send({
+  required String folder,
+  required String place,
+  String? draft,
+  required bool force,
+}) => RustLib.instance.api.crateApiEngineSend(
+  folder: folder,
+  place: place,
+  draft: draft,
+  force: force,
+);
+
+/// Receive `draft` from `place` (default: the open draft's name) into your
+/// draft `into` (default: the open one).
+Future<TransferResult> receive({
+  required String folder,
+  required String place,
+  String? draft,
+  String? into,
+}) => RustLib.instance.api.crateApiEngineReceive(
+  folder: folder,
+  place: place,
+  draft: draft,
+  into: into,
+);
+
+/// Check that every save is intact, here or (with `place`) in a place.
+Future<CheckResult> check({required String folder, String? place}) =>
+    RustLib.instance.api.crateApiEngineCheck(folder: folder, place: place);

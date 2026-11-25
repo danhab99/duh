@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/engine.dart';
+import 'api/types.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
@@ -19,10 +20,118 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   });
 
   @protected
+  AnyhowException dco_decode_AnyhowException(dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
+  bool dco_decode_bool(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  CheckResult dco_decode_check_result(dynamic raw);
+
+  @protected
+  DraftInfo dco_decode_draft_info(dynamic raw);
+
+  @protected
+  FileInSave dco_decode_file_in_save(dynamic raw);
+
+  @protected
+  int dco_decode_i_32(dynamic raw);
+
+  @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  JournalItem dco_decode_journal_item(dynamic raw);
+
+  @protected
+  LabelInfo dco_decode_label_info(dynamic raw);
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<DraftInfo> dco_decode_list_draft_info(dynamic raw);
+
+  @protected
+  List<FileInSave> dco_decode_list_file_in_save(dynamic raw);
+
+  @protected
+  List<JournalItem> dco_decode_list_journal_item(dynamic raw);
+
+  @protected
+  List<LabelInfo> dco_decode_list_label_info(dynamic raw);
+
+  @protected
+  List<Picked> dco_decode_list_picked(dynamic raw);
+
+  @protected
+  List<PlaceInfo> dco_decode_list_place_info(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  List<SaveInfo> dco_decode_list_save_info(dynamic raw);
+
+  @protected
+  List<Segment> dco_decode_list_segment(dynamic raw);
+
+  @protected
+  List<WorkFile> dco_decode_list_work_file(dynamic raw);
+
+  @protected
+  LookResult dco_decode_look_result(dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  Picked dco_decode_picked(dynamic raw);
+
+  @protected
+  PickedKind dco_decode_picked_kind(dynamic raw);
+
+  @protected
+  PlaceInfo dco_decode_place_info(dynamic raw);
+
+  @protected
+  RewindMode dco_decode_rewind_mode(dynamic raw);
+
+  @protected
+  SaveDetail dco_decode_save_detail(dynamic raw);
+
+  @protected
+  SaveInfo dco_decode_save_info(dynamic raw);
+
+  @protected
+  Saved dco_decode_saved(dynamic raw);
+
+  @protected
+  Segment dco_decode_segment(dynamic raw);
+
+  @protected
+  SegmentKind dco_decode_segment_kind(dynamic raw);
+
+  @protected
+  SpaceInfo dco_decode_space_info(dynamic raw);
+
+  @protected
+  SyncInfo dco_decode_sync_info(dynamic raw);
+
+  @protected
+  TransferResult dco_decode_transfer_result(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -31,10 +140,124 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  WorkFile dco_decode_work_file(dynamic raw);
+
+  @protected
+  WorkState dco_decode_work_state(dynamic raw);
+
+  @protected
+  AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  CheckResult sse_decode_check_result(SseDeserializer deserializer);
+
+  @protected
+  DraftInfo sse_decode_draft_info(SseDeserializer deserializer);
+
+  @protected
+  FileInSave sse_decode_file_in_save(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  JournalItem sse_decode_journal_item(SseDeserializer deserializer);
+
+  @protected
+  LabelInfo sse_decode_label_info(SseDeserializer deserializer);
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<DraftInfo> sse_decode_list_draft_info(SseDeserializer deserializer);
+
+  @protected
+  List<FileInSave> sse_decode_list_file_in_save(SseDeserializer deserializer);
+
+  @protected
+  List<JournalItem> sse_decode_list_journal_item(SseDeserializer deserializer);
+
+  @protected
+  List<LabelInfo> sse_decode_list_label_info(SseDeserializer deserializer);
+
+  @protected
+  List<Picked> sse_decode_list_picked(SseDeserializer deserializer);
+
+  @protected
+  List<PlaceInfo> sse_decode_list_place_info(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
+
+  @protected
+  List<SaveInfo> sse_decode_list_save_info(SseDeserializer deserializer);
+
+  @protected
+  List<Segment> sse_decode_list_segment(SseDeserializer deserializer);
+
+  @protected
+  List<WorkFile> sse_decode_list_work_file(SseDeserializer deserializer);
+
+  @protected
+  LookResult sse_decode_look_result(SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  Picked sse_decode_picked(SseDeserializer deserializer);
+
+  @protected
+  PickedKind sse_decode_picked_kind(SseDeserializer deserializer);
+
+  @protected
+  PlaceInfo sse_decode_place_info(SseDeserializer deserializer);
+
+  @protected
+  RewindMode sse_decode_rewind_mode(SseDeserializer deserializer);
+
+  @protected
+  SaveDetail sse_decode_save_detail(SseDeserializer deserializer);
+
+  @protected
+  SaveInfo sse_decode_save_info(SseDeserializer deserializer);
+
+  @protected
+  Saved sse_decode_saved(SseDeserializer deserializer);
+
+  @protected
+  Segment sse_decode_segment(SseDeserializer deserializer);
+
+  @protected
+  SegmentKind sse_decode_segment_kind(SseDeserializer deserializer);
+
+  @protected
+  SpaceInfo sse_decode_space_info(SseDeserializer deserializer);
+
+  @protected
+  SyncInfo sse_decode_sync_info(SseDeserializer deserializer);
+
+  @protected
+  TransferResult sse_decode_transfer_result(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -43,13 +266,82 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
+  WorkFile sse_decode_work_file(SseDeserializer deserializer);
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer);
+  WorkState sse_decode_work_state(SseDeserializer deserializer);
+
+  @protected
+  void sse_encode_AnyhowException(
+    AnyhowException self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_check_result(CheckResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_draft_info(DraftInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_file_in_save(FileInSave self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_journal_item(JournalItem self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_label_info(LabelInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_draft_info(
+    List<DraftInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_file_in_save(
+    List<FileInSave> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_journal_item(
+    List<JournalItem> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_label_info(
+    List<LabelInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_picked(List<Picked> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_place_info(
+    List<PlaceInfo> self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -58,16 +350,76 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_save_info(List<SaveInfo> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_segment(List<Segment> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_work_file(List<WorkFile> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_look_result(LookResult self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_picked(Picked self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_picked_kind(PickedKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_place_info(PlaceInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_rewind_mode(RewindMode self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_save_detail(SaveDetail self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_save_info(SaveInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_saved(Saved self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_segment(Segment self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_segment_kind(SegmentKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_space_info(SpaceInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_info(SyncInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_transfer_result(
+    TransferResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
+  void sse_encode_work_file(WorkFile self, SseSerializer serializer);
 
   @protected
-  void sse_encode_bool(bool self, SseSerializer serializer);
+  void sse_encode_work_state(WorkState self, SseSerializer serializer);
 }
 
 // Section: wire_class
