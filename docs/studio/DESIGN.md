@@ -293,6 +293,24 @@ Ordered to retire the biggest risk first: proving Flutter + Rust + Nix builds
 in one command before investing in screens. Each phase ends with everything
 passing and committed, so work can stop and resume between any two.
 
+### Where things stand (2026-11-25)
+
+Phases 0–3 are done and phase 4 is done except the review with you.
+`nix flake check` passes in full (lib, CLI, bridge, `demo.sh`, the app
+starting headless), and `just studio-test` passes (widget tests, plus the
+real engine driven from Dart). `nix run .#studio` opens the app; it was run
+on a real display against a sample space. Rendered screens are in
+`studio/test_screens/out/` (`just studio-screens` redraws them).
+
+Not done yet, roughly in order of value:
+- A review with you of the look and the wording (phase 4).
+- Picking shows a spinner, not byte progress (bridge streams lose return
+  values; progress would need a separate polling call).
+- "Get a copy" from cloud storage with credentials: the welcome dialog only
+  takes a folder or URL; credentials can be given when adding a place.
+- Image previews, and the preview thumbnail inside `.FCStd` files.
+- macOS and Windows packaging (Linux only, via Nix).
+
 ### Phase 0: prove the toolchain (small)
 - [x] `studio/` skeleton app and `studio/native` crate exposing one function (`engine_version()`)
 - [x] Bindings generated and committed; app shows the version from Rust
