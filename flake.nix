@@ -102,10 +102,29 @@
           version = "0.1.0";
           src = studioSrc;
           pubspecLock = pkgs.lib.importJSON ./studio/pubspec.lock.json;
+          # A launcher entry, so the app shows up in rofi, application menus
+          # and anything else that reads share/applications.
+          nativeBuildInputs = [ pkgs.copyDesktopItems ];
+          desktopItems = [
+            (pkgs.makeDesktopItem {
+              name = "duh-studio";
+              desktopName = "duh Studio";
+              genericName = "Version history for your files";
+              comment = "Keep every version of every file";
+              exec = "duh-studio %f";
+              icon = "duh-studio";
+              categories = [ "Utility" ];
+              keywords = [ "version" "history" "backup" "duh" ];
+            })
+          ];
           postInstall = ''
             cp ${studioNative}/lib/libduh_studio_native.so "$out/app/$pname/lib/"
+            # `duh-studio` for dmenu and the shell; `duh_studio` is Flutter's name.
+            ln -s duh_studio "$out/bin/duh-studio"
+            install -Dm644 ${./studio/assets/duh-studio.svg} \
+              "$out/share/icons/hicolor/scalable/apps/duh-studio.svg"
           '';
-          meta.mainProgram = "duh_studio";
+          meta.mainProgram = "duh-studio";
         };
 
         # The built app starts headless and reaches duh's engine.
@@ -190,7 +209,7 @@
 
           studio = flake-utils.lib.mkApp {
             drv = studio;
-            exePath = "/bin/duh_studio";
+            exePath = "/bin/duh-studio";
           };
 
           default = self.apps.${system}.duh;
