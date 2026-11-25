@@ -110,13 +110,14 @@
 
         # The built app starts headless and reaches duh's engine.
         studioSmoke = pkgs.runCommand "duh-studio-smoke" {
-          nativeBuildInputs = [ pkgs.xvfb-run ];
+          nativeBuildInputs = [ pkgs.xvfb-run pkgs.coreutils ];
         } ''
           export HOME=$PWD
           # No GPU in the sandbox: Mesa's software renderer stands in.
           export __EGL_VENDOR_LIBRARY_DIRS=${pkgs.mesa}/share/glvnd/egl_vendor.d
           export LIBGL_ALWAYS_SOFTWARE=1
-          xvfb-run -a ${studio}/bin/duh_studio --smoke | tee $out
+          export LD_LIBRARY_PATH=${pkgs.libglvnd}/lib
+          timeout 180 xvfb-run -a ${studio}/bin/duh_studio --smoke | tee $out
           grep -q "engine" $out
         '';
 
