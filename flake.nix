@@ -74,6 +74,52 @@
           };
         };
 
+        # duh Studio's bridge to lib: a shared library Dart loads at start.
+        # Built like the CLI, every crate fetched by Nix from Cargo.lock.
+        studioNative = rustPlatform.buildRustPackage {
+          pname = "duh-studio-native";
+          version = "0.1.0";
+          inherit src;
+          setSourceRoot = "sourceRoot=$(echo */studio/native)";
+          cargoLock.lockFile = ./studio/native/Cargo.lock;
+          nativeBuildInputs = with pkgs; [ pkg-config ];
+          # The bridge catches Rust panics and reports them to Dart, so
+          # unlike the CLI it must not be built with panic = abort.
+          env.CARGO_PROFILE_RELEASE_LTO = "thin";
+        };
+
+        studioSrc = builtins.path {
+          path = ./studio;
+          name = "duh-studio-source";
+          filter = path: type:
+            let base = builtins.baseNameOf path; in
+            !(builtins.elem base [ "target" "build" ".dart_tool" "native" ]);
+        };
+
+        # duh Studio, the desktop app: `nix run .#studio`.
+        studio = pkgs.flutter.buildFlutterApplication {
+          pname = "duh-studio";
+          version = "0.1.0";
+          src = studioSrc;
+          pubspecLock = pkgs.lib.importJSON ./studio/pubspec.lock.json;
+          postInstall = ''
+            cp ${studioNative}/lib/libduh_studio_native.so "$out/app/$pname/lib/"
+          '';
+          meta.mainProgram = "duh_studio";
+        };
+
+        # The built app starts headless and reaches duh's engine.
+        studioSmoke = pkgs.runCommand "duh-studio-smoke" {
+          nativeBuildInputs = [ pkgs.xvfb-run ];
+        } ''
+          export HOME=$PWD
+          # No GPU in the sandbox: Mesa's software renderer stands in.
+          export __EGL_VENDOR_LIBRARY_DIRS=${pkgs.mesa}/share/glvnd/egl_vendor.d
+          export LIBGL_ALWAYS_SOFTWARE=1
+          xvfb-run -a ${studio}/bin/duh_studio --smoke | tee $out
+          grep -q "engine" $out
+        '';
+
         # demo.sh sets the standard: it must pass against the Nix-built binary.
         demo = pkgs.runCommand "duh-demo" {
           nativeBuildInputs = with pkgs; [
@@ -94,12 +140,12 @@
       in
       {
         packages = {
-          inherit duh;
+          inherit duh studio;
           default = duh;
         };
 
         checks = {
-          inherit duh demo;
+          inherit duh demo studioSmoke;
         };
 
         devShells = {
@@ -121,12 +167,29 @@
           duh = pkgs.mkShell {
             buildInputs = with pkgs; [ duh python3 rclone time ];
           };
+
+          # Working on duh Studio: Flutter, the bridge codegen (pinned to
+          # match the flutter_rust_bridge crate and Dart package) and Rust.
+          studio = pkgs.mkShell {
+            buildInputs = with pkgs; [
+              flutter
+              flutter_rust_bridge_codegen
+              rustToolchain
+              pkg-config
+              just
+            ];
+          };
         };
 
         apps = {
           duh = flake-utils.lib.mkApp {
             drv = duh;
             exePath = "/bin/duh";
+          };
+
+          studio = flake-utils.lib.mkApp {
+            drv = studio;
+            exePath = "/bin/duh_studio";
           };
 
           default = self.apps.${system}.duh;

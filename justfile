@@ -29,3 +29,11 @@ version:
     git commit -m "{{v}}"
     git tag {{v}}
 
+
+# Launch duh Studio, the desktop app (built by Nix).
+studio:
+    nix run .#studio
+
+# Regenerate the Dart <-> Rust bindings after changing studio/native/src/api.
+studio-codegen:
+    cd studio && nix develop ..#studio --command flutter_rust_bridge_codegen generate
