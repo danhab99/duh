@@ -46,6 +46,9 @@ impl Space {
     /// references are missing, even if the transfer is interrupted. That
     /// invariant is also why finding a commit (or tree) already in `dest`
     /// means everything beneath it is there too.
+    ///
+    /// Solid copies `dest` doesn't have come along too, including ones made
+    /// after their saves were first copied over.
     pub fn copy_commit_to(&self, dest: &Space, commit: Hash) -> SpaceResult<TransferStats> {
         let mut stats = TransferStats::default();
         if commit.is_zero() {
@@ -70,7 +73,28 @@ impl Space {
             self.count(self.copy_object_to(dest, hash)?, &mut stats);
             stats.commits += 1;
         }
+        self.copy_solids_to(dest, &mut stats)?;
         Ok(stats)
+    }
+
+    /// Copy every solid copy `dest` lacks: its fragments, then the Solid
+    /// object, then the entry that points `dest` at it.
+    fn copy_solids_to(&self, dest: &Space, stats: &mut TransferStats) -> SpaceResult<()> {
+        for (content, solid) in self.list_solids()? {
+            if dest.solid_for(&content)?.is_some() {
+                continue;
+            }
+            let parts = match self.get_object(solid)? {
+                Some(Object::Solid(s)) => s.parts,
+                _ => return Err(DuhError::object_not_found(&solid.to_string(), "solid copy").into()),
+            };
+            for (fragment, _) in parts {
+                self.count(self.copy_object_to(dest, fragment)?, stats);
+            }
+            self.count(self.copy_object_to(dest, solid)?, stats);
+            dest.set_solid(&content, solid)?;
+        }
+        Ok(())
     }
 
     /// Whether `ancestor` is `commit` itself or one of its ancestors, judged
@@ -215,6 +239,50 @@ mod tests {
         assert!(local.copy_object_to(&other, head).unwrap() > 0);
         assert!(other.has_object(head).unwrap());
         assert_eq!(local.copy_object_to(&other, head).unwrap(), 0);
+    }
+
+    /// Solid copies follow history to the other space, including one made
+    /// after its save had already been copied there.
+    #[test]
+    fn solid_copies_follow_history() {
+        let dir = TempDir::new().unwrap();
+        let meta = dir.path().join(".duh");
+        std::fs::create_dir_all(&meta).unwrap();
+        let mut local = Space::init(store::local(&meta).unwrap(), Some(dir.path().into())).unwrap();
+        local.solid_after = 4;
+        let mut remote = Space::init(memory_store(), None).unwrap();
+
+        let mut data = noise(1, 100_000);
+        let mut save = |local: &mut Space, i: u8| {
+            data[i as usize * 1_000] = i;
+            std::fs::write(dir.path().join("f.bin"), &data).unwrap();
+            let mut ops = FileOps::from_space(local);
+            ops.stage_file("f.bin".into(), None::<fn(_)>, None::<fn(_)>).unwrap();
+            (ops.commit(format!("save {}", i)).unwrap(), data.clone())
+        };
+
+        // Saves 1-4: nothing solid yet. Copy them over.
+        let mut saves: Vec<_> = (1..=4).map(|i| save(&mut local, i)).collect();
+        local.copy_commit_to(&remote, saves[3].0).unwrap();
+        assert!(remote.list_solids().unwrap().is_empty());
+
+        // Save 5 makes save 3 solid, though remote already has save 3.
+        saves.push(save(&mut local, 5));
+        assert_eq!(local.list_solids().unwrap().len(), 1);
+        let stats = local.copy_commit_to(&remote, saves[4].0).unwrap();
+        assert_eq!(stats.commits, 1);
+        assert_eq!(remote.list_solids().unwrap(), local.list_solids().unwrap());
+
+        for (commit, want) in &saves {
+            let mut got = Vec::new();
+            FileOps::from_space(&mut remote)
+                .open_file("f.bin".into(), *commit)
+                .unwrap()
+                .read_to_end(&mut got)
+                .unwrap();
+            assert!(got == *want);
+        }
+        assert_eq!(local.copy_commit_to(&remote, saves[4].0).unwrap(), Default::default());
     }
 
     #[test]
