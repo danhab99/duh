@@ -11,3 +11,4 @@ pub mod display;
 pub mod store;
 pub mod transfer;
 pub mod check;
+pub mod ops;

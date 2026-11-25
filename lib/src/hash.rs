@@ -168,3 +168,10 @@ mod tests {
         assert_eq!(Hash::from_string(h.to_string()).unwrap(), h);
     }
 }
+
+impl Default for Hash {
+    /// The zero hash: "no object".
+    fn default() -> Self {
+        Hash::new()
+    }
+}
