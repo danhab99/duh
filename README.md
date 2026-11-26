@@ -19,24 +19,32 @@ who don't think in terminals. There's a command line, and a desktop app,
 
 ## Install
 
-Each [release](https://github.com/danhab99/duh/releases) has two files that
+Each [release](https://github.com/danhab99/duh/releases) has files that
 need nothing else installed:
 
 | File | For |
 |---|---|
 | `duh-studio-x86_64-linux.AppImage` | duh Studio, the desktop app, on any 64-bit Linux: `chmod +x` it and run it |
+| `duh-studio-x86_64-windows.exe` | duh Studio on Windows 10 and 11: download it and run it |
 | `duh-x86_64-windows.exe` | duh's command line on Windows (every kind of place except SFTP) |
 
-### macOS, and the desktop app on Windows
+The Windows app is one file. The first time it starts, it unpacks itself
+into `%LOCALAPPDATA%\duh-studio`, and later starts reuse that. It isn't
+signed yet, so Windows SmartScreen will warn you the first time: choose
+**More info**, then **Run anyway**.
 
-I don't use macOS or Windows, and I don't know how to package for them.
-Nix builds everything above. It can't build the desktop app for Windows or
-macOS, because Flutter needs Visual Studio on Windows and Xcode on macOS.
+### macOS
 
-If you know how, contributions are very welcome. The app is ordinary
-Flutter (`studio/`) plus a Rust library it loads (`studio/native/`). The
-command line is plain Rust and should build on macOS with `nix build`. The
-AppImage and the `.exe` must keep coming out of `nix build .#ci`.
+I don't use macOS, and I don't know how to package for it. Everything above
+is built by Nix on Linux, the Windows app included. macOS is the one
+platform that can't be built that way: Apple only lets its SDK be used on a
+Mac, and Flutter's compiler for Apple's platforms only runs on one.
+
+If you have a Mac and know how, contributions are very welcome. The app is
+ordinary Flutter (`studio/`) plus a Rust library it loads
+(`studio/native/`). The command line is plain Rust and should build on
+macOS with `nix build`. Whatever you add, the AppImage and the `.exe` files
+must keep coming out of `nix build .#ci`.
 
 ### With Nix
 
@@ -222,7 +230,8 @@ at every save and compares them byte for byte. It also:
 `nix flake check` runs it on every build, along with:
 - the library and CLI tests;
 - a test that drives the real engine from the desktop app's bridge;
-- a check that the packaged app starts.
+- a check that the packaged app starts, on Linux and (under Wine) on
+  Windows.
 
 ```bash
 ./demo.sh          # watch it run (in a fresh temporary folder)
@@ -236,6 +245,8 @@ lib/            the engine; every operation lives in lib/src/ops
 cli/            the command line: parse, call lib::ops, print
 studio/         duh Studio (Flutter)
 studio/native/  the Rust bridge Studio loads (flutter_rust_bridge)
+studio/windows/ the Windows window code, and the one-file launcher
+nix/            how Nix builds the Windows app on Linux
 docs/           design notes
 ```
 
@@ -270,7 +281,7 @@ written with AI help, and how, is in [docs/MEMO-on-ai.md](docs/MEMO-on-ai.md).
 - Credentials from a secrets manager instead of plain-text settings.
 - Clearing out data no save needs any more (garbage collection).
 - Fetching only the versions you need from large spaces.
-- Image and model previews in Studio, and macOS and Windows builds.
+- Image and model previews in Studio, and a macOS build.
 
 ## Related projects
 
