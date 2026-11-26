@@ -504,9 +504,11 @@ impl Space {
                 // Bare names resolve as branches first, then as tags.
                 let n = match self.get_ref(r.clone()) {
                     Ok(n) => n,
-                    Err(e) => match self.get_ref(format!("tags/{}", r)) {
+                    Err(_) => match self.get_ref(format!("tags/{}", r)) {
                         Ok(n) => n,
-                        Err(_) => return Err(e),
+                        Err(_) => {
+                            return Err(format!("there's no draft, label or save called '{}'", r).into())
+                        }
                     },
                 };
                 let resolved = self.resolve_ref_name(n)?;
