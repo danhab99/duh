@@ -164,6 +164,16 @@
           grep -q "engine" $out
         '';
 
+        # The Windows .exe starts under Wine and reaches duh's engine.
+        studioWindowsSmoke = pkgs.runCommand "duh-studio-windows-smoke" {
+          nativeBuildInputs = [ pkgs.wine64 pkgs.xvfb-run pkgs.coreutils ];
+        } ''
+          export HOME=$PWD WINEPREFIX=$PWD/wine WINEDLLOVERRIDES="mscoree,mshtml="
+          timeout 300 xvfb-run -a wine ${studioWindows.exe} --smoke > log 2>&1 || true
+          grep "duh Studio" log | tee $out
+          grep -q "engine" $out || { cat log; exit 1; }
+        '';
+
         # duh Studio as one file for any Linux. Nix builds its OpenGL against
         # Nix's own Mesa, which other distros don't have at the paths Nix
         # expects, so the launcher points the app at the Mesa bundled
@@ -179,11 +189,18 @@
           name = "duh-studio.AppImage";
         };
 
+        # duh Studio for Windows, as one .exe, built here (see the file).
+        studioWindows = import ./nix/studio-windows.nix {
+          inherit pkgs studioSrc;
+          rustSrc = src;
+        };
+
         # Everything a release ships, in one folder. CI builds this and
         # uploads its files as they are; it does no other work.
         ci = pkgs.runCommand "duh-release" { } ''
           mkdir $out
           cp ${studioAppImage} $out/duh-studio-x86_64-linux.AppImage
+          cp ${studioWindows.exe} $out/duh-studio-x86_64-windows.exe
           cp ${duhWindows}/bin/duh.exe $out/duh-x86_64-windows.exe
         '';
 
@@ -211,12 +228,17 @@
           default = duh;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           inherit duhStatic duhWindows studioAppImage;
+          # `nix build .#studioWindows` is the .exe; its pieces build alone
+          # as .#studioWindows.kernel, .aot, .runner, .native, .bundle.
+          studioWindows = studioWindows.launcher // studioWindows;
         } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           inherit ci;
         };
 
         checks = {
           inherit duh demo studioSmoke;
+        } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          inherit studioWindowsSmoke;
         };
 
         devShells = {
