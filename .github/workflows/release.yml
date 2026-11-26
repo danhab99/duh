@@ -1,0 +1,68 @@
+# A release, every time a tag is pushed.
+#
+# One step does duh's work: Nix fetches the tagged commit straight from
+# GitHub (no checkout, no git) and builds `.#ci`, a folder of every file a
+# release ships. Every other step only prepares the runner or hands those
+# files to GitHub.
+#
+# Tag with a message; its first line becomes the release's title and the
+# rest its notes:
+#
+#   git tag -a v0.3.0      # write the subject, a blank line, then the notes
+#   git push origin v0.3.0
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the release
+  actions: write    # prune old Nix store caches
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make room for the Nix store
+        uses: wimpysworld/nothing-but-nix@v12
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v32
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ github.token }}
+
+      - name: Restore the Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-release-${{ runner.os }}-${{ github.sha }}
+          restore-prefixes-first-match: nix-release-${{ runner.os }}-
+          gc-max-store-size-linux: 12G
+          purge: true
+          purge-prefixes: nix-release-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Build every release file
+        run: nix build "github:${{ github.repository }}/${{ github.sha }}#ci" --print-build-logs
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # An annotated tag's message, through GitHub's API; a plain tag
+          # has none, so the release is titled by the tag alone.
+          ref=$(gh api "repos/$REPO/git/ref/tags/$TAG")
+          if [ "$(jq -r .object.type <<<"$ref")" = tag ]; then
+            gh api "repos/$REPO/git/tags/$(jq -r .object.sha <<<"$ref")" --jq .message \
+              | sed '/^-----BEGIN PGP SIGNATURE-----/,$d' > message
+          else
+            echo "$TAG" > message
+          fi
+          title=$(head -n1 message)
+          tail -n +2 message | sed '1{/^$/d}' > notes
+          gh release create "$TAG" result/* --repo "$REPO" --title "$title" --notes-file notes
