@@ -354,7 +354,7 @@ Future<void> divergedSheet(BuildContext context, AppState app) async {
           width: 520,
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text(
-              '$place has ${s?.toReceive ?? 0} save(s) you don\'t have, and you have ${s?.toSend ?? 0} it doesn\'t. '
+              '$place has ${count(s?.toReceive ?? 0, 'save')} you don\'t have, and you have ${s?.toSend ?? 0} it doesn\'t. '
               'duh never merges, so nothing happens until you choose.',
               style: TextStyle(color: p.muted, height: 1.5),
             ),
@@ -367,10 +367,10 @@ Future<void> divergedSheet(BuildContext context, AppState app) async {
               Navigator.pop(context);
               await app.send(draft: '$draft-mine');
             }),
-            choice('Overwrite $place\'s $draft', 'Throws away $place\'s ${s?.toReceive ?? 0} save(s) for everyone. You\'ll be asked again.', () async {
+            choice('Overwrite $place\'s $draft', 'Throws away $place\'s ${count(s?.toReceive ?? 0, 'save')} for everyone. You\'ll be asked again.', () async {
               final sure = await confirm(context,
                   title: 'Overwrite $place\'s $draft?',
-                  body: 'The ${s?.toReceive ?? 0} save(s) only $place has will be gone for everyone who uses it. This can\'t be undone from here.',
+                  body: 'The ${count(s?.toReceive ?? 0, 'save')} only $place has will be gone for everyone who uses it. This can\'t be undone from here.',
                   action: 'Overwrite',
                   danger: true);
               if (!sure || !context.mounted) return;
@@ -395,14 +395,14 @@ Future<void> showCheck(BuildContext context, CheckResult r, {String? place}) {
       title: Row(children: [
         Icon(intact ? Icons.verified_rounded : Icons.error_outline_rounded, color: intact ? p.ok : p.danger),
         const SizedBox(width: 10),
-        Expanded(child: Text(intact ? 'Everything is intact' : '${r.problems.length} problem(s) found', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700))),
+        Expanded(child: Text(intact ? 'Everything is intact' : '${count(r.problems.length, 'problem')} found', style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700))),
       ]),
       content: SizedBox(
         width: 520,
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(
-            '${place ?? 'This space'}: ${r.saves} save(s), ${r.fileVersions} file version(s), '
-            '${r.objects} stored piece(s)${r.solids > 0 ? ' and ${r.solids} solid cop${r.solids == 1 ? 'y' : 'ies'}' : ''} checked.',
+            '${place ?? 'This space'}: ${count(r.saves, 'save')}, ${count(r.fileVersions, 'file version')}, '
+            '${count(r.objects, 'stored piece')}${r.solids > 0 ? ' and ${count(r.solids, 'solid copy', 'solid copies')}' : ''} checked.',
             style: TextStyle(color: p.muted, height: 1.5),
           ),
           if (intact) ...[

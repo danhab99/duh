@@ -7,6 +7,9 @@ import 'package:flutter/widgets.dart';
 
 import 'engine.dart';
 
+/// "1 save", "3 saves": a number with its noun in the right form.
+String count(int n, String one, [String? many]) => '$n ${n == 1 ? one : many ?? '${one}s'}';
+
 /// What the inspector shows.
 sealed class Selection {
   const Selection();
@@ -511,7 +514,7 @@ class AppState extends ChangeNotifier {
     if (p == null) return false;
     final ok = await _do('Sending to $p', (f) async {
       final t = await engine.send(f, p, draft: draft, force: force);
-      say(t.saves == 0 ? '$p already had everything' : 'Sent ${t.saves} save(s) to $p/${t.draft} (${_bytes(t.bytes)})');
+      say(t.saves == 0 ? '$p already had everything' : 'Sent ${count(t.saves, 'save')} to $p/${t.draft} (${_bytes(t.bytes)})');
     });
     await refreshSync();
     return ok;
@@ -522,7 +525,7 @@ class AppState extends ChangeNotifier {
     if (p == null) return false;
     final ok = await _do('Receiving from $p', (f) async {
       final t = await engine.receive(f, p, draft: draft, into: into);
-      say(t.saves == 0 ? 'Nothing new from $p' : 'Received ${t.saves} save(s) into ${t.draft} (${_bytes(t.bytes)})');
+      say(t.saves == 0 ? 'Nothing new from $p' : 'Received ${count(t.saves, 'save')} into ${t.draft} (${_bytes(t.bytes)})');
     });
     await refreshSync();
     return ok;

@@ -242,7 +242,7 @@ class _HealthBadge extends StatelessWidget {
     final (dot, text) = switch (h) {
       null => (p.faint, 'Check'),
       _ when h.problems.isEmpty => (p.ok, 'Intact · checked ${_ago(app.checkedAt!)}'),
-      _ => (p.danger, '${h.problems.length} problem(s)'),
+      _ => (p.danger, count(h.problems.length, 'problem')),
     };
     return Tooltip(
       message: 'Check that every save reads back exactly',
