@@ -48,3 +48,11 @@ studio-test:
 # Render duh Studio's main screens to studio/test_screens/out/*.png.
 studio-screens:
     cd studio && nix develop ..#studio --command bash -c 'flutter test --update-goldens --dart-define=ICONS=$(dirname $(dirname $(readlink -f $(which flutter))))/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf test_screens/screens_test.dart'
+
+# Render the screens with Nix and copy them into docs/images, for the
+# README and the guides. Commit the result.
+docs-screens:
+    nix build .#screens -o result-screens
+    mkdir -p docs/images
+    install -m644 result-screens/*.png docs/images/
+    rm result-screens

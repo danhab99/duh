@@ -117,7 +117,32 @@
           name = "duh-studio-source";
           filter = path: type:
             let base = builtins.baseNameOf path; in
-            !(builtins.elem base [ "target" "build" ".dart_tool" "native" ]);
+            !(builtins.elem base [ "target" "build" ".dart_tool" "native" ])
+            # Rendered screens, which `screens` below makes.
+            && !(base == "out" && builtins.baseNameOf (builtins.dirOf path) == "test_screens");
+        };
+
+        # duh Studio's screens, rendered from a believable fake project in
+        # light and dark: the README's and the tutorial's pictures.
+        # `just docs-screens` copies them into docs/images.
+        screens = pkgs.flutter.buildFlutterApplication {
+          pname = "duh-studio-screens";
+          version = "0.1.0";
+          src = studioSrc;
+          pubspecLock = pkgs.lib.importJSON ./studio/pubspec.lock.json;
+          buildPhase = ''
+            runHook preBuild
+            flutter test --update-goldens \
+              --dart-define=ICONS=${pkgs.flutter.sdk}/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf \
+              test_screens/screens_test.dart
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out $debug
+            cp test_screens/out/*.png $out/
+            runHook postInstall
+          '';
         };
 
         # duh Studio, the desktop app: `nix run .#studio`.
@@ -224,7 +249,7 @@
       in
       {
         packages = {
-          inherit duh studio;
+          inherit duh studio screens;
           default = duh;
         } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           inherit duhStatic duhWindows studioAppImage;
