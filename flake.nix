@@ -5,9 +5,18 @@
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url  = "github:numtide/flake-utils";
+    # Packs duh Studio and everything it needs into one AppImage file.
+    nix-appimage = {
+      # Pinned before 3f60392, whose AppRun mounts the bundle one level too
+      # deep (/nix/store/store/…) on machines without a /nix/store, i.e.
+      # every distro but NixOS. Unpin once that's fixed upstream.
+      url = "github:ralismark/nix-appimage/6cdc3f8faa6e37ba2c5d745803b16125688b6b88";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, nix-appimage, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -19,9 +28,13 @@
         rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
           extensions = [ "rust-src" "rustfmt" "clippy" ];
         };
+        # Packages build with the same nightly but without rust-src: when
+        # it's present, rustc writes paths into it into every binary's panic
+        # messages, and the whole toolchain (1.6 GB) lands in the closure.
+        buildToolchain = pkgs.rust-bin.nightly.latest.minimal;
         rustPlatform = pkgs.makeRustPlatform {
-          cargo = rustToolchain;
-          rustc = rustToolchain;
+          cargo = buildToolchain;
+          rustc = buildToolchain;
         };
 
         cliToml = builtins.fromTOML (builtins.readFile ./cli/Cargo.toml);
@@ -34,7 +47,9 @@
             base != "target" && base != ".git" && base != "result";
         };
 
-        duh = rustPlatform.buildRustPackage {
+        # The CLI, built by any Rust platform: the pinned toolchain for the
+        # package and its tests, nixpkgs' own for static and cross builds.
+        mkDuh = rustPlatform: extra: rustPlatform.buildRustPackage ({
           pname = "duh";
           version = cliToml.package.version;
           buildType = "release";
@@ -72,7 +87,15 @@
               email = "dan.habot@gmail.com";
             }];
           };
-        };
+        } // extra);
+
+        duh = mkDuh rustPlatform { };
+
+        # Release builds of the CLI that run anywhere, not only under Nix:
+        # fully static for Linux (musl), and cross-compiled for Windows.
+        # Their tests ran in `duh` already; these only change the target.
+        duhStatic = mkDuh pkgs.pkgsStatic.rustPlatform { doCheck = false; };
+        duhWindows = mkDuh pkgs.pkgsCross.mingwW64.rustPlatform { doCheck = false; };
 
         # duh Studio's bridge to lib: a shared library Dart loads at start.
         # Built like the CLI, every crate fetched by Nix from Cargo.lock.
@@ -86,6 +109,7 @@
           # The bridge catches Rust panics and reports them to Dart, so
           # unlike the CLI it must not be built with panic = abort.
           env.CARGO_PROFILE_RELEASE_LTO = "thin";
+          env.CARGO_PROFILE_RELEASE_STRIP = "symbols";
         };
 
         studioSrc = builtins.path {
@@ -140,6 +164,29 @@
           grep -q "engine" $out
         '';
 
+        # duh Studio as one file for any Linux. Nix builds its OpenGL against
+        # Nix's own Mesa, which other distros don't have at the paths Nix
+        # expects, so the launcher points the app at the Mesa bundled
+        # inside the AppImage (Intel, AMD, and software rendering anywhere).
+        studioPortable = pkgs.writeShellScriptBin "duh-studio" ''
+          export __EGL_VENDOR_LIBRARY_DIRS=${pkgs.mesa}/share/glvnd/egl_vendor.d
+          export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
+          export LD_LIBRARY_PATH=${pkgs.libglvnd}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+          exec ${studio}/bin/duh_studio "$@"
+        '';
+        studioAppImage = nix-appimage.lib.${system}.mkAppImage {
+          program = "${studioPortable}/bin/duh-studio";
+          name = "duh-studio.AppImage";
+        };
+
+        # Everything a release ships, in one folder. CI builds this and
+        # uploads its files as they are; it does no other work.
+        ci = pkgs.runCommand "duh-release" { } ''
+          mkdir $out
+          cp ${studioAppImage} $out/duh-studio-x86_64-linux.AppImage
+          cp ${duhWindows}/bin/duh.exe $out/duh-x86_64-windows.exe
+        '';
+
         # demo.sh sets the standard: it must pass against the Nix-built binary.
         demo = pkgs.runCommand "duh-demo" {
           nativeBuildInputs = with pkgs; [
@@ -162,6 +209,10 @@
         packages = {
           inherit duh studio;
           default = duh;
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          inherit duhStatic duhWindows studioAppImage;
+        } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
+          inherit ci;
         };
 
         checks = {

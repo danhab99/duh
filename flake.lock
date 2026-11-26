@@ -1,5 +1,53 @@
 {
   "nodes": {
+    "appimage-type2-runtime": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792442122,
+        "narHash": "sha256-OSwpZKe+r67kXGaSlYsIYRljmjnsxd7fHul62GwMUrA=",
+        "owner": "appimage",
+        "repo": "type2-runtime",
+        "rev": "fedfad51acc2860b2916a1eef32ba4a500ff31ef",
+        "type": "github"
+      },
+      "original": {
+        "owner": "appimage",
+        "repo": "type2-runtime",
+        "type": "github"
+      }
+    },
+    "appimagecrafters-appimage-runtime": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1652289700,
+        "narHash": "sha256-uxQBDy/JA7uEboTOUmGaZ2FAKY/0dQ9c0A0N8+J+a7I=",
+        "owner": "appimagecrafters",
+        "repo": "appimage-runtime",
+        "rev": "6500a1ef68e039caba2ebab1c7ed74c2ea9e67a5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "appimagecrafters",
+        "repo": "appimage-runtime",
+        "type": "github"
+      }
+    },
+    "flake-compat": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767039857,
+        "narHash": "sha256-vNpUSpF5Nuw8xvDLj2KCwwksIbjua2LZCqhV1LNRDns=",
+        "owner": "nixos",
+        "repo": "flake-compat",
+        "rev": "5edf11c44bc78a0d334f6334cdaf7d60d732daab",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "flake-compat",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -15,6 +63,33 @@
       "original": {
         "owner": "numtide",
         "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "nix-appimage": {
+      "inputs": {
+        "appimage-type2-runtime": "appimage-type2-runtime",
+        "appimagecrafters-appimage-runtime": "appimagecrafters-appimage-runtime",
+        "flake-compat": "flake-compat",
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794827519,
+        "narHash": "sha256-Gr/EAWvEy6D4a7xRrj7YKE/kWqTD1zXwgefKcyv2mxE=",
+        "owner": "ralismark",
+        "repo": "nix-appimage",
+        "rev": "6cdc3f8faa6e37ba2c5d745803b16125688b6b88",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ralismark",
+        "repo": "nix-appimage",
+        "rev": "6cdc3f8faa6e37ba2c5d745803b16125688b6b88",
         "type": "github"
       }
     },
@@ -53,6 +128,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "nix-appimage": "nix-appimage",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"
       }
