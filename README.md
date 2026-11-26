@@ -19,7 +19,28 @@ who don't think in terminals. There's a command line, and a desktop app,
 
 ## Install
 
-duh is built with Nix. From a checkout:
+Each [release](https://github.com/danhab99/duh/releases) has two files that
+need nothing else installed:
+
+| File | For |
+|---|---|
+| `duh-studio-x86_64-linux.AppImage` | duh Studio, the desktop app, on any 64-bit Linux: `chmod +x` it and run it |
+| `duh-x86_64-windows.exe` | duh's command line on Windows (every kind of place except SFTP) |
+
+### macOS, and the desktop app on Windows
+
+I don't use macOS or Windows, and I don't know how to package for them.
+Nix builds everything above. It can't build the desktop app for Windows or
+macOS, because Flutter needs Visual Studio on Windows and Xcode on macOS.
+
+If you know how, contributions are very welcome. The app is ordinary
+Flutter (`studio/`) plus a Rust library it loads (`studio/native/`). The
+command line is plain Rust and should build on macOS with `nix build`. The
+AppImage and the `.exe` must keep coming out of `nix build .#ci`.
+
+### With Nix
+
+From a checkout:
 
 ```bash
 nix run .#studio           # the desktop app
@@ -229,6 +250,15 @@ library first.
 | `just studio-test` | Studio's widget tests and the real-engine test |
 | `just studio-screens` | render Studio's screens to `studio/test_screens/out/` |
 | `just studio-codegen` | regenerate the bridge after changing `studio/native/src/api` (slow) |
+
+**Releasing.** Push an annotated tag. CI builds `nix build .#ci` from that
+exact commit and publishes its files. The tag's first line becomes the
+release title and the rest becomes its notes:
+
+```bash
+git tag -a v0.3.0       # subject, blank line, notes
+git push origin v0.3.0
+```
 
 The desktop app's design and plan are in
 [docs/studio/DESIGN.md](docs/studio/DESIGN.md). How much of this project was
