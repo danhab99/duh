@@ -1,7 +1,11 @@
 # Commands
 
-Every command, with every option. `duh <command> --help` prints the same
-on the command line. Each command also answers to its git name, shown in
+Every command, with every option. On the command line,
+`duh <command> --help` prints the same, and with duh installed through Nix
+(or Home Manager), `man duh` and `man duh-<command>` (for example
+`man duh-save`) are the manual pages.
+
+Each command also answers to its git name, shown in
 brackets.
 
 Paths are relative to the folder you run the command in, and can be

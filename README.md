@@ -137,7 +137,8 @@ duh open --new experiment        # try something on a new draft
 You can name a version by label, by draft, by short hash, or as `HEAD~N` or
 `X^`. A `.duhignore` file keeps files out of `look` and `pick`: one glob per
 line, `#` for comments and `!` to let a file back in.
-Run `duh <command> --help` for every option.
+Run `duh <command> --help` for every option; with the Nix package,
+`man duh` and `man duh-<command>` too.
 
 ## Sharing
 
