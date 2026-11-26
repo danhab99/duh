@@ -44,7 +44,6 @@ opendal = { version = "0.52.0", features = [
     "services-lakefs",
     "services-fs",
     "services-ftp",
-    "services-sftp",
     "services-webdav",
     "services-webhdfs",
     "services-hdfs-native",
@@ -65,3 +64,8 @@ opendal = { version = "0.52.0", features = [
     "services-http",
     "services-memory",
 ] }
+
+# SFTP goes through the system's OpenSSH client, which the `openssh` crate
+# only supports on Unix. Windows builds have every other backend.
+[target.'cfg(unix)'.dependencies]
+opendal = { version = "0.52.0", features = ["services-sftp"] }
