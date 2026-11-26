@@ -12,7 +12,6 @@ use std::sync::OnceLock;
 use opendal::layers::BlockingLayer;
 use opendal::{Operator, Scheme};
 
-use crate::error::DuhError;
 use crate::space::SpaceResult;
 
 /// The storage handle a space is built on.
@@ -118,22 +117,24 @@ fn upsert(pairs: &mut Vec<(String, String)>, key: &str, value: String) {
     }
 }
 
-/// Resolve a local repo path (worktree or metadata dir) to fs options.
-fn local_pairs(url: &str, path: PathBuf) -> SpaceResult<(Scheme, Vec<(String, String)>)> {
+/// Resolve a local path to fs options: a space's `.duh` folder when it has
+/// one, else the folder itself (a bare space, or an empty folder the first
+/// send will start a space in). Whether a space is there is for the caller
+/// to decide, as for every other kind of place.
+fn local_pairs(_url: &str, path: PathBuf) -> SpaceResult<(Scheme, Vec<(String, String)>)> {
     let meta = path.join(crate::utils::SPACE_METADATA_DIR_NAME);
     let root = if meta.is_dir() { meta } else { path };
-    if !root.join("config").is_file() {
-        return Err(Box::new(DuhError::Generic(format!(
-            "remote path '{}' is not a valid duh repo (missing config)",
-            url
-        ))));
+    // Files are written whole through `.tmp/`, which opendal makes as soon
+    // as the place is opened. Only make it where a space is or is about to
+    // be, so a refused send leaves someone else's folder untouched.
+    let ours = root.join("config").is_file()
+        || std::fs::read_dir(&root).map_or(true, |mut d| d.next().is_none());
+    let root_s = root.to_string_lossy().to_string();
+    let mut pairs = vec![("root".to_string(), root_s.clone())];
+    if ours {
+        pairs.push(("atomic_write_dir".into(), format!("{}/.tmp", root_s.trim_end_matches('/'))));
     }
-    let root = root.to_string_lossy().to_string();
-    let atomic = format!("{}/.tmp", root.trim_end_matches('/'));
-    Ok((
-        Scheme::Fs,
-        vec![("root".into(), root), ("atomic_write_dir".into(), atomic)],
-    ))
+    Ok((Scheme::Fs, pairs))
 }
 
 /// Services whose URL host names a bucket/container rather than a server.

@@ -246,4 +246,38 @@ mod tests {
         assert_eq!((got.draft.as_str(), got.before), ("theirs", Hash::new()));
         assert!(get(hub.path().to_str().unwrap(), &mate_path, None, false, &[]).unwrap_err().to_string().contains("already exists"));
     }
+
+    #[test]
+    fn the_first_send_to_an_empty_folder_starts_a_space_there() {
+        let (dir, mut space) = testing::space();
+        save_text(&dir, &mut space, "one");
+
+        // An empty folder, like a fresh USB drive, and one that doesn't exist yet.
+        let usb = tempfile::TempDir::new().unwrap();
+        let later = usb.path().join("not-yet");
+        space.add_remote("usb", usb.path().to_str().unwrap()).unwrap();
+        space.add_remote("later", later.to_str().unwrap()).unwrap();
+        send(&mut space, "usb", None, false).unwrap();
+        send(&mut space, "later", None, false).unwrap();
+
+        // Both now hold a space a teammate can get a copy of.
+        for from in [usb.path(), later.as_path()] {
+            let to = tempfile::TempDir::new().unwrap();
+            get(from.to_str().unwrap(), &to.path().join("copy"), None, false, &[]).unwrap();
+            assert_eq!(fs::read_to_string(to.path().join("copy/a.txt")).unwrap(), "one");
+        }
+
+        // A folder that holds other files is left alone.
+        let busy = tempfile::TempDir::new().unwrap();
+        fs::write(busy.path().join("holiday.jpg"), "photo").unwrap();
+        space.add_remote("busy", busy.path().to_str().unwrap()).unwrap();
+        let err = send(&mut space, "busy", None, false).unwrap_err().to_string();
+        assert!(err.contains("holds files but no duh space"), "{err}");
+        assert_eq!(fs::read_dir(busy.path()).unwrap().count(), 1);
+
+        // Getting a copy from a folder with no space says so.
+        let to = tempfile::TempDir::new().unwrap();
+        let err = get(busy.path().to_str().unwrap(), &to.path().join("copy"), None, false, &[]).unwrap_err().to_string();
+        assert!(err.contains("no duh space") || err.contains("not a duh space") || err.contains("missing config"), "{err}");
+    }
 }

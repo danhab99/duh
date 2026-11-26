@@ -832,7 +832,9 @@ impl Space {
         let store = crate::store::from_url(url_s, &options)?;
         if create && !Space::is_space(&store)? {
             let empty = match store.list("/") {
-                Ok(entries) => entries.iter().all(|e| e.path() == "/" || e.path().is_empty()),
+                // A local folder's `.tmp/` is duh's own scratch space for
+                // writing files whole, made when the place is opened.
+                Ok(entries) => entries.iter().all(|e| matches!(e.path(), "/" | "" | ".tmp/")),
                 Err(e) if e.kind() == opendal::ErrorKind::NotFound => true,
                 Err(e) => return Err(Box::new(e)),
             };
