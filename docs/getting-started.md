@@ -6,7 +6,9 @@ shown in **duh Studio**, the desktop app, and as the same command on the
 command line. Use whichever you like; they work on the same space, even at
 the same time.
 
-You'll need duh installed: see [Install](../README.md#install).
+You'll need duh installed: see [Install](../README.md#install). If you've
+never used version control, [How duh works](concepts.md) explains the
+ideas first, in a few minutes.
 
 **The words duh uses:**
 
@@ -35,6 +37,9 @@ On the command line, from inside the folder:
 $ duh start
 Started a new space here. `duh pick <file>` to begin tracking files.
 ```
+
+Your saves are signed with your computer account's name. To use your
+full name instead: `duh settings set user.name "Ana Lee"`.
 
 ## 2. Your first save
 
@@ -196,7 +201,7 @@ $ duh places add usb /media/usb
 Added the place usb at /media/usb. `duh send usb` copies your saves there.
 
 $ duh send usb
-Sent main -> usb/main (nothing..9298ff3be620): 2 saves, 26 stored pieces, 36.4 MB
+Sent main -> usb/main (nothing..9298ff3be620): 2 saves, copied 26 stored pieces (36.4 MB)
 ```
 
 Someone else gets their own copy with **Get a copy** on the welcome screen,

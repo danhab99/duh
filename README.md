@@ -66,9 +66,15 @@ home.packages = [
 ];
 ```
 
-**New to duh?** [Getting started](docs/getting-started.md) walks one project
-from its first save to a shared, checked history, in the app and on the
-command line.
+## Documentation
+
+- **New to version control?** [How duh works](docs/concepts.md), then
+  [Getting started](docs/getting-started.md), which walks one project from
+  its first save to a shared, checked history.
+- **Know git?** [duh for git users](docs/for-git-users.md).
+- **Everything else:** [the documentation](docs/README.md): guides to
+  old versions, drafts, sharing, teamwork, ignoring files and big files,
+  plus a reference for every command and for duh Studio.
 
 ## duh Studio
 
@@ -257,7 +263,8 @@ docs/           design notes
 ```
 
 The CLI and Studio are thin shells over `lib::ops`. New behaviour goes in the
-library first.
+library first. See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes are
+made, and [docs/FORMAT.md](docs/FORMAT.md) for how spaces are stored.
 
 | | |
 |---|---|
