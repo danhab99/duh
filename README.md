@@ -66,7 +66,13 @@ home.packages = [
 ];
 ```
 
+**New to duh?** [Getting started](docs/getting-started.md) walks one project
+from its first save to a shared, checked history, in the app and on the
+command line.
+
 ## duh Studio
+
+![duh Studio: the timeline of saves, and your changed files with what to save](docs/images/main-dark.png)
 
 One window:
 - your unsaved files at the top;
