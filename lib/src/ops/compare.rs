@@ -38,7 +38,17 @@ pub fn strip_between(space: &Space, old: Box<dyn ReadSeek>, new: Box<dyn ReadSee
         space.max_chunk(),
         None::<fn(DedupProgress)>,
     )?;
-    Ok(frags.map(|f| Span::from(&f)).collect())
+    // Added data arrives in bounded pieces; a strip shows each run once.
+    let mut strip: Vec<Span> = Vec::new();
+    for span in frags.map(|f| Span::from(&f)) {
+        match (strip.last_mut(), span) {
+            (Some(Span::Added(a)), Span::Added(b)) => *a += b,
+            (Some(Span::Kept(a)), Span::Kept(b)) => *a += b,
+            (Some(Span::Removed(a)), Span::Removed(b)) => *a += b,
+            (_, span) => strip.push(span),
+        }
+    }
+    Ok(strip)
 }
 
 /// With `picked`, what's picked against the last save; otherwise your

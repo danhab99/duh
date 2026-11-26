@@ -146,7 +146,8 @@ impl<'a> FileOps<'a> {
             self.space.chunk_size as u64,
             self.space.max_chunk(),
             progress,
-        )?;
+        )?
+        .with_max_added(self.space.max_size);
 
         let mut file_fragments: Vec<Hash> = Vec::new();
 

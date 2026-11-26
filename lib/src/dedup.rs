@@ -251,6 +251,9 @@ fn push_op(ops: &mut VecDeque<EditOp>, op: EditOp) {
 pub struct DedupeFragIterator<R: Read + Seek> {
     ops: VecDeque<EditOp>,
     new: R,
+    /// Added runs are handed out in pieces of at most this many bytes, so
+    /// a large new file is never read into memory whole.
+    max_added: usize,
 }
 
 impl<R: Read + Seek> DedupeFragIterator<R> {
@@ -349,7 +352,14 @@ impl<R: Read + Seek> DedupeFragIterator<R> {
 
         vlog!("dedup::build: edit script has {} ops", ops.len());
 
-        Ok(Self { ops, new })
+        Ok(Self { ops, new, max_added: crate::space::DEFAULT_MAX_FRAGMENT_SIZE })
+    }
+
+    /// Hand out added runs in pieces of at most `n` bytes (at least 1).
+    /// Saving uses the space's `max_size`, the size it stores pieces at.
+    pub fn with_max_added(mut self, n: usize) -> Self {
+        self.max_added = n.max(1);
+        self
     }
 }
 
@@ -367,6 +377,12 @@ impl<R: Read + Seek> Iterator for DedupeFragIterator<R> {
                 DiffFragment::UNCHANGED { len }
             }
             EditOp::Added { start, len } => {
+                let len = if len > self.max_added {
+                    self.ops.push_front(EditOp::Added { start: start + self.max_added, len: len - self.max_added });
+                    self.max_added
+                } else {
+                    len
+                };
                 self.new.seek(io::SeekFrom::Start(start as u64)).unwrap();
                 let mut body = vec![0u8; len];
                 self.new.read_exact(&mut body).unwrap();
@@ -539,5 +555,31 @@ mod tests {
         let (x, y) = a.split_at(N / 2);
         let (rebuilt, _) = round_trip(&a, &cat(&[y, x]));
         assert!(rebuilt == cat(&[y, x]));
+    }
+
+    #[test]
+    fn added_data_comes_in_bounded_pieces() {
+        // A new file, and an insertion, each far bigger than the cap.
+        for (old, new) in [(Vec::new(), noise(1, 50_000)), (noise(2, 20_000), cat(&[&noise(2, 20_000)[..9_000], &noise(3, 30_000), &noise(2, 20_000)[9_000..]]))] {
+            let frags = build_diff_fragments(Cursor::new(old.clone()), Cursor::new(new.clone()), 4096, 4096, MAX_CHUNK, None::<fn(DedupProgress)>)
+                .unwrap()
+                .with_max_added(7_000);
+            let mut out = Vec::new();
+            let mut cursor = 0;
+            for frag in frags {
+                match frag {
+                    DiffFragment::ADDED { body } => {
+                        assert!(body.len() <= 7_000, "a piece of {} bytes", body.len());
+                        out.extend_from_slice(&body);
+                    }
+                    DiffFragment::UNCHANGED { len } => {
+                        out.extend_from_slice(&old[cursor..cursor + len]);
+                        cursor += len;
+                    }
+                    DiffFragment::DELETED { len } => cursor += len,
+                }
+            }
+            assert_eq!(out, new);
+        }
     }
 }
