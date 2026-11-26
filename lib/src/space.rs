@@ -537,6 +537,12 @@ impl Space {
             for (dir, so_far) in dirs {
                 let Ok(entries) = self.fs.list(&dir) else { continue };
                 for entry in entries {
+                    // opendal lists a directory as one of its own entries;
+                    // counting it would find objects/abc/abc/… twice when a
+                    // hash repeats a segment (e.g. cd8cd8…).
+                    if entry.path() == dir {
+                        continue;
+                    }
                     let name = entry.name().trim_end_matches('/').to_string();
                     if name.len() == end - start && name.starts_with(want) {
                         next.push((format!("{}{}/", dir, name), format!("{}{}", so_far, name)));

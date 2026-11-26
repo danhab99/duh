@@ -744,6 +744,28 @@ mod tests {
         assert!(space.resolve_commit_prefix("zzzz").is_err());
     }
 
+    /// A hash whose first two 3-digit segments are equal (abcabc…) once
+    /// matched itself twice: opendal lists a folder among its own entries.
+    /// Real hashes like that are rare, so this plants one.
+    #[test]
+    fn a_hash_repeating_its_first_segment_resolves_once() {
+        let (dir, mut space) = space_with_worktree();
+        write(&dir, "a.bin", b"hello");
+        stage(&mut space, "a.bin");
+        let real = commit(&mut space);
+        let bytes = space.read_raw_object(real).unwrap().unwrap();
+
+        let planted = Hash::from_string(format!("abcabc{}", &real.to_string()[6..])).unwrap();
+        let path = dir
+            .path()
+            .join(crate::utils::SPACE_METADATA_DIR_NAME)
+            .join(Space::object_key(&planted));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+
+        assert_eq!(space.resolve_commit_prefix("abcabc").unwrap(), planted);
+    }
+
     /// With solid_after = 10, the 5th oldest of every 10 saves since the
     /// last solid copy is made solid: saves 6, 11 and 16 of 25 (save 1
     /// diffs against nothing, so it never counts). Every save, solid or
