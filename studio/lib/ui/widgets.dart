@@ -41,6 +41,16 @@ class ChangeStrip extends StatelessWidget {
                   widths[i] = (widths[i] - over * segments[i].len / kept).clamp(0, usable);
                 }
               }
+              // With no kept runs (a first save, say), the widest run gives
+              // up the rest.
+              final still = widths.fold<double>(0, (a, w) => a + w) - usable;
+              if (still > 0) {
+                var widest = 0;
+                for (var i = 1; i < widths.length; i++) {
+                  if (widths[i] > widths[widest]) widest = i;
+                }
+                widths[widest] = (widths[widest] - still).clamp(0, usable);
+              }
             }
             return Row(children: [
               for (var i = 0; i < segments.length; i++) ...[

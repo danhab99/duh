@@ -1,6 +1,8 @@
 import 'package:duh_studio/engine.dart';
 import 'package:duh_studio/main.dart';
 import 'package:duh_studio/state.dart';
+import 'package:duh_studio/ui/theme.dart';
+import 'package:duh_studio/ui/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,6 +22,23 @@ Future<AppState> openApp(WidgetTester tester, FakeEngine engine, {bool open = tr
 }
 
 void main() {
+  testWidgets('a strip of only small and large additions fits its width', (tester) async {
+    // A first save: nothing kept, and one file far smaller than the rest.
+    await tester.pumpWidget(MaterialApp(
+      theme: studioTheme(Brightness.light),
+      home: const Center(
+        child: SizedBox(
+          width: 300,
+          child: ChangeStrip([
+            Segment(kind: SegmentKind.added, len: 24000000),
+            Segment(kind: SegmentKind.added, len: 2100),
+          ]),
+        ),
+      ),
+    ));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the appearance button cycles system, dark, light', (tester) async {
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
