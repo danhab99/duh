@@ -272,8 +272,7 @@ git push origin v0.3.0
 ```
 
 The desktop app's design and plan are in
-[docs/studio/DESIGN.md](docs/studio/DESIGN.md). How much of this project was
-written with AI help, and how, is in [docs/MEMO-on-ai.md](docs/MEMO-on-ai.md).
+[docs/studio/DESIGN.md](docs/studio/DESIGN.md).
 
 ## Where it's going
 
