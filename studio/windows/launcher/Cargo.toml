@@ -1,0 +1,14 @@
+[package]
+name = "duh-studio-launcher"
+version = "0.1.0"
+edition = "2021"
+
+# duh Studio as one .exe: the app's folder rides inside this program, which
+# unpacks it once per version and starts it. No dependencies.
+[[bin]]
+name = "duh-studio"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+strip = "symbols"
