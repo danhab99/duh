@@ -95,10 +95,18 @@ class AppState extends ChangeNotifier {
 
   // ---------------------------------------------------------------- spaces
 
-  static String _defaultConfigDir() {
-    final home = Platform.environment['HOME'] ?? '.';
-    final xdg = Platform.environment['XDG_CONFIG_HOME'];
-    return '${xdg ?? '$home/.config'}/duh-studio';
+  /// `%APPDATA%\duh-studio` on Windows, else `$XDG_CONFIG_HOME/duh-studio`
+  /// or `~/.config/duh-studio`.
+  static String _defaultConfigDir() => configDirFor(Platform.environment, windows: Platform.isWindows);
+
+  @visibleForTesting
+  static String configDirFor(Map<String, String> env, {required bool windows}) {
+    if (windows) {
+      final appData = env['APPDATA'] ?? '${env['USERPROFILE'] ?? '.'}\\AppData\\Roaming';
+      return '$appData\\duh-studio';
+    }
+    final home = env['HOME'] ?? '.';
+    return '${env['XDG_CONFIG_HOME'] ?? '$home/.config'}/duh-studio';
   }
 
   // -------------------------------------------------------------- settings

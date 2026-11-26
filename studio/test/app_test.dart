@@ -22,6 +22,12 @@ Future<AppState> openApp(WidgetTester tester, FakeEngine engine, {bool open = tr
 }
 
 void main() {
+  test('settings live in the usual place on each system', () {
+    expect(AppState.configDirFor({'APPDATA': r'C:\Users\ana\AppData\Roaming'}, windows: true), r'C:\Users\ana\AppData\Roaming\duh-studio');
+    expect(AppState.configDirFor({'HOME': '/home/ana'}, windows: false), '/home/ana/.config/duh-studio');
+    expect(AppState.configDirFor({'HOME': '/home/ana', 'XDG_CONFIG_HOME': '/cfg'}, windows: false), '/cfg/duh-studio');
+  });
+
   testWidgets('a strip of only small and large additions fits its width', (tester) async {
     // A first save: nothing kept, and one file far smaller than the rest.
     await tester.pumpWidget(MaterialApp(
