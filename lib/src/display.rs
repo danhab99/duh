@@ -109,14 +109,15 @@ pub fn generate_diff_bar(frag_events: &[(u64, char, &'static str)]) -> String {
         return generate_bar_segment(MAX_COLS, '+', "32");
     }
 
-    // Round each fragment to columns on its own (fragments under half a column
-    // vanish), then give the rounding slack to the largest fragment so the bar
-    // is exactly MAX_COLS wide.
+    // Round each fragment to columns on its own, then give the rounding
+    // slack to the largest fragment so the bar is exactly MAX_COLS wide. An
+    // addition or removal always keeps at least one column, so a small edit
+    // in a big file still shows (kept runs may round away).
     let mut widths: Vec<i64> = frag_events
         .iter()
-        .map(|(len, _, _)| {
-            ((*len as u128 * MAX_COLS as u128 + total_bytes as u128 / 2) / total_bytes as u128)
-                as i64
+        .map(|(len, symbol, _)| {
+            let w = ((*len as u128 * MAX_COLS as u128 + total_bytes as u128 / 2) / total_bytes as u128) as i64;
+            if *len > 0 && *symbol != '=' { w.max(1) } else { w }
         })
         .collect();
     let slack = MAX_COLS as i64 - widths.iter().sum::<i64>();
@@ -161,5 +162,44 @@ pub fn span_to_entry(span: &crate::ops::Span) -> (u64, char, &'static str) {
         crate::ops::Span::Added(n) => (n, '+', "32"),
         crate::ops::Span::Kept(n) => (n, '=', "37"),
         crate::ops::Span::Removed(n) => (n, '-', "31"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain(bar: &str) -> String {
+        let mut out = String::new();
+        let mut skip = false;
+        for c in bar.chars() {
+            match c {
+                '\x1b' => skip = true,
+                'm' if skip => skip = false,
+                _ if !skip => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_small_edit_in_a_big_file_still_shows() {
+        // 30 KB swapped in the middle of 24 MB: well under half a column.
+        let bar = plain(&generate_diff_bar(&[
+            (7_000_000, '=', "37"),
+            (30_000, '-', "31"),
+            (30_000, '+', "32"),
+            (17_070_000, '=', "37"),
+        ]));
+        assert_eq!(bar.chars().count(), MAX_COLS as usize);
+        assert_eq!(bar.matches('-').count(), 1);
+        assert_eq!(bar.matches('+').count(), 1);
+    }
+
+    #[test]
+    fn a_new_file_is_all_added() {
+        let bar = plain(&generate_diff_bar(&[(300_000, '+', "32")]));
+        assert_eq!(bar, "+".repeat(MAX_COLS as usize));
     }
 }
