@@ -772,8 +772,22 @@ impl Space {
         if parts.iter().any(|p| p.is_empty()) {
             return Err(format!("invalid config key '{}'", key).into());
         }
-        let parsed = if key.starts_with("remote.") {
+        // The settings duh reads itself are checked first: a bad one would
+        // stop the space from opening, and then it couldn't be set back.
+        let whole = |min: i64, what: &str| -> SpaceResult<toml::Value> {
+            match value.parse::<i64>() {
+                Ok(n) if n >= min => Ok(toml::Value::Integer(n)),
+                _ => Err(format!("{} must be a whole number of at least {}", what, min).into()),
+            }
+        };
+        let parsed = if key.starts_with("remote.") || key.starts_with("user.") {
             toml::Value::String(value.to_string())
+        } else if key == "chunk_size" {
+            whole(64, "chunk_size (bytes)")?
+        } else if key == "max_size" {
+            whole(4096, "max_size (bytes)")?
+        } else if key == "solid_after" {
+            whole(2, "solid_after")?
         } else if let Ok(n) = value.parse::<i64>() {
             toml::Value::Integer(n)
         } else if let Ok(b) = value.parse::<bool>() {
@@ -1025,6 +1039,22 @@ mod tests {
         let store = crate::store::local(&meta).unwrap();
         let space = Space::init(store, Some(dir.path().to_path_buf())).unwrap();
         (dir, space)
+    }
+
+    #[test]
+    fn settings_that_would_stop_the_space_opening_are_refused() {
+        let (dir, space) = space_with_worktree();
+        for (key, value) in [("solid_after", "1"), ("chunk_size", "0"), ("chunk_size", "big"), ("max_size", "-5")] {
+            assert!(space.set_config_value(key, value).is_err(), "{key} = {value} was accepted");
+        }
+        space.set_config_value("solid_after", "50").unwrap();
+        space.set_config_value("chunk_size", "65536").unwrap();
+        // A name that looks like a number is still a name.
+        space.set_config_value("user.name", "1984").unwrap();
+
+        let reopened = Space::open(space.fs.clone(), Some(dir.path().to_path_buf())).unwrap();
+        assert_eq!((reopened.solid_after, reopened.chunk_size), (50, 65536));
+        assert_eq!(reopened.me.name, "1984");
     }
 
     #[test]
