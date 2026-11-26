@@ -21,7 +21,7 @@ pub fn reflog(space: &mut Space, cmd: &ReflogCommand) -> Result<(), Box<dyn Erro
         },
     };
     for e in lib::ops::history::journal(space, &draft)? {
-        println!("{} | {}", e.version.to_string(), e.what);
+        println!("{}  {}", crate::colors::yellow(&e.version.to_string()[..12]), e.what);
     }
     Ok(())
 }

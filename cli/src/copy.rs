@@ -93,11 +93,17 @@ pub fn clone(
 }
 
 fn describe(stats: &lib::transfer::TransferStats) -> String {
-    format!("{} save(s), {} object(s), {}", stats.commits, stats.objects, fmt_bytes(stats.bytes))
+    use crate::colors::count;
+    format!(
+        "{}, {}, {}",
+        count(stats.commits as u64, "save", "saves"),
+        count(stats.objects as u64, "stored piece", "stored pieces"),
+        fmt_bytes(stats.bytes)
+    )
 }
 
 fn short(h: Hash) -> String {
-    if h.is_zero() { "(none)".to_string() } else { h.to_string()[..12].to_string() }
+    if h.is_zero() { "nothing".to_string() } else { h.to_string()[..12].to_string() }
 }
 
 pub fn send(space: &mut Space, cmd: &SendCommand) -> Result<(), Box<dyn Error>> {

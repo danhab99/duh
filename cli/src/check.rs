@@ -34,13 +34,12 @@ pub fn check(space: &mut Space, cmd: &CheckCommand) -> Result<(), Box<dyn Error>
     })?;
 
     println!(
-        "Checked {} stored piece(s), {} save(s), {} file version(s), {} picked file(s) and {} solid cop{}.",
-        report.objects,
-        report.saves,
-        report.file_versions,
-        report.picked,
-        report.solids,
-        if report.solids == 1 { "y" } else { "ies" }
+        "Checked {}, {}, {}, {} and {}.",
+        colors::count(report.objects as u64, "stored piece", "stored pieces"),
+        colors::count(report.saves as u64, "save", "saves"),
+        colors::count(report.file_versions as u64, "file version", "file versions"),
+        colors::count(report.picked as u64, "picked file", "picked files"),
+        colors::count(report.solids as u64, "solid copy", "solid copies"),
     );
 
     if report.is_intact() {
@@ -50,5 +49,5 @@ pub fn check(space: &mut Space, cmd: &CheckCommand) -> Result<(), Box<dyn Error>
     for problem in &report.problems {
         println!("  {} {}", colors::red("✗"), problem);
     }
-    Err(format!("found {} problem(s)", report.problems.len()).into())
+    Err(format!("found {}", colors::count(report.problems.len() as u64, "problem", "problems")).into())
 }

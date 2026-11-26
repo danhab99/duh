@@ -98,25 +98,26 @@ pub fn remote(
                 .collect::<Result<Vec<_>, _>>()?;
             space.add_remote_with_options(name, url, &options)?;
             println!(
-                "{} place '{}' -> {}",
-                crate::colors::green("added"),
+                "{} the place {} at {}. `duh send {}` copies your saves there.",
+                crate::colors::green("Added"),
                 crate::colors::cyan(name),
-                url
+                url,
+                name
             );
         }
         RemoteAction::Remove { name } => {
             space.remove_remote(name)?;
             println!(
-                "{} place '{}'",
-                crate::colors::green("removed"),
+                "{} the place {} (nothing stored there was deleted)",
+                crate::colors::green("Removed"),
                 crate::colors::cyan(name)
             );
         }
         RemoteAction::Rename { old_name, new_name } => {
             space.rename_remote(old_name, new_name)?;
             println!(
-                "{} place '{}' -> '{}'",
-                crate::colors::green("renamed"),
+                "{} the place {} to {}",
+                crate::colors::green("Renamed"),
                 crate::colors::cyan(old_name),
                 crate::colors::cyan(new_name)
             );

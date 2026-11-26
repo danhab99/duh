@@ -28,8 +28,8 @@ pub struct StageCommand {
     pub update: bool,
 }
 
-/// Prints picking as it happens: a progress bar while a file is chunked,
-/// then its change bar.
+/// Prints picking as it happens: in a terminal, a progress bar while a file
+/// is chunked; then its change bar and how much was added and removed.
 pub struct PickPrinter {
     printer: Option<ProgressPrinter>,
 }
@@ -43,7 +43,11 @@ impl PickPrinter {
         match event {
             PickEvent::Start { path, size } => {
                 println!("-- Picking {}", path);
-                self.printer = Some(ProgressPrinter::new((size / display::MAX_COLS).max(1)));
+                // The live bars redraw as they go, which only makes sense
+                // in a terminal; logs and pipes get the summary alone.
+                if crate::colors::enabled() {
+                    self.printer = Some(ProgressPrinter::new((size / display::MAX_COLS).max(1)));
+                }
             }
             PickEvent::Chunk(e) => {
                 if let Some(p) = self.printer.as_mut() {
@@ -51,13 +55,11 @@ impl PickPrinter {
                 }
             }
             PickEvent::Done(picked) => match picked {
-                Picked::Changed { version, strip, .. } => {
+                Picked::Changed { strip, .. } => {
                     if let Some(p) = self.printer.take() {
                         p.finish();
                     }
-                    let entries: Vec<_> = strip.iter().map(display::span_to_entry).collect();
-                    println!("{}", display::format_diff_bar(&display::generate_diff_bar(&entries)));
-                    println!("{}", crate::colors::green(&version.to_string()));
+                    crate::diff::print_strip(&strip);
                 }
                 Picked::Unchanged { path } => {
                     self.printer = None;

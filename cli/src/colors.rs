@@ -7,13 +7,36 @@
 use atty::Stream;
 use std::env;
 
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     // Respect NO_COLOR (presence disables color)
     if env::var_os("NO_COLOR").is_some() {
         return false;
     }
     // Only enable colors when stdout is a TTY
     atty::is(Stream::Stdout)
+}
+
+/// `s` without its ANSI color codes when color is off. For text colored
+/// elsewhere (the change bars come from the library already colored).
+pub fn plain(s: &str) -> String {
+    if enabled() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip `ESC [ … m`.
+            for c in chars.by_ref() {
+                if c == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 pub fn wrap(code: &str, s: &str) -> String {
@@ -72,4 +95,10 @@ mod tests {
             assert_eq!(bold("a"), "a");
         }
     }
+}
+
+/// "1 save", "3 saves": a number with its noun in the right form.
+pub fn count(n: impl Into<u64>, one: &str, many: &str) -> String {
+    let n = n.into();
+    format!("{} {}", n, if n == 1 { one } else { many })
 }

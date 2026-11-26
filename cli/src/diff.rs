@@ -36,15 +36,31 @@ pub fn diff(space: &mut Space, cmd: &DiffCommand) -> Result<(), Box<dyn Error>> 
         if c.strip.is_empty() {
             continue;
         }
-        let entries: Vec<_> = c.strip.iter().map(display::span_to_entry).collect();
-        println!("{}", display::format_diff_bar(&display::generate_diff_bar(&entries)));
-        let (added, removed, kept) = strip_totals(&c.strip);
-        println!(
-            "  {}  {}  {}",
-            crate::colors::green(&format!("+{}", fmt_bytes(added))),
-            crate::colors::red(&format!("-{}", fmt_bytes(removed))),
-            crate::colors::dim(&format!("={}", fmt_bytes(kept)))
-        );
+        print_strip(&c.strip);
     }
     Ok(())
+}
+
+/// A change bar and its totals:
+///
+/// ```text
+/// Dif[==================--++======================================]
+///   +11.8 KB  -11.8 KB  =288.2 KB
+/// ```
+pub fn print_strip(strip: &[lib::ops::Span]) {
+    let entries: Vec<_> = strip.iter().map(display::span_to_entry).collect();
+    println!("{}", crate::colors::plain(&display::format_diff_bar(&display::generate_diff_bar(&entries))));
+    // Only the parts there are: a new file is all added.
+    let (added, removed, kept) = strip_totals(strip);
+    let mut parts = Vec::new();
+    if added > 0 {
+        parts.push(crate::colors::green(&format!("+{}", fmt_bytes(added))));
+    }
+    if removed > 0 {
+        parts.push(crate::colors::red(&format!("-{}", fmt_bytes(removed))));
+    }
+    if kept > 0 {
+        parts.push(crate::colors::dim(&format!("={}", fmt_bytes(kept))));
+    }
+    println!("  {}", parts.join("  "));
 }
