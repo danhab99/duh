@@ -14,6 +14,7 @@ mod copy;
 mod diff;
 mod init;
 mod log;
+mod man;
 mod mv;
 mod reflog;
 mod remote;
@@ -29,6 +30,18 @@ mod unstage;
 mod when;
 
 fn main() {
+    // `duh __man <dir>`: write the manual pages (used by the Nix package).
+    let args: Vec<String> = std::env::args().collect();
+    if let [_, flag, dir] = args.as_slice() {
+        if flag == "__man" {
+            if let Err(e) = man::write(std::path::Path::new(dir)) {
+                eprintln!("{} {}", colors::red("error:"), e);
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
+
     if let Err(e) = run() {
         eprintln!("{} {}", colors::red("error:"), e);
         std::process::exit(1);

@@ -89,7 +89,15 @@
           };
         } // extra);
 
-        duh = mkDuh rustPlatform { };
+        # The native build also installs the manual pages, written by duh
+        # itself from its command definitions: `man duh`, `man duh-save`, …
+        duh = mkDuh rustPlatform {
+          nativeBuildInputs = [ pkgs.pkg-config pkgs.installShellFiles ];
+          postInstall = ''
+            "$out/bin/duh" __man man
+            installManPage man/*.1
+          '';
+        };
 
         # Release builds of the CLI that run anywhere, not only under Nix:
         # fully static for Linux (musl), and cross-compiled for Windows.
