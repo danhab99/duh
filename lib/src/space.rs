@@ -278,6 +278,13 @@ impl Space {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
 
+        // Saves are signed with your name: your account's, until you set
+        // `user.name` (and, if you like, `user.email`).
+        let name = ["USER", "USERNAME"]
+            .iter()
+            .find_map(|v| std::env::var(v).ok().filter(|n| !n.trim().is_empty()))
+            .unwrap_or_else(|| "someone".to_string());
+
         let r = Space {
             fs: filesystem,
             chunk_size: DEFAULT_BLOCK_SIZE,
@@ -285,8 +292,8 @@ impl Space {
             solid_after: DEFAULT_SOLID_AFTER,
             worktree,
             me: Person {
-                name: "test".to_string(),
-                email: "test@example.com".to_string(),
+                name: name.clone(),
+                email: String::new(),
                 timestamp: now,
             },
             index: HashMap::new(),
@@ -295,10 +302,11 @@ impl Space {
         vlog!("space::init");
 
         let default_config = format!(
-            "chunk_size = {}\nmax_size = {}\n\n[core]\nbare = {}\n\n[user]\nname = \"test\"\nemail = \"test@example.com\"\n",
+            "chunk_size = {}\nmax_size = {}\n\n[core]\nbare = {}\n\n[user]\nname = {}\nemail = \"\"\n",
             DEFAULT_BLOCK_SIZE,
             DEFAULT_MAX_FRAGMENT_SIZE,
-            r.worktree.is_none()
+            r.worktree.is_none(),
+            toml::Value::String(name)
         );
 
         r.write_to_space(

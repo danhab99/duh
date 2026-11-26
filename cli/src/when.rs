@@ -26,3 +26,8 @@ mod tests {
         assert_eq!(super::utc(1_795_635_225), "2026-11-25 19:33 UTC");
     }
 }
+
+/// "Dan <dan@example.com>", or just "Dan" when there's no email.
+pub fn person(name: &str, email: &str) -> String {
+    if email.is_empty() { name.to_string() } else { format!("{} <{}>", name, email) }
+}

@@ -24,7 +24,7 @@ pub fn show(space: &mut Space, cmd: &ShowCommand) -> Result<(), Box<dyn Error>> 
     if !d.info.previous.is_zero() {
         println!("previous: {}", crate::colors::dim(&d.info.previous.to_string()));
     }
-    println!("saved by: {} <{}> {}", d.info.author_name, d.info.author_email, crate::when::utc(d.info.time));
+    println!("saved by: {} {}", crate::when::person(&d.info.author_name, &d.info.author_email), crate::when::utc(d.info.time));
     println!("\n    {}\n", d.info.message);
     println!("{}", crate::colors::bold("files:"));
     for f in &d.files {

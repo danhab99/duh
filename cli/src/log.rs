@@ -32,7 +32,7 @@ pub fn log(space: &mut Space, cmd: &LogCommand) -> Result<(), Box<dyn Error>> {
             continue;
         }
         println!("version {}", crate::colors::cyan(&s.version.to_string()));
-        println!("Saved by: {} <{}> {}", s.author_name, s.author_email, crate::when::utc(s.time));
+        println!("Saved by: {} {}", crate::when::person(&s.author_name, &s.author_email), crate::when::utc(s.time));
         println!();
         for line in s.message.lines() {
             println!("    {}", line);
