@@ -92,13 +92,17 @@ pub fn clone(
     Ok(())
 }
 
-fn describe(stats: &lib::transfer::TransferStats) -> String {
+fn describe(t: &lib::ops::sharing::Transfer) -> String {
     use crate::colors::count;
+    let saves = count(t.saves as u64, "save", "saves");
+    if t.stats.objects == 0 {
+        return format!("{} (nothing new to copy)", saves);
+    }
     format!(
-        "{}, {}, {}",
-        count(stats.commits as u64, "save", "saves"),
-        count(stats.objects as u64, "stored piece", "stored pieces"),
-        fmt_bytes(stats.bytes)
+        "{}, copied {} ({})",
+        saves,
+        count(t.stats.objects as u64, "stored piece", "stored pieces"),
+        fmt_bytes(t.stats.bytes)
     )
 }
 
@@ -117,7 +121,7 @@ pub fn send(space: &mut Space, cmd: &SendCommand) -> Result<(), Box<dyn Error>> 
         crate::colors::green(&t.draft),
         short(t.before),
         short(t.after),
-        describe(&t.stats)
+        describe(&t)
     );
     Ok(())
 }
@@ -133,7 +137,7 @@ pub fn receive(space: &mut Space, cmd: &ReceiveCommand) -> Result<(), Box<dyn Er
         crate::colors::green(&t.draft),
         short(t.before),
         short(t.after),
-        describe(&t.stats)
+        describe(&t)
     );
     Ok(())
 }

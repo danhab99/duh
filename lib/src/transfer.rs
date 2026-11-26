@@ -117,6 +117,21 @@ impl Space {
         Ok(false)
     }
 
+    /// How many saves lead from `from` to `to` (from `to` back to the first
+    /// save, when `from` isn't one of its ancestors or is zero).
+    pub fn saves_between(&self, from: Hash, to: Hash) -> SpaceResult<usize> {
+        let mut n = 0;
+        let mut cur = to;
+        while !cur.is_zero() && cur != from {
+            n += 1;
+            cur = match self.get_object(cur)? {
+                Some(Object::Commit(c)) => c.parent,
+                _ => break,
+            };
+        }
+        Ok(n)
+    }
+
     fn count(&self, bytes: u64, stats: &mut TransferStats) {
         if bytes > 0 {
             stats.objects += 1;

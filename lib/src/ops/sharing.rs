@@ -22,6 +22,10 @@ pub struct Transfer {
     /// Where the updated draft was before (zero: it didn't exist).
     pub before: Hash,
     pub after: Hash,
+    /// How many saves the updated draft gained.
+    pub saves: usize,
+    /// What had to be copied (less than `saves` suggests when some of it
+    /// was already there, e.g. from a receive that was refused).
     pub stats: TransferStats,
 }
 
@@ -122,7 +126,8 @@ pub fn send(space: &mut Space, place: &str, draft: Option<&str>, force: bool) ->
 
     let stats = space.copy_commit_to(&remote, head)?;
     remote.set_ref(&target, ObjectReference::Hash(head), Some(&format!("send: {}", target)))?;
-    Ok(Transfer { place: place.to_string(), draft: target, source_draft, before, after: head, stats })
+    let saves = space.saves_between(before, head)?;
+    Ok(Transfer { place: place.to_string(), draft: target, source_draft, before, after: head, saves, stats })
 }
 
 /// Receive `place`'s `draft` (default: the same name as `into`) into your
@@ -156,7 +161,8 @@ pub fn receive(space: &mut Space, place: &str, draft: Option<&str>, into: Option
     if is_open && space.worktree.is_some() {
         worktree::match_version(space, before, after)?;
     }
-    Ok(Transfer { place: place.to_string(), draft: local, source_draft: remote_draft, before, after, stats })
+    let saves = space.saves_between(before, after)?;
+    Ok(Transfer { place: place.to_string(), draft: local, source_draft: remote_draft, before, after, saves, stats })
 }
 
 /// The saves reachable from `from`, newest first, read from `space`.
@@ -244,6 +250,9 @@ mod tests {
         // Receiving into a new draft keeps both.
         let got = receive(&mut space, "origin", Some("main"), Some("theirs")).unwrap();
         assert_eq!((got.draft.as_str(), got.before), ("theirs", Hash::new()));
+        // The refused receive already copied the mate's save; the draft
+        // still gained both saves.
+        assert_eq!((got.saves, got.stats.commits), (2, 0));
         assert!(get(hub.path().to_str().unwrap(), &mate_path, None, false, &[]).unwrap_err().to_string().contains("already exists"));
     }
 

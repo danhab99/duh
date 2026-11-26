@@ -355,7 +355,7 @@ pub fn sync_status(folder: &str, place: &str) -> R<SyncInfo> {
 }
 
 fn transfer(t: ops::sharing::Transfer) -> TransferResult {
-    TransferResult { draft: t.draft, saves: t.stats.commits as u32, bytes: t.stats.bytes as i64 }
+    TransferResult { draft: t.draft, saves: t.saves as u32, bytes: t.stats.bytes as i64 }
 }
 
 pub fn send(folder: &str, place: &str, draft: Option<&str>, force: bool) -> R<TransferResult> {
