@@ -36,9 +36,9 @@ Future<void> main(List<String> args) async {
 /// duh's engine: in the app bundle's `lib/` (as built by Nix or `flutter
 /// build`), else the bridge crate's own build output while developing.
 ExternalLibrary _engineLibrary() {
-  const name = 'libduh_studio_native.so';
+  final name = Platform.isWindows ? 'duh_studio_native.dll' : 'libduh_studio_native.so';
   final exeDir = File(Platform.resolvedExecutable).parent.path;
-  for (final path in ['$exeDir/lib/$name', 'native/target/release/$name', 'native/target/debug/$name']) {
+  for (final path in ['$exeDir/$name', '$exeDir/lib/$name', 'native/target/release/$name', 'native/target/debug/$name']) {
     if (File(path).existsSync()) return ExternalLibrary.open(path);
   }
   return ExternalLibrary.open(name);
